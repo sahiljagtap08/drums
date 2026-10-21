@@ -10,6 +10,7 @@ enum Routes {
     nonisolated(unsafe) static var env: Int = 0
 
     static let generation = Generation(initial: 0)
+    static let screenshotRecord = ScreenshotRecord()
 
     static func handle(_ req: HTTPRequest) async -> HTTPResponse {
         switch (req.method, req.path) {
@@ -17,7 +18,9 @@ enum Routes {
             return await health()
         case ("POST", "/gen"):
             return await setGeneration(req)
-        case (_, "/health"), (_, "/gen"):
+        case ("GET", "/screenshot"):
+            return await screenshot(req)
+        case (_, "/health"), (_, "/gen"), (_, "/screenshot"):
             return error(405, "method_not_allowed")
         default:
             return error(404, "not_found")
@@ -46,6 +49,48 @@ enum Routes {
         }
         await generation.set(g)
         return jsonResponse(["gen": g])
+    }
+
+    /// GET /screenshot, with an optional `region=x,y,w,h`. Returns a PNG. The
+    /// headers say which gen it was taken in, when, whether the picture is the
+    /// same as the last one for this region, and whether it is all black.
+    static func screenshot(_ req: HTTPRequest) async -> HTTPResponse {
+        var region: CGRect?
+        if let raw = req.query["region"] {
+            let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map { Double($0) }
+            guard parts.count == 4, let x = parts[0], let y = parts[1], let w = parts[2], let h = parts[3],
+                  x >= 0, y >= 0, w > 0, h > 0 else {
+                return error(400, "bad_request", detail: "region must be x,y,w,h with w and h above 0")
+            }
+            region = CGRect(x: x, y: y, width: w, height: h)
+        }
+        let key = region.map { "\($0.origin.x),\($0.origin.y),\($0.width),\($0.height)" } ?? "full"
+
+        let gen = await generation.current()
+        let started = Date()
+        let shot: (png: Data, rgba: Data, w: Int, h: Int)
+        do {
+            shot = try await Screenshot.capture(region: region)
+        } catch {
+            return Self.error(500, "capture_failed", detail: "\(error)")
+        }
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        await screenshotRecord.noteLatency(ms: elapsedMs)
+
+        // The capture is already cut to the region, so hash all of it.
+        let hash = FrameHash.hash(rgba: shot.rgba, width: shot.w, height: shot.h, region: nil)
+        let stale = await screenshotRecord.noteHash(hash, for: key)
+        let black = FrameHash.isBlack(rgba: shot.rgba, width: shot.w, height: shot.h)
+
+        let stamp = ISO8601DateFormatter()
+        stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return HTTPResponse(status: 200, headers: [
+            "Content-Type": "image/png",
+            "X-Drums-Gen": String(gen),
+            "X-Drums-Captured-At": stamp.string(from: started),
+            "X-Drums-Stale": stale ? "true" : "false",
+            "X-Drums-Black": black ? "true" : "false",
+        ], body: shot.png)
     }
 
     // MARK: - Generation guard
