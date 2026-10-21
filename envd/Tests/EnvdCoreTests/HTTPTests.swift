@@ -33,3 +33,29 @@ import Testing
     #expect(text.contains("Content-Length: 2\r\n"))
     #expect(text.hasSuffix("\r\n\r\n{}"))
 }
+
+@Test func hugeContentLengthIsMalformedNotATrap() {
+    let raw = rawBytes("POST /a HTTP/1.1\r\nContent-Length: 9223372036854775807\r\n\r\n{}")
+    #expect(HTTPRequest.parse(raw) == nil)
+    guard case .malformed = HTTPRequest.parseResult(raw) else {
+        Issue.record("expected malformed")
+        return
+    }
+}
+
+@Test func lengthJustOverTheCeilingIsMalformed() {
+    let over = HTTPRequest.maxBodyBytes + 1
+    let raw = rawBytes("POST /a HTTP/1.1\r\nContent-Length: \(over)\r\n\r\n")
+    guard case .malformed = HTTPRequest.parseResult(raw) else {
+        Issue.record("expected malformed")
+        return
+    }
+}
+
+@Test func negativeContentLengthIsMalformed() {
+    let raw = rawBytes("POST /a HTTP/1.1\r\nContent-Length: -1\r\n\r\n")
+    guard case .malformed = HTTPRequest.parseResult(raw) else {
+        Issue.record("expected malformed")
+        return
+    }
+}

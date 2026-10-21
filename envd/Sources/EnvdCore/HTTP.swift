@@ -20,6 +20,9 @@ public struct HTTPRequest: Sendable {
         self.body = body
     }
 
+    /// The biggest body the parser accepts. A larger Content-Length is malformed.
+    public static let maxBodyBytes = 64 * 1024 * 1024
+
     /// The result of looking at the bytes read so far.
     public enum ParseResult: Sendable {
         /// More bytes are needed before a full request is there.
@@ -62,11 +65,13 @@ public struct HTTPRequest: Sendable {
 
         var length = 0
         if let raw = headers["content-length"] {
-            guard let n = Int(raw), n >= 0 else { return .malformed }
+            // Refuse huge or negative lengths here so the sums below cannot overflow.
+            guard let n = Int(raw), n >= 0, n <= maxBodyBytes else { return .malformed }
             length = n
         }
         let bodyStart = end + marker.count
-        let total = bodyStart + length
+        let (total, overflow) = bodyStart.addingReportingOverflow(length)
+        if overflow { return .malformed }
         guard bytes.count >= total else { return .incomplete }
 
         let target = String(requestLine[1])

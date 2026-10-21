@@ -6,7 +6,7 @@ import Network
 // closed.
 final class Server: @unchecked Sendable {
     static let maxHeaderBytes = 64 * 1024
-    static let maxRequestBytes = 64 * 1024 * 1024
+    static let maxRequestBytes = HTTPRequest.maxBodyBytes + maxHeaderBytes
     static let idleSeconds = 30.0
 
     private let listener: NWListener
