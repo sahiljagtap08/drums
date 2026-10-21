@@ -74,3 +74,43 @@ extension ActionSpec {
         ActionSpec(gen: 1, seq: seq, type: "click", x: 0, y: 0)
     }
 }
+
+/// Helpers for the deterministic reset-versus-apply test. `run` is the work
+/// closure: it marks that it started, blocks for a while, then stamps the time
+/// it finished. Times come from the system uptime clock.
+final class SlowWork: @unchecked Sendable {
+    private let lock = NSLock()
+    private var startedFlag = false
+    private var finished: Double?
+    private var runs = 0
+
+    var started: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return startedFlag
+    }
+
+    var finishedAt: Double? {
+        lock.lock(); defer { lock.unlock() }
+        return finished
+    }
+
+    var runCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return runs
+    }
+
+    func run(blockMs: Int) {
+        lock.lock()
+        startedFlag = true
+        runs += 1
+        lock.unlock()
+        Thread.sleep(forTimeInterval: Double(blockMs) / 1000)
+        lock.lock()
+        finished = ProcessInfo.processInfo.systemUptime
+        lock.unlock()
+    }
+}
+
+func uptimeNow() -> Double {
+    ProcessInfo.processInfo.systemUptime
+}

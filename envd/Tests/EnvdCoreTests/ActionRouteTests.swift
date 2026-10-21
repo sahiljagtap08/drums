@@ -166,3 +166,78 @@ private func makeHandler(gen: Int = 7) async -> (ActionHandler, Recorder, Action
     }
     #expect(v == 42)
 }
+
+// The deterministic gate for atomicity. The work closure blocks for 50 ms. The
+// test waits until the work has started, then calls set(2). Because the apply
+// is in flight, set(2) must wait for it. If check and apply could be split
+// apart, set(2) would return while the work was still running, and the
+// finish time would be later than the time set returned.
+@Test func resetCannotInterleaveWithAnInFlightApply() async {
+    let g = Generation(initial: 1)
+    let work = SlowWork()
+
+    let inFlight = Task { await g.applyIfCurrent(1) { work.run(blockMs: 50) } }
+    while !work.started { await Task.yield() }
+
+    await g.set(2)
+    let setReturnedAt = uptimeNow()
+
+    let finishedAt = work.finishedAt
+    #expect(finishedAt != nil, "set() returned while the apply was still running")
+    if let finishedAt {
+        #expect(finishedAt <= setReturnedAt, "set() returned before the in-flight apply finished")
+    }
+
+    guard case .applied = await inFlight.value else {
+        Issue.record("the in-flight apply should have run, it started before the reset")
+        return
+    }
+    #expect(work.runCount == 1)
+
+    // After the reset, the same old gen is refused and its work never runs.
+    let later = SlowWork()
+    let r = await g.applyIfCurrent(1) { later.run(blockMs: 0) }
+    guard case .stale(let current) = r else {
+        Issue.record("expected stale after the reset")
+        return
+    }
+    #expect(current == 2)
+    #expect(later.runCount == 0)
+}
+
+// The gap test. The first test above proves a reset cannot run during the
+// work. This one proves a reset cannot run between the gen check and the work.
+// Action A holds the actor for 300 ms. Action B (gen 1) is queued behind it,
+// and 100 ms later the reset set(2) is queued behind B. So when A finishes,
+// both B and the reset are waiting. If B's check and its work were separate
+// steps (for example, an await between them), the reset would run in the gap
+// and B's work would run after the reset. Here B must run fully first.
+@Test func resetCannotSlipBetweenCheckAndWork() async {
+    let g = Generation(initial: 1)
+    let a = SlowWork()
+    let b = SlowWork()
+
+    let taskA = Task { await g.applyIfCurrent(1) { a.run(blockMs: 300) } }
+    while !a.started { await Task.yield() }
+
+    let taskB = Task { await g.applyIfCurrent(1) { b.run(blockMs: 10) } }
+    try? await Task.sleep(for: .milliseconds(100))  // let B settle in the queue
+    let taskC = Task { () -> Double in
+        await g.set(2)
+        return uptimeNow()
+    }
+
+    let setReturnedAt = await taskC.value
+    _ = await taskA.value
+    let resultB = await taskB.value
+
+    guard case .applied = resultB else {
+        Issue.record("B was queued before the reset, so it must have been applied")
+        return
+    }
+    let finishedAt = b.finishedAt
+    #expect(finishedAt != nil)
+    if let finishedAt {
+        #expect(finishedAt <= setReturnedAt, "B's work ran after the reset: check and work were split")
+    }
+}
