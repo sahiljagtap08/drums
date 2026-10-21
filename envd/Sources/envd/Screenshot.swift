@@ -119,13 +119,9 @@ enum Screenshot {
 }
 
 /// What the screenshot route remembers between calls: the last hash for each
-/// region (to spot a stale frame) and the most recent capture times. The action
-/// log arrives in a later task; until then this small record is kept in memory.
+/// region, to spot a stale frame. Capture times go to the action log.
 actor ScreenshotRecord {
-    static let maxLatencies = 200
-
     private var lastHash: [String: String] = [:]
-    private(set) var latenciesMs: [Int] = []
 
     /// Stores `hash` for `key` and says whether it equals the previous one.
     /// The first call for a key is never stale.
@@ -133,10 +129,5 @@ actor ScreenshotRecord {
         let stale = lastHash[key] == hash
         lastHash[key] = hash
         return stale
-    }
-
-    func noteLatency(ms: Int) {
-        latenciesMs.append(ms)
-        if latenciesMs.count > Self.maxLatencies { latenciesMs.removeFirst() }
     }
 }

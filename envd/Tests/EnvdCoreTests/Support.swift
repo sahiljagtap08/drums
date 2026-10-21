@@ -36,3 +36,41 @@ func withByte(_ data: Data, at index: Int, value: UInt8) -> Data {
     d[index] = value
     return d
 }
+
+/// Counts calls and remembers the specs it was given. Used as the "perform"
+/// stand-in in route tests so no real input is posted.
+final class Recorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var specs: [ActionSpec] = []
+
+    func record(_ spec: ActionSpec) {
+        lock.lock(); defer { lock.unlock() }
+        specs.append(spec)
+    }
+
+    var count: Int {
+        lock.lock(); defer { lock.unlock() }
+        return specs.count
+    }
+
+    var seqs: [Int] {
+        lock.lock(); defer { lock.unlock() }
+        return specs.map(\.seq)
+    }
+}
+
+/// A POST /action request. `headers` should use lower case names.
+func actionRequest(_ json: String, headers: [String: String] = ["host": "127.0.0.1:7701"]) -> HTTPRequest {
+    HTTPRequest(method: "POST", path: "/action", headers: headers, body: rawBytes(json))
+}
+
+func bodyText(_ res: HTTPResponse) -> String {
+    String(decoding: res.body, as: UTF8.self)
+}
+
+extension ActionSpec {
+    /// A throwaway click spec, for tests that only count calls.
+    static func probe(seq: Int) -> ActionSpec {
+        ActionSpec(gen: 1, seq: seq, type: "click", x: 0, y: 0)
+    }
+}

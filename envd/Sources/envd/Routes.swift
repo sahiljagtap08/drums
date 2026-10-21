@@ -8,9 +8,21 @@ enum Routes {
     /// The environment number. It is set once in main before the server starts
     /// and is never changed after that, so reading it from any thread is safe.
     nonisolated(unsafe) static var env: Int = 0
+    /// The port envd listens on. Set once in main before the server starts. The
+    /// Host header of mutating requests must name this port.
+    nonisolated(unsafe) static var port: UInt16 = 0
 
     static let generation = Generation(initial: 0)
     static let screenshotRecord = ScreenshotRecord()
+    static let actionLog = ActionLog()
+
+    /// Screenshots use one pixel per screen point, so action positions need no
+    /// scaling.
+    static let actionScale: CGFloat = 1
+
+    static let actions = ActionHandler(generation: generation, log: actionLog) { spec in
+        try Input.perform(spec, screenScale: actionScale)
+    }
 
     static func handle(_ req: HTTPRequest) async -> HTTPResponse {
         switch (req.method, req.path) {
@@ -20,7 +32,11 @@ enum Routes {
             return await setGeneration(req)
         case ("GET", "/screenshot"):
             return await screenshot(req)
-        case (_, "/health"), (_, "/gen"), (_, "/screenshot"):
+        case ("POST", "/action"):
+            return await actions.handle(req, port: port)
+        case ("GET", "/log"):
+            return await actions.log(req)
+        case (_, "/health"), (_, "/gen"), (_, "/screenshot"), (_, "/action"), (_, "/log"):
             return error(405, "method_not_allowed")
         default:
             return error(404, "not_found")
@@ -44,6 +60,7 @@ enum Routes {
     }
 
     static func setGeneration(_ req: HTTPRequest) async -> HTTPResponse {
+        if let denied = LocalGuard.check(req, port: port) { return denied }
         guard let g = intField("gen", in: req.body) else {
             return error(400, "bad_request", detail: "body must be JSON with an integer gen")
         }
@@ -71,16 +88,21 @@ enum Routes {
         do {
             shot = try await Screenshot.capture(region: region)
         } catch {
+            await actionLog.append(ActionLogEntry(
+                ts: Date().timeIntervalSince1970, kind: "screenshot", gen: gen, seq: 0,
+                type: "screenshot", status: "error", latency_ms: Int(Date().timeIntervalSince(started) * 1000)))
             return Self.error(500, "capture_failed", detail: "\(error)")
         }
         let capturedAt = Date()
         let elapsedMs = Int(capturedAt.timeIntervalSince(started) * 1000)
-        await screenshotRecord.noteLatency(ms: elapsedMs)
 
         // The capture is already cut to the region, so hash all of it.
         let hash = FrameHash.hash(rgba: shot.rgba, width: shot.w, height: shot.h, region: nil)
         let stale = await screenshotRecord.noteHash(hash, for: key)
         let black = FrameHash.isBlack(rgba: shot.rgba, width: shot.w, height: shot.h)
+        await actionLog.append(ActionLogEntry(
+            ts: capturedAt.timeIntervalSince1970, kind: "screenshot", gen: gen, seq: 0,
+            type: "screenshot", status: black ? "black" : (stale ? "stale" : "ok"), latency_ms: elapsedMs))
 
         let stamp = ISO8601DateFormatter()
         stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -95,10 +117,15 @@ enum Routes {
 
     // MARK: - Generation guard
 
-    /// Call this first in every mutating route. It returns nil when the
-    /// request's gen is current. Otherwise it returns the response to send and
-    /// the route must do nothing. The gen is read from the `gen` query
-    /// parameter, or from the `gen` field of a JSON body.
+    /// A check-only guard. It returns nil when the request's gen is current.
+    /// Otherwise it returns the response to send and the route must do nothing.
+    /// The gen is read from the `gen` query parameter, or from the `gen` field
+    /// of a JSON body.
+    ///
+    /// Warning: this is check-then-act. A reset can land after the check and
+    /// before the route's effect. A route whose effect must never happen for a
+    /// stale gen (like POST /action) must use `Generation.applyIfCurrent`
+    /// instead, which does both in one step.
     static func requireGen(_ req: HTTPRequest) async -> HTTPResponse? {
         var supplied: Int?
         if let q = req.query["gen"] { supplied = Int(q) }
@@ -108,7 +135,7 @@ enum Routes {
         }
         if await generation.check(supplied) { return nil }
         let current = await generation.current()
-        return HTTPResponse.json("{\"error\":\"stale_gen\",\"current_gen\":\(current)}", status: 409)
+        return HTTPResponse.staleGen(current: current)
     }
 
     // MARK: - Helpers

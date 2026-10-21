@@ -24,6 +24,7 @@ do {
 }
 
 Routes.env = config.env
+Routes.port = config.port
 
 let server: Server
 do {

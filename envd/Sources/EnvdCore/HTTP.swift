@@ -135,7 +135,7 @@ public struct HTTPResponse: Sendable {
 
     static let reasons: [Int: String] = [
         200: "OK", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed",
-        409: "Conflict", 413: "Payload Too Large", 500: "Internal Server Error",
+        403: "Forbidden", 409: "Conflict", 413: "Payload Too Large", 500: "Internal Server Error",
     ]
 
     /// Bytes ready to write to the socket. Content-Length is always set from the
