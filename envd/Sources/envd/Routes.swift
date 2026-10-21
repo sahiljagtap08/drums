@@ -57,12 +57,11 @@ enum Routes {
     static func screenshot(_ req: HTTPRequest) async -> HTTPResponse {
         var region: CGRect?
         if let raw = req.query["region"] {
-            let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map { Double($0) }
-            guard parts.count == 4, let x = parts[0], let y = parts[1], let w = parts[2], let h = parts[3],
-                  x >= 0, y >= 0, w > 0, h > 0 else {
-                return error(400, "bad_request", detail: "region must be x,y,w,h with w and h above 0")
+            guard let parsed = FrameHash.parseRegion(raw) else {
+                return error(400, "bad_request",
+                             detail: "region must be x,y,w,h: finite numbers, x and y at least 0, w and h above 0")
             }
-            region = CGRect(x: x, y: y, width: w, height: h)
+            region = parsed
         }
         let key = region.map { "\($0.origin.x),\($0.origin.y),\($0.width),\($0.height)" } ?? "full"
 
@@ -74,7 +73,8 @@ enum Routes {
         } catch {
             return Self.error(500, "capture_failed", detail: "\(error)")
         }
-        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        let capturedAt = Date()
+        let elapsedMs = Int(capturedAt.timeIntervalSince(started) * 1000)
         await screenshotRecord.noteLatency(ms: elapsedMs)
 
         // The capture is already cut to the region, so hash all of it.
@@ -87,7 +87,7 @@ enum Routes {
         return HTTPResponse(status: 200, headers: [
             "Content-Type": "image/png",
             "X-Drums-Gen": String(gen),
-            "X-Drums-Captured-At": stamp.string(from: started),
+            "X-Drums-Captured-At": stamp.string(from: capturedAt),
             "X-Drums-Stale": stale ? "true" : "false",
             "X-Drums-Black": black ? "true" : "false",
         ], body: shot.png)

@@ -52,12 +52,31 @@ public enum FrameHash {
         return Double(dark) >= Double(sampled) * 0.995
     }
 
+    /// The biggest region number the route accepts. No real screen is wider.
+    public static let maxRegionValue = 100_000.0
+
+    /// Reads `x,y,w,h` from the region query parameter. Returns nil when it is
+    /// not four numbers, when any number is not finite (inf, nan) or is above
+    /// `maxRegionValue`, when x or y is negative, or when w or h is not above 0.
+    public static func parseRegion(_ raw: String) -> CGRect? {
+        let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map { Double($0) }
+        guard parts.count == 4, let x = parts[0], let y = parts[1], let w = parts[2], let h = parts[3] else {
+            return nil
+        }
+        for v in [x, y, w, h] where !v.isFinite || v > maxRegionValue { return nil }
+        guard x >= 0, y >= 0, w > 0, h > 0 else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    /// The region as whole pixel edges, cut to the frame. Edges are clamped as
+    /// Doubles before turning into Int, and a non-finite edge gives an empty
+    /// box, so this can never trap.
     private static func pixelBox(_ region: CGRect?, width: Int, height: Int) -> (x0: Int, y0: Int, x1: Int, y1: Int) {
         guard let r = region else { return (0, 0, width, height) }
-        let x0 = max(0, min(width, Int(r.minX.rounded(.down))))
-        let y0 = max(0, min(height, Int(r.minY.rounded(.down))))
-        let x1 = max(0, min(width, Int(r.maxX.rounded(.up))))
-        let y1 = max(0, min(height, Int(r.maxY.rounded(.up))))
-        return (x0, y0, x1, y1)
+        let values = [r.minX, r.minY, r.maxX, r.maxY]
+        if values.contains(where: { !$0.isFinite }) { return (0, 0, 0, 0) }
+        func edge(_ v: Double, _ limit: Int) -> Int { Int(min(max(v, 0), Double(limit))) }
+        return (edge(r.minX.rounded(.down), width), edge(r.minY.rounded(.down), height),
+                edge(r.maxX.rounded(.up), width), edge(r.maxY.rounded(.up), height))
     }
 }
