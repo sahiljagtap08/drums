@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import EnvdCore
 import Foundation
@@ -9,7 +10,7 @@ enum Routes {
     /// and is never changed after that, so reading it from any thread is safe.
     nonisolated(unsafe) static var env: Int = 0
     /// The port envd listens on. Set once in main before the server starts. The
-    /// Host header of mutating requests must name this port.
+    /// Host header of every request must name this port.
     nonisolated(unsafe) static var port: UInt16 = 0
 
     static let generation = Generation(initial: 0)
@@ -24,7 +25,19 @@ enum Routes {
         try Input.perform(spec, screenScale: actionScale)
     }
 
+    /// Every path that exists. A known path with the wrong method gets 405.
+    static let knownPaths: Set<String> = [
+        "/health", "/gen", "/screenshot", "/action", "/log",
+        "/pb", "/launch", "/kill", "/windows", "/axtext",
+    ]
+
     static func handle(_ req: HTTPRequest) async -> HTTPResponse {
+        // The local-only guard runs first, for every route including GET and
+        // unknown paths. A web page in Chrome on this machine could otherwise
+        // read screenshots or state from here (DNS rebinding). Doing it once
+        // here means a new route cannot forget it.
+        if let denied = LocalGuard.check(req, port: port) { return denied }
+
         switch (req.method, req.path) {
         case ("GET", "/health"):
             return await health()
@@ -36,7 +49,21 @@ enum Routes {
             return await actions.handle(req, port: port)
         case ("GET", "/log"):
             return await actions.log(req)
-        case (_, "/health"), (_, "/gen"), (_, "/screenshot"), (_, "/action"), (_, "/log"):
+        case ("GET", "/pb"):
+            return pasteboardGet()
+        case ("POST", "/pb"):
+            return await pasteboardSet(req)
+        case ("DELETE", "/pb"):
+            return await pasteboardClear(req)
+        case ("POST", "/launch"):
+            return await launch(req)
+        case ("POST", "/kill"):
+            return await kill(req)
+        case ("GET", "/windows"):
+            return windows()
+        case ("GET", "/axtext"):
+            return axText(req)
+        case (_, let path) where knownPaths.contains(path):
             return error(405, "method_not_allowed")
         default:
             return error(404, "not_found")
@@ -48,14 +75,13 @@ enum Routes {
     static func health() async -> HTTPResponse {
         let gen = await generation.current()
         let screen = await mainScreen()
-        let body: [String: Any] = [
-            "env": env,
-            "uid": Int(getuid()),
-            "gen": gen,
-            "on_console": onConsole(),
-            "screen": ["w": screen.w, "h": screen.h, "scale": screen.scale],
-            "version": Version.string,
-        ]
+        // Both permission checks only look; neither one shows a prompt.
+        let body = Health.payload(
+            env: env, uid: Int(getuid()), gen: gen, onConsole: onConsole(),
+            screenW: screen.w, screenH: screen.h, scale: screen.scale,
+            version: Version.string,
+            axTrusted: AXIsProcessTrusted(),
+            screenRecording: CGPreflightScreenCaptureAccess())
         return jsonResponse(body)
     }
 
@@ -113,6 +139,90 @@ enum Routes {
             "X-Drums-Stale": stale ? "true" : "false",
             "X-Drums-Black": black ? "true" : "false",
         ], body: shot.png)
+    }
+
+    // MARK: - Pasteboard
+
+    static func pasteboardGet() -> HTTPResponse {
+        let snap = Pasteboard.read()
+        return jsonResponse(["text": snap.text ?? NSNull(), "hash": snap.hash, "changecount": snap.changeCount])
+    }
+
+    /// POST /pb {gen, text}
+    static func pasteboardSet(_ req: HTTPRequest) async -> HTTPResponse {
+        guard let gen = RequestGen.supplied(req) else { return error(400, "bad_request", detail: "gen is required") }
+        guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+              let text = obj["text"] as? String else {
+            return error(400, "bad_request", detail: "body must be JSON with a string text")
+        }
+        switch await generation.applyIfCurrent(gen, { Pasteboard.set(text) }) {
+        case .stale(let current): return HTTPResponse.staleGen(current: current)
+        case .applied(let snap): return jsonResponse(["hash": snap.hash, "changecount": snap.changeCount])
+        }
+    }
+
+    /// DELETE /pb?gen=
+    static func pasteboardClear(_ req: HTTPRequest) async -> HTTPResponse {
+        guard let gen = RequestGen.supplied(req) else { return error(400, "bad_request", detail: "gen is required") }
+        switch await generation.applyIfCurrent(gen, { Pasteboard.clear() }) {
+        case .stale(let current): return HTTPResponse.staleGen(current: current)
+        case .applied: return jsonResponse(["hash": PasteboardHash.empty])
+        }
+    }
+
+    // MARK: - Processes, windows, accessibility text
+
+    /// POST /launch {gen, path, args, env}
+    static func launch(_ req: HTTPRequest) async -> HTTPResponse {
+        let spec: LaunchSpec
+        do { spec = try LaunchSpec.decode(req.body) } catch {
+            return Self.error(400, "bad_request", detail: "\(error)")
+        }
+        switch await generation.applyIfCurrent(spec.gen, { Processes.launch(spec) }) {
+        case .stale(let current):
+            return HTTPResponse.staleGen(current: current)
+        case .applied(.started(let pid)):
+            return jsonResponse(["pid": Int(pid)])
+        case .applied(.failed(let why)):
+            return error(500, "launch_failed", detail: why)
+        }
+    }
+
+    /// POST /kill {gen, pid} or {gen, all:true}. SIGTERM goes out inside the
+    /// generation gate. The wait and the SIGKILL come after, outside it, so a
+    /// slow process never holds up a reset.
+    static func kill(_ req: HTTPRequest) async -> HTTPResponse {
+        let spec: KillSpec
+        do { spec = try KillSpec.decode(req.body) } catch {
+            return Self.error(400, "bad_request", detail: "\(error)")
+        }
+        switch await generation.applyIfCurrent(spec.gen, { Processes.terminate(spec) }) {
+        case .stale(let current):
+            return HTTPResponse.staleGen(current: current)
+        case .applied(.refused(let why)):
+            return error(403, "protected_process", detail: why)
+        case .applied(.signalled(let targets)):
+            await Processes.escalate(targets)
+            return jsonResponse(["killed": targets.map { Int($0.pid) }])
+        }
+    }
+
+    /// GET /windows
+    static func windows() -> HTTPResponse {
+        let body = (try? JSONSerialization.data(withJSONObject: Windows.json(Desktop.windows()), options: [.sortedKeys]))
+            ?? Data("[]".utf8)
+        return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: body)
+    }
+
+    /// GET /axtext?pid=
+    static func axText(_ req: HTTPRequest) -> HTTPResponse {
+        guard let raw = req.query["pid"], let pid = Int32(raw), pid > 0 else {
+            return error(400, "bad_request", detail: "pid must be a process id")
+        }
+        switch Desktop.focusedText(pid: pid) {
+        case .text(let t): return jsonResponse(["text": t])
+        case .unavailable(let reason): return jsonResponse(["text": NSNull(), "reason": reason])
+        }
     }
 
     // MARK: - Generation guard

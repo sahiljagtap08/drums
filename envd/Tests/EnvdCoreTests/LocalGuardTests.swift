@@ -21,3 +21,15 @@ import Testing
     let text = String(decoding: HTTPResponse(status: 403).serialize(), as: UTF8.self)
     #expect(text.hasPrefix("HTTP/1.1 403 Forbidden\r\n"))
 }
+
+@Test func localGuardRefusesGetWithOriginOrBadHost() {
+    // GET routes carry the same protection as mutating ones (DNS rebinding).
+    for path in ["/health", "/screenshot", "/log", "/pb", "/windows", "/axtext"] {
+        let origin = HTTPRequest(method: "GET", path: path, headers: ["host": "127.0.0.1:7701", "origin": "http://evil"])
+        #expect(LocalGuard.check(origin, port: 7701)?.status == 403)
+        let rebound = HTTPRequest(method: "GET", path: path, headers: ["host": "evil.example:7701"])
+        #expect(LocalGuard.check(rebound, port: 7701)?.status == 403)
+        let ok = HTTPRequest(method: "GET", path: path, headers: ["host": "127.0.0.1:7701"])
+        #expect(LocalGuard.check(ok, port: 7701) == nil)
+    }
+}

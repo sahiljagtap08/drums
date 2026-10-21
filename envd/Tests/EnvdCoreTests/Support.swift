@@ -114,3 +114,28 @@ final class SlowWork: @unchecked Sendable {
 func uptimeNow() -> Double {
     ProcessInfo.processInfo.systemUptime
 }
+
+/// Parses a JSON object body into a dictionary (empty if it is not an object).
+func jsonDict(_ data: Data) -> [String: Any] {
+    (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+}
+
+/// A launch body as JSON text, for decode tests.
+func bytes(_ s: String) -> Data { Data(s.utf8) }
+
+/// One raw window dictionary, as CGWindowListCopyWindowInfo returns it.
+func rawWindow(id: Int, pid: Int, app: String, title: String? = nil,
+               x: Double = 0, y: Double = 0, w: Double = 10, h: Double = 10, layer: Int = 0) -> [String: Any] {
+    var d: [String: Any] = [
+        "kCGWindowNumber": id, "kCGWindowOwnerPID": pid, "kCGWindowOwnerName": app,
+        "kCGWindowLayer": layer,
+        "kCGWindowBounds": ["X": x, "Y": y, "Width": w, "Height": h] as [String: Any],
+    ]
+    if let title { d["kCGWindowName"] = title }
+    return d
+}
+
+/// A dictionary sent through JSON and back, as a client would see it.
+func viaJSON(_ object: [String: Any]) -> [String: Any] {
+    jsonDict((try? JSONSerialization.data(withJSONObject: object)) ?? Data())
+}

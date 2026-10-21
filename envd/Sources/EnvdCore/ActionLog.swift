@@ -13,8 +13,13 @@ public struct ActionLogEntry: Codable, Sendable, Equatable {
     public var type: String
     public var status: String
     public var latency_ms: Int
+    /// Only on "pb" entries: the pasteboard hash (see PasteboardHash).
+    public var hash: String?
+    /// Only on "pb" entries: the bundle id (or name) of the front app.
+    public var frontmost: String?
 
-    public init(ts: Double, kind: String, gen: Int, seq: Int, type: String, status: String, latency_ms: Int) {
+    public init(ts: Double, kind: String, gen: Int, seq: Int, type: String, status: String, latency_ms: Int,
+                hash: String? = nil, frontmost: String? = nil) {
         self.ts = ts
         self.kind = kind
         self.gen = gen
@@ -22,6 +27,14 @@ public struct ActionLogEntry: Codable, Sendable, Equatable {
         self.type = type
         self.status = status
         self.latency_ms = latency_ms
+        self.hash = hash
+        self.frontmost = frontmost
+    }
+
+    /// The entry the poller writes every 2 seconds.
+    public static func pasteboardSample(ts: Double, gen: Int, hash: String, frontmost: String?) -> ActionLogEntry {
+        ActionLogEntry(ts: ts, kind: "pb", gen: gen, seq: 0, type: "pb", status: "ok", latency_ms: 0,
+                       hash: hash, frontmost: frontmost)
     }
 }
 

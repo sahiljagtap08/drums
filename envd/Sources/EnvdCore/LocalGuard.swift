@@ -1,4 +1,5 @@
-// Protection for routes that change things. Web pages open in Chrome on this
+// Protection for every route, reads included (a rebinding page could read
+// screenshots and state). Web pages open in Chrome on this
 // machine can send requests to 127.0.0.1, and a DNS rebinding trick can make
 // them look same-origin. A page's request carries an Origin header (browsers
 // add it to cross-site POSTs) and a Host header with a name we do not use. Our

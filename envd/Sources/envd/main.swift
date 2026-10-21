@@ -36,6 +36,8 @@ server.start(
     onReady: { print("envd \(Version.string) env=\(config.env) listening on 127.0.0.1:\(config.port)"); fflush(stdout) },
     onFail: { fail("listener failed: \($0)", code: 1) })
 
+Poller.start(log: Routes.actionLog, generation: Routes.generation)
+
 withExtendedLifetime(lock) {
     dispatchMain()
 }
