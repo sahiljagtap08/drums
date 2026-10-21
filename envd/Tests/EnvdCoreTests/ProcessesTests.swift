@@ -75,3 +75,46 @@ import Testing
     #expect(throws: SpecError.self) { try KillSpec.decode(bytes(#"{"gen":1,"pid":1}"#)) }
     #expect(throws: SpecError.self) { try KillSpec.decode(bytes(#"{"gen":1,"pid":-5}"#)) }
 }
+
+@Test func killAllSparesTheWholeAncestorChainAndKeepAliveNames() {
+    let me: UInt32 = 501
+    // envd (900) <- make (800) <- python3 (700) <- swift-run (650) <- Terminal (600) <- launchd (1).
+    let parents: [Int32: Int32] = [900: 800, 800: 700, 700: 650, 650: 600, 600: 1, 1: 0]
+    let chain = Processes.ancestorChain(of: 900, parentOf: { parents[$0] })
+    #expect(chain == [900, 800, 700, 650, 600, 1])
+
+    // Ancestors have ordinary app-like names, so only the chain can save them.
+    var procs = [
+        ProcInfo(pid: 900, name: "debug-envd", uid: me),
+        ProcInfo(pid: 800, name: "make", uid: me),
+        ProcInfo(pid: 700, name: "python3", uid: me),
+        ProcInfo(pid: 650, name: "swift-run", uid: me),
+        ProcInfo(pid: 600, name: "Terminal", uid: me),
+    ]
+    let keepAlive = ["fish", "dash", "ksh", "tcsh", "ssh", "ssh-agent", "ScreensharingAgent",
+                     "sshd", "zsh", "bash", "sh", "tmux", "caffeinate", "Tailscale"]
+    for (i, name) in keepAlive.enumerated() {
+        procs.append(ProcInfo(pid: Int32(1000 + i), name: name, uid: me))
+    }
+    let apps = [ProcInfo(pid: 2001, name: "TextEdit", uid: me),
+                ProcInfo(pid: 2002, name: "Google Chrome", uid: me),
+                ProcInfo(pid: 2003, name: "soffice", uid: me)]
+    procs += apps
+
+    let targets = Processes.killTargets(procs, uid: me, protectedPids: chain)
+    #expect(targets == [2001, 2002, 2003])
+}
+
+@Test func ancestorChainStopsOnLoopsAndUnknownParents() {
+    #expect(Processes.ancestorChain(of: 5, parentOf: { _ in nil }) == [5])
+    // 5 -> 6 -> 5 would loop forever without the repeat check.
+    let loop: [Int32: Int32] = [5: 6, 6: 5]
+    #expect(Processes.ancestorChain(of: 5, parentOf: { loop[$0] }) == [5, 6])
+}
+
+@Test func screenSharingAndSshAgentAreNeverKilledEvenByPid() {
+    let me: UInt32 = 501
+    for name in ["ScreensharingAgent", "ssh-agent"] {
+        #expect(Processes.verdict(for: ProcInfo(pid: 9, name: name, uid: me), uid: me, protectedPids: []) == .protected)
+    }
+}

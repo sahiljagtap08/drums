@@ -87,9 +87,19 @@ extension Processes {
         return pids.prefix(Int(got)).compactMap { $0 > 0 ? info(pid: $0) : nil }
     }
 
-    /// envd itself and its parent (often the shell or tmux that started it).
+    /// The parent of a process, read from the process table.
+    private static func parent(of pid: Int32) -> Int32? {
+        var bsd = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, size) == size else { return nil }
+        return Int32(bitPattern: bsd.pbi_ppid)
+    }
+
+    /// envd itself and every process above it up to pid 1 (the shell, the
+    /// terminal, make, a Python harness: whatever started envd). Kill never
+    /// touches these.
     static var protectedPids: Set<Int32> {
-        [getpid(), getppid()]
+        ancestorChain(of: getpid(), parentOf: parent(of:))
     }
 
     // MARK: - Kill

@@ -98,6 +98,8 @@ public enum Processes {
         // Session and window server helpers.
         "launchd", "pboard", "distnoted", "WindowManager", "ControlCenter", "NotificationCenter",
         "universalaccessd", "ViewBridgeAuxiliary", "usernoted", "lsd",
+        // Remote access that runs as the user: Screen Sharing / VNC, and the ssh agent.
+        "ScreensharingAgent", "ssh-agent",
     ]
 
     /// Extra names that "kill all" keeps alive, but a kill of one named pid
@@ -105,8 +107,24 @@ public enum Processes {
     /// the shells and tmux it runs in, caffeinate (keeps the machine awake)
     /// and Tailscale (the network path to it).
     public static let keepAliveNames: Set<String> = [
-        "sshd", "sshd-session", "login", "zsh", "bash", "sh", "tmux", "caffeinate", "Tailscale",
+        "sshd", "sshd-session", "ssh", "login", "zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh",
+        "tmux", "caffeinate", "Tailscale",
     ]
+
+    /// `pid` and every parent above it, up to pid 1. `parentOf` gives a
+    /// process's parent, or nil when it cannot be read. The walk stops at pid
+    /// 0 or 1, at a repeat (a loop), or when the parent is unknown. Used so
+    /// kill-all never signals the terminal, shell, make or harness that
+    /// started envd, however deep that chain is.
+    public static func ancestorChain(of pid: Int32, parentOf: (Int32) -> Int32?) -> Set<Int32> {
+        var chain: Set<Int32> = [pid]
+        var current = pid
+        while current > 1, let parent = parentOf(current), parent > 0, !chain.contains(parent) {
+            chain.insert(parent)
+            current = parent
+        }
+        return chain
+    }
 
     /// The pids "kill all" may signal: owned by `uid`, not on either name list,
     /// and not in `protectedPids` (envd itself and its parent). Pids 0 and 1
