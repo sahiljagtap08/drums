@@ -1,1 +1,9 @@
 .superpowers/
+.venv/
+envd/.build/
+__pycache__/
+*.pyc
+results/**/screenshots/
+results/**/*.png
+tasks/golden/work/
+.DS_Store
