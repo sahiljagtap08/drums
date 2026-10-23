@@ -15,7 +15,7 @@ reduces contamination but does not prove there is none.
 | | |
 |---|---|
 | What | `extreme1228/ScaleCUA-qwen3-vl-osworld-sft`, the SFT start point of the released online-RL checkpoint (also published for GLM-4.6V-Flash and Qwen3.5-9B). The RL checkpoint itself (67.7% on OSWorld by the card) is not the start point. |
-| Licence status | **UNRESOLVED grant.** The RL checkpoint card says verbatim: "Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B)." The SFT card was not read separately and may differ. The base `Qwen/Qwen3-VL-8B-Instruct` shows `License: apache-2.0`; the paper names the trained base as Qwen3-VL-8B-**Thinking**, whose licence I did not check. Whether a published cost-per-success comparison is "research" use is an open permission question; only a grant resolves it (section 13). |
+| Licence status | **UNRESOLVED grant.** The RL checkpoint card says verbatim: "Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B)." The SFT card was not read separately and may differ. The base `Qwen/Qwen3-VL-8B-Instruct` shows `License: apache-2.0`; the paper names the trained base as Qwen3-VL-8B-**Thinking**, which is also Apache-2.0 (its model card front matter says `license: apache-2.0`; stated verified by the owner and re-read by me). So the entire BASE chain, Instruct and Thinking, is Apache-2.0, and the "for research" wording exists only on the ScaleCUA fine-tune cards. Whether a published cost-per-success comparison is "research" use is an open permission question; only a grant resolves it (section 13). |
 | Blocked | Use of the weights, until a grant covers it. The ScaleCUA 2,049-task pool and judges (HF `license=null`, hard gate) stay gated independently of the weights. |
 | Buildable now | The trainer `scalecua_rl` (MIT) with only the environment backend swapped; our Drums controller and bridge (tested against `agentrl-worker` 0.4.0 and the real `desktop_env`); the licensed task split (211 training tasks, 150 held out under seed 0). The harness, scorer and cost model do not depend on the route. |
 | Cost to first signal | Lowest of the three: the policy already acts on OSWorld. |
@@ -27,7 +27,7 @@ reduces contamination but does not prove there is none.
 | | |
 |---|---|
 | What | `Qwen/Qwen3-VL-8B-Instruct`, Apache-2.0 on its Hugging Face page (verified). Warm-up (SFT) data would be ours or licensed. |
-| Licence status | Weights: Apache-2.0, clear. Data: **none identified yet.** Candidate sources are unresearched and would each need their own licence check: trajectories we generate ourselves (the terms of whatever model produced them matter), or public trajectory datasets (not surveyed). |
+| Licence status | Weights: Apache-2.0, clear (Instruct and Thinking both; the paper's trained base is Thinking). Data: **none identified yet.** Candidate sources are unresearched and would each need their own licence check: trajectories we generate ourselves (the terms of whatever model produced them matter), or public trajectory datasets (not surveyed). |
 | Blocked | The warm-up data. Without computer-use SFT a base VLM may score near zero on these tasks, which starves RL of reward (unmeasured here; the paper reports Qwen3.5-9B going from 41.8% base to 68.7% after its recipe, which says nothing directly about Qwen3-VL-8B). |
 | Buildable now | Everything on the environment and RL side (same as route i). A data-generation and SFT pipeline is NOT built and would be new work with its own cost and its own validity question. |
 | Cost to first signal | Highest: SFT data and an SFT stage come first, and their cost belongs in the total. |
@@ -51,7 +51,7 @@ is route (ii) with a different label. A route (iii) that is a real, reproducible
 
 | Question | (i) | (ii) | (iii) |
 |---|---|---|---|
-| Weights licence | open grant | clear (Apache-2.0, base Instruct) | not checked |
+| Weights licence | open grant (fine-tune cards only; the base chain is Apache-2.0) | clear (Apache-2.0, base Instruct and Thinking) | not checked |
 | Training data licence | task pool gated; public split licensed but small | no SFT data identified | no data in repo |
 | Recipe is the incumbent's | up to the start point | no | no |
 | Comparable to published numbers | no (our split) | no | no |

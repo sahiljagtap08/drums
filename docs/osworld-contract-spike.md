@@ -198,7 +198,7 @@ Real-host boundary, found by running it:
 Built after pyautogui turned out to install fine with `uv`/pip into a Python 3.12 venv (the earlier failure was a
 source build under the system Python 3.13). `envd_linux/realkit.py` builds a kit from a local checkout of the
 public Apache-2.0 xlang-ai/OSWorld: `desktop_env/server/{main.py,pyxcursor.py,screen_recording.py}` copied
-UNMODIFIED to `/opt/drums-osworld-real`, plus a venv (system site-packages, for `pyatspi`/`gi`) with Flask, lxml,
+UNMODIFIED to `/opt/drums-osworld-real` together with the Apache-2.0 `LICENSE`, the source's `NOTICE` if it has one (xlang-ai/OSWorld at `04718ea` ships none, only `LICENSE`; the manifest says so) and a `PROVENANCE.json` (source repo, exact commit, licence and its hash, build date, per-file hashes, `modified: false`, and that the kit is BUILD-TIME ONLY, uncommitted and not redistributed by this repository), plus a venv (system site-packages, for `pyatspi`/`gi`) with Flask, lxml,
 pyautogui, python-xlib, Pillow. Nothing from it is committed. `Supervisor(osworld_real_kit=...)` makes the session
 start, instead of the stub: a session D-Bus, AT-SPI (`at-spi-bus-launcher`), openbox, and the real server on
 port 5000, with the kit's `python`/`python3` first on PATH (OSWorld tasks run `python -c "import pyautogui..."`).
@@ -279,7 +279,7 @@ claim (c).
 
 ## 9. Current suite status and a host-integration finding (honest accounting)
 
-Last full run (all optional environments set): **142 passed, 3 failed**. The three failures are
+Last full run (all optional environments set): **145 passed, 0 failed** (re-run after the sandbox's kernel state was reset, which removed the Docker residue; before that: 142 passed, 3 failed, see `incident-docker-leftovers.md`). The three failures are
 `test_session_network_policy.py` NAT outbound, real internet, and the firewall-off control, i.e. exactly the tests that
 need FORWARDED traffic. They passed (141 passed, 0 failed) before the systemd probe of
 `gnome-namespace-investigation.md`, which left Docker's netfilter tables in this sandbox. `iptables -S FORWARD` now shows
