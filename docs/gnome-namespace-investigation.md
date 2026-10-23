@@ -1,6 +1,6 @@
 # Can the OSWorld image's GNOME session run in a namespaced session without systemd as PID 1?
 
-STATUS: READ-ONLY DESK INVESTIGATION. Nothing was run. **No answer is established.** This sandbox has no
+STATUS: desk investigation PLUS one local experiment (section 'Experiment: systemd as PID 1', below). The OSWorld image's GNOME session itself is still **not established**. This sandbox has no
 `gnome-session`, `gnome-shell`, `mutter` or `at-spi-bus-launcher`, no OSWorld image and no `/dev/kvm`
 (PID 1 here is `process_api`; `dbus-daemon` and `dbus-run-session` exist). Anything below that is not a
 quoted fact is an inference and says so.
@@ -75,3 +75,44 @@ I did not inspect the actual image, which may differ from the setup instructions
 - Whether the OSWorld image's GNOME session runs without systemd as PID 1: **unknown**.
 - Whether route A fits in our namespace stack, what it costs per session, or whether it changes the density story: **unknown**.
 - Which GNOME version and which session type the image really uses: **unknown**, not inspected.
+
+
+## Experiment: systemd as PID 1 in our namespace (no OSWorld image needed)
+
+`envd_linux/systemd_probe.py` and `Supervisor(exec_systemd=True)`: the session's PID 1 `exec`s `/lib/systemd/systemd
+--system --unit=multi-user.target` after the full-root overlay setup (the session root is this host's Ubuntu 24.04, which
+has systemd 255). One run, no network namespace, one 12 s wait.
+
+Observed, from outside with `nsenter`:
+- systemd stayed PID 1 (`/proc/1/comm` = `systemd`), `systemctl is-system-running` = `running`, 17 active units, 0 failed,
+  `systemd-detect-virt --container` = `container-other` (it did not refuse to run in the namespace).
+- The sandbox host is cgroup v1/hybrid (`/sys/fs/cgroup/<controller>` plus `unified`); systemd ran with that hierarchy
+  inherited from the host (`name=systemd:/init.scope`).
+
+THIS RUN HAD HOST SIDE EFFECTS, which are the main finding:
+1. Systemd started the HOST ROOTFS's enabled units (the session root is a copy of the host `/`). Among them, `docker.service`
+   ran in the host's network namespace (no private netns in this run) and created the `docker0` bridge, Docker's `ip nat`,
+   `ip filter`, `ip6 nat` and `ip6 filter` netfilter tables, and turned `net.ipv4.ip_forward` to 1.
+2. Without a cgroup namespace, systemd wrote units into the HOST's cgroup hierarchy (`init.scope`, `system.slice`, `*.mount`
+   under every controller). The empty leftover directories were removed afterwards with `rmdir` (only empty ones, newer than
+   an hour), which was a hand cleanup with no ownership record.
+3. After the run, `docker0`, those four netfilter tables and `ip_forward=1` are STILL PRESENT in this sandbox. My attempt to
+   delete them was refused by the permission layer, and I did not try another way. Removing them is the owner's decision.
+   They do not collide with the sweep's own `inet drums_*` tables or `dvh*` links, and the test suite restores `ip_forward` to
+   whatever it found, but a run that assumes a clean netfilter ruleset or `ip_forward=0` as the starting value will see
+   different values. No further systemd experiment was run for that reason.
+
+What this says about running systemd inside a session (inference from one run, not a tested design):
+- Capability requirements seen: PID/mount/UTS/IPC namespaces (have), the ability to mount `/run`, `/sys`, `/dev` (have), a
+  writable cgroup hierarchy (host-wide here, which is the problem), `CAP_SYS_ADMIN` (root).
+- NOT satisfied and required before anything real: a PRIVATE network namespace (else services bind host ports and change
+  host netfilter); a CGROUP NAMESPACE with the session placed in its own cgroup subtree first (so systemd's cgroups are
+  inside a subtree we own and the sweep can `rmdir` by ownership record); and a TRIMMED unit set (a clean image, or
+  `systemd.mask` for everything not needed) so the host rootfs's services do not start. None of these three was tried.
+- The recording-update probe boundary found earlier does not need systemd when the guest server is a current build
+  (osworld-contract-spike.md section 8); systemd matters for an older guest image and for GNOME/session services.
+- Still unknown: GNOME Shell or `gnome-session` under that systemd, a logind session, the user systemd instance
+  (`systemctl --user`) that GNOME 3.34+ expects, and the cost per session in memory and start time.
+
+Ownership consequence for the sweep: a systemd session adds cgroup directories to what a run owns. The sweep does not know about
+them yet; until it does, an exec-systemd run is not sweepable.

@@ -43,6 +43,10 @@ def setup_full_root(a):
     for node in ("null", "zero", "full", "random", "urandom", "tty"):
         open(f"{m}/dev/{node}", "w").close()
         sh("mount", "--bind", f"/dev/{node}", f"{m}/dev/{node}")
+    # a private devpts instance, so terminals can open a PTY (gnome-terminal: "Failed to open PTY" without it)
+    os.makedirs(f"{m}/dev/pts", exist_ok=True)
+    sh("mount", "-t", "devpts", "-o", "newinstance,ptmxmode=0666,mode=0620,gid=5", "devpts", f"{m}/dev/pts")
+    os.symlink("pts/ptmx", f"{m}/dev/ptmx")
     os.makedirs(f"{m}/dev/shm", exist_ok=True)
     sh("mount", "-t", "tmpfs", "-o", "mode=1777", "tmpfs", f"{m}/dev/shm")
     for link, target in (("fd", "/proc/self/fd"), ("stdin", "/proc/self/fd/0"),
@@ -57,6 +61,30 @@ def setup_full_root(a):
     sh("pivot_root", m, f"{m}/.drums-old")
     os.chdir("/")
     sh("umount", "-l", "/.drums-old")
+
+
+def start_real_desktop(a):
+    """Session bus, AT-SPI, a window manager, then the public OSWorld server (main.py, unmodified).
+
+    The server is Flask on port 5000; `python`/`python3` on PATH are the kit's virtualenv python, which has
+    pyautogui, as OSWorld tasks expect (`python -c "import pyautogui ..."`)."""
+    kit = a.osworld_real
+    runtime = "/run/drums-xdg"
+    os.makedirs(runtime, mode=0o700, exist_ok=True)
+    env = dict(os.environ, DISPLAY=f":{a.display}", HOME=a.home, LANG="C.UTF-8", LC_ALL="C.UTF-8",
+               XDG_RUNTIME_DIR=runtime, PATH=f"{kit}/bin:" + os.environ.get("PATH", ""),
+               GTK_MODULES="gail:atk-bridge", NO_AT_BRIDGE="0", ACCESSIBILITY_ENABLED="1")
+    open(os.path.join(a.home, ".Xauthority"), "a").close()  # python-xlib insists on the file existing
+    bus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
+                         capture_output=True, text=True, env=env, check=True).stdout.split()
+    env["DBUS_SESSION_BUS_ADDRESS"] = bus[0]
+    quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+    subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately"], **quiet)
+    subprocess.Popen(["openbox"], **quiet)
+    time.sleep(0.5)
+    log = open("/tmp/osworld-real-server.log", "wb")
+    subprocess.Popen([f"{kit}/venv/bin/python", "main.py"], cwd=f"{kit}/server", env=env, stdout=log,
+                     stderr=subprocess.STDOUT)
 
 
 def main(argv=None):
@@ -75,6 +103,8 @@ def main(argv=None):
     ap.add_argument("--osworld-port", type=int, default=0)
     ap.add_argument("--pkg", default="")
     ap.add_argument("--python", default="/usr/bin/python3")
+    ap.add_argument("--osworld-real", default="")  # kit dir (realkit.py): run the REAL OSWorld server instead of the stub
+    ap.add_argument("--exec-systemd", action="store_true")  # EXPERIMENT: exec systemd as PID 1 after the root setup
     ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
     a = ap.parse_args(argv)
 
@@ -99,6 +129,13 @@ def main(argv=None):
         sh("mount", "--bind", stash, "/tmp/.X11-unix")
         sh("umount", "-l", stash)
 
+    if a.exec_systemd:
+        # experiment (docs/gnome-namespace-investigation.md): become systemd instead of starting Xvfb
+        ready.write("ready\n")
+        ready.close()
+        os.execve("/lib/systemd/systemd", ["/lib/systemd/systemd", "--system", "--unit=multi-user.target",
+                                           "--log-target=console", "--log-level=info"],
+                  dict(os.environ, container="drums"))
     x = subprocess.Popen([a.xvfb, f":{a.display}", "-screen", "0", a.size, "-nolisten", "tcp",
                           "-nolisten", "local", "-noreset"], stdout=xlog, stderr=subprocess.STDOUT)
     sock = f"/tmp/.X11-unix/X{a.display}"
@@ -109,7 +146,9 @@ def main(argv=None):
             return 2
         time.sleep(0.05)
 
-    if a.osworld_port:
+    if a.osworld_real:
+        start_real_desktop(a)
+    elif a.osworld_port:
         env = dict(os.environ, PYTHONPATH=a.pkg, DISPLAY=f":{a.display}", HOME=a.home)
         subprocess.Popen([a.python, "-m", "envd_linux.osworld_server", "--port", str(a.osworld_port),
                           "--display", f":{a.display}"], env=env, stdout=subprocess.DEVNULL,

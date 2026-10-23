@@ -33,7 +33,7 @@ class Supervisor:
     def __init__(self, state_dir, lower_home, python="/usr/bin/python3", xvfb="Xvfb",
                  size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0,
                  firewall=None, nat=False, block_private_egress=True,
-                 sweep_on_start=True, sweep_dir=None):
+                 sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -47,6 +47,13 @@ class Supervisor:
         Supervisor then writes a ledger entry (in sweep_dir) so a later sweep can undo its changes if it dies."""
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None
+        if exec_systemd and not (netns and os.environ.get("DRUMS_ALLOW_SYSTEMD_PROBE") == "1"):
+            # an earlier probe without a netns started the host rootfs's docker.service in the host network
+            # namespace (docker0, netfilter tables, ip_forward) and wrote cgroups into the host hierarchy
+            raise ValueError("exec_systemd is an experiment with host side effects: it needs netns=True and "
+                             "DRUMS_ALLOW_SYSTEMD_PROBE=1, and still writes into the host cgroup hierarchy")
+        self.exec_systemd = exec_systemd  # EXPERIMENT: systemd as the session's PID 1 (see systemd_probe.py)
+        self.osworld_real_kit = osworld_real_kit  # path to a realkit.py kit: run the REAL OSWorld server
         self.firewall = netns if firewall is None else firewall
         self.nat, self._saved_forward = nat, None
         if self.firewall and not netns:
@@ -155,7 +162,9 @@ class Supervisor:
              "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
              "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
              "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
-             "--python", self.python, "--tag", self.tag],
+             "--python", self.python, "--tag", self.tag,
+             *(["--osworld-real", self.osworld_real_kit] if self.osworld_real_kit else []),
+             *(["--exec-systemd"] if self.exec_systemd else [])],
             env=env, stdout=initlog, stderr=subprocess.STDOUT, start_new_session=True)
         initlog.close()
         deadline = time.time() + 30

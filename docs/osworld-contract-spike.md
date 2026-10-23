@@ -191,3 +191,105 @@ Real-host boundary, found by running it:
   import torch, librosa, easyocr and more; `metrics.utils` stays real), accessibility tree and terminal
   observations, `step()` with real pyautogui, task `config` setup steps. This is not actual OSWorld
   compatibility (c).
+
+
+## 7. The REAL OSWorld guest server in a session: real accessibility tree and real terminal
+
+Built after pyautogui turned out to install fine with `uv`/pip into a Python 3.12 venv (the earlier failure was a
+source build under the system Python 3.13). `envd_linux/realkit.py` builds a kit from a local checkout of the
+public Apache-2.0 xlang-ai/OSWorld: `desktop_env/server/{main.py,pyxcursor.py,screen_recording.py}` copied
+UNMODIFIED to `/opt/drums-osworld-real`, plus a venv (system site-packages, for `pyatspi`/`gi`) with Flask, lxml,
+pyautogui, python-xlib, Pillow. Nothing from it is committed. `Supervisor(osworld_real_kit=...)` makes the session
+start, instead of the stub: a session D-Bus, AT-SPI (`at-spi-bus-launcher`), openbox, and the real server on
+port 5000, with the kit's `python`/`python3` first on PATH (OSWorld tasks run `python -c "import pyautogui..."`).
+
+`tests/test_osworld_real_server.py` (real sessions) proves: `/platform`, `/screen_size` (1280x800), a real PNG
+`/screenshot`; real pyautogui runs through the real `/execute` (`Size(width=1280, height=800)`); launching gnome-terminal
+through `/setup/launch` makes the server's own `/accessibility` return a real tree with `gnome-terminal-server`, an
+active `Terminal` frame and a `terminal` node whose text contains the command output, and the server's own `/terminal`
+returns `HELLO-IN-SESSION` read through AT-SPI; the screenshot changes when the window appears (a rendered window,
+openbox decorations included).
+
+This closes two of the four items listed as "not exercised": the accessibility tree and the terminal observation are
+now REAL in a Drums session, not stubs. It is still L0, still this sandbox's Ubuntu 24.04 userland, still not the OSWorld
+image, GNOME session or systemd.
+
+Capability and environment findings, from getting there:
+- Terminals need a PTY: the session's `/dev` had none (gnome-terminal: "Failed to open PTY"). `session_init` now mounts a
+  private devpts (`newinstance,ptmxmode=0666`) and links `/dev/ptmx`. A host must permit mounting devpts in the namespace.
+- python-xlib needs `~/.Xauthority` to exist (an empty file is enough); `session_init` creates it.
+- gnome-terminal needs a UTF-8 locale (`LANG=C.UTF-8`) or the server exits with status 8.
+- This host's default `python3` is 3.13 but the distribution's `gi` bindings are for 3.12, so the terminal is launched
+  through `/usr/bin/python3.12` explicitly; on the OSWorld image (system Python 3.12) that quirk would not exist.
+- The kit's `python` must be a wrapper script, not a symlink: Python finds `pyvenv.cfg` beside the path it was invoked
+  by, so a symlink silently ran the base interpreter without pyautogui (found by testing).
+- Server start time varied from under 1 s to about 13 s on first start in a fresh session (one sample each, uninvestigated).
+- apt packages used (Ubuntu 24.04): python3-pyatspi at-spi2-core dbus-x11 python3-gi gir1.2-atspi-2.0 gir1.2-gtk-3.0
+  gnome-terminal openbox python3-tk scrot gnome-screenshot wmctrl xclip socat x11-utils python3-venv.
+
+## 8. A real public task through the real `desktop_env`: setup, step, evaluate (claim (c) machinery, ONE task)
+
+`tests/test_osworld_task_flow.py` (driver `tests/helpers/osworld_task_driver.py`) takes the public task
+`os/e0df059f-...` ("rename the directory todo_list_Jan_1 to todo_list_Jan_2"), JSON unmodified, and runs it through the
+REAL `desktop_env` (OSWorld main `04718ea`) with its REAL metrics and getters, against the real server in a session:
+`DesktopEnv.reset(task_config)` runs the task's setup steps through the real `SetupController` (a `sudo mkdir` and a
+pyautogui click, via the real `/setup/execute`); the observation has a REAL accessibility tree, screenshot and terminal
+key; `env.evaluate()` BEFORE acting scores 0.0 (the test can lose); `env.step(<python>)` goes through the real
+`/execute`; `env.evaluate()` runs the real getter `get_vm_command_line` and the real metric `exact_match` and scores 1.0.
+Only librosa is replaced by a mock (not installed); every metric and getter used is the real code. In the default
+`recording_update=auto` mode the update probe reports the guest's recording build as current (the kit is copied from the
+same commit), so no installer and no systemd are involved. The earlier boundary (the probe raising "not in a supported
+systemd unit") applies when the guest server is an OLDER build than the host package: then the updater installs
+through `systemd-run`.
+
+What this does NOT show: any other task; the OSWorld image; GNOME-dependent behaviour; apps that are not installed
+here (LibreOffice, GIMP, VLC, Chrome, Thunderbird, VS Code); an agent. The action was a hand-written Python
+`os.rename`, not a model's action.
+
+### Which getters and evaluators cannot run without real guest state (counts over the 361-task `test_nogdrive` pool)
+
+Counted from the public JSON; "needs" is read from the getter source (`desktop_env/evaluators/getters/*.py`).
+
+| Part of the task JSON | Count | What it needs | Runs in this sandbox? |
+|---|---|---|---|
+| setup `download` | 271 tasks' steps | guest INTERNET (the guest fetches HF/Drive URLs) through our NAT, plus the hosted assets | Not tested: the sandbox's raw internet reaches IPs but not those hosts through the proxy. NAT itself is tested. |
+| setup `launch` | 254 | the application installed: LibreOffice, Chrome, VLC, GIMP, Thunderbird, VS Code | No (only gnome-terminal/Chromium-for-Playwright exist here) |
+| setup `open` | 154 | `/setup/open_file` plus an app that can open the file | No |
+| setup `execute` / `command` | 151 / 28 | a guest shell, `sudo`, pyautogui | YES (the flow above) |
+| setup `activate_window` | 65 | `wmctrl` and a window manager | Partly: wmctrl and openbox exist; not exercised |
+| setup `chrome_open_tabs` / `chrome_close_tabs` | 46 / 1 | Chrome with a remote-debugging port reachable from the host (CDP, port 9222 via socat) | No |
+| result getter `vm_file` | 255 | the file the application wrote, read through `/file`; only as real as the application action that made it | Mechanism yes, content needs the app |
+| result `vm_command_line` / `vm_command_error` / `vm_terminal_output` | 41 / 1 / 2 | a guest shell; the terminal one a focused gnome-terminal through AT-SPI | YES for command line (above); terminal: observation proven, task flow not run |
+| result `cache_file`, `content_from_vm_file`, `list_directory`, `vm_screen_size` | 9 / 1 / 1 / 1 | guest files / directory tree / screen size | Mechanism yes |
+| result `accessibility_tree`, `active_url_from_accessTree` | 5 / 13 | a real AT-SPI tree of Chrome (needs Chrome with accessibility enabled) | Tree: yes for gnome-terminal; Chrome: no |
+| result Chrome getters (`active_tab_*`, `open_tabs_info`, `bookmarks`, settings, `history`, `cookie_data`, ...) | about 45 | Chrome over CDP (`env.vm_ip:chromium_port`), profile files | No |
+| result `vlc_config`, `vlc_playing_info` | 10 | VLC with its HTTP interface on 8080 | No |
+| result `gimp_config_file`, `vscode_config`, `audio_in_slide`, `background_image_in_slide` | 4 / 2 / 2 / 1 | the app's config or output files | No |
+| result `vm_wallpaper` | 2 | GNOME `gsettings` wallpaper | No (no GNOME session) |
+| expected `cloud_file` | 202 | HOST-side download of the reference file from HF/Drive (internet from the evaluator host, not the guest) | Not tested; independent of the Drums backend |
+| expected `rule`, `rule_relativeTime` | 171 / 13 | nothing (inline) | Yes |
+| expected `info_from_website`, `pdf_from_url`, `gotoRecreationPage_and_get_html_content`, `employee_age_reference` | 4 | live websites | No |
+| GNOME-setting tasks (e.g. `check_gnome_favorite_apps`, the `gsettings` tasks) | a handful of `os` tasks | GNOME schemas and the GNOME settings daemon | No: untested without a GNOME session |
+
+Tasks whose setup is only `execute`/`command`/`sleep`, whose result is a command-line/terminal getter and whose expected
+value is an inline rule: 8 of the 361 (all `os`). So "which public tasks can run here" is a small, app-free subset;
+the rest need the OSWorld image's applications, internet-hosted assets, or both. That is the real-host boundary for
+claim (c).
+
+
+## 9. Current suite status and a host-integration finding (honest accounting)
+
+Last full run (all optional environments set): **142 passed, 3 failed**. The three failures are
+`test_session_network_policy.py` NAT outbound, real internet, and the firewall-off control, i.e. exactly the tests that
+need FORWARDED traffic. They passed (141 passed, 0 failed) before the systemd probe of
+`gnome-namespace-investigation.md`, which left Docker's netfilter tables in this sandbox. `iptables -S FORWARD` now shows
+`-P FORWARD DROP` followed by DOCKER-USER/DOCKER-FORWARD jumps, so the kernel drops forwarded packets whatever our
+`inet drums_*` table accepts. The failures are therefore an environment condition I caused, not a regression in the
+firewall; I could not remove the leftover state (the permission layer refused it and I did not work around that), so the
+suite is NOT green here until the owner removes `docker0`, the four tables (`ip nat`, `ip filter`, `ip6 nat`, `ip6 filter`)
+and resets `ip_forward`, or authorises me to.
+
+Host-integration finding that holds on any Docker host: another table's `FORWARD` policy of DROP overrides our
+`accept`. A real run that uses `nat=True` on a host where Docker (or any firewall with a drop policy) is active needs an
+explicit allow for the session subnet, or Docker stopped. That is a host requirement for the real run, not something the
+sweep or the table can fix.
