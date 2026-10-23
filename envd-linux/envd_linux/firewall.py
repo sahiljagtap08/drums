@@ -13,14 +13,16 @@ only a side effect of the host's `net.ipv4.ip_forward`. This makes it policy:
             other addresses, other sessions' gateway addresses and host services bound elsewhere are DROPped.
   nat:      with `nat=True`, masquerade session traffic leaving by a non-session interface.
 
-The table is created by `install()` and removed by `remove()`; one `nft delete table` undoes all of it.
+Each Supervisor run owns ONE table named `drums_<run id>` (the default name `drums` is for direct use only);
+the name is the ownership record, kept in the sweep ledger. `install()` creates it and `remove()` deletes it;
+one `nft delete table` undoes all of it, and no other table is ever touched.
 It does not change `ip_forward` (the Supervisor does that when egress is requested and restores it).
 
 Requires the `nft` binary and CAP_NET_ADMIN in the host network namespace (kernel: nf_tables, NAT,
 masquerade). IPv6: sessions get no IPv6 address and the table does not cover it.
 Crash behaviour (observed): if the process is killed, nothing runs close(); the table, the session
-veths and, with nat, `ip_forward=1` stay behind and the next run fails with 'File exists' until they are removed
-(`nft delete table inet drums`, delete `dvh*` links, set `ip_forward` back).
+processes and, with nat, `ip_forward=1` stay behind. envd_linux/sweep.py removes exactly what the run's
+ledger entry says it owns.
 Not covered: DNS (a session's resolv.conf is the host's, which may point at a loopback stub the session
 cannot reach), bandwidth limits, and per-session egress allow-lists."""
 
@@ -39,14 +41,14 @@ def _nft(script):
         raise FirewallError(f"nft failed: {r.stderr.strip()[-300:]}")
 
 
-def ruleset(nat=False, block_private=True, base="10.200"):
+def ruleset(nat=False, block_private=True, base="10.200", table="drums"):
     noegress = "" if nat else '        iifname "dvh*" drop\n'
     private = f"        iifname \"dvh*\" ip daddr {PRIVATE} drop\n" if block_private else ""
     natchain = (f"    chain post {{\n        type nat hook postrouting priority srcnat; policy accept;\n"
                 f"        ip saddr {base}.0.0/16 oifname != \"dvh*\" masquerade\n    }}\n") if nat else ""
-    return f"""add table inet drums
-delete table inet drums
-table inet drums {{
+    return f"""add table inet {table}
+delete table inet {table}
+table inet {table} {{
     chain relay {{
         type filter hook forward priority -10; policy accept;
         ct state established,related accept
@@ -60,24 +62,24 @@ table inet drums {{
 """
 
 
-def install(nat=False, block_private=True, base="10.200"):
-    _nft(ruleset(nat, block_private, base))
+def install(nat=False, block_private=True, base="10.200", table="drums"):
+    _nft(ruleset(nat, block_private, base, table))
 
 
-def add_slot(slot, base="10.200"):
+def add_slot(slot, base="10.200", table="drums"):
     """Per-slot input policy, installed before the session's link is brought up."""
     gw = f"{base}.{slot}.1"
-    _nft(f"""add table inet drums
-add chain inet drums in_{slot}
-flush chain inet drums in_{slot}
-add rule inet drums in_{slot} ct state established,related accept
-add rule inet drums in_{slot} ip daddr {gw} accept
-add rule inet drums in_{slot} drop
+    _nft(f"""add table inet {table}
+add chain inet {table} in_{slot}
+flush chain inet {table} in_{slot}
+add rule inet {table} in_{slot} ct state established,related accept
+add rule inet {table} in_{slot} ip daddr {gw} accept
+add rule inet {table} in_{slot} drop
 """)
-    exists = subprocess.run(["nft", "list", "chain", "inet", "drums", "inp"], capture_output=True, text=True).stdout
+    exists = subprocess.run(["nft", "list", "chain", "inet", table, "inp"], capture_output=True, text=True).stdout
     if f'iifname "dvh{slot}"' not in exists:
-        _nft(f'add rule inet drums inp iifname "dvh{slot}" jump in_{slot}\n')
+        _nft(f'add rule inet {table} inp iifname "dvh{slot}" jump in_{slot}\n')
 
 
-def remove():
-    subprocess.run(["nft", "delete", "table", "inet", "drums"], capture_output=True)
+def remove(table="drums"):
+    subprocess.run(["nft", "delete", "table", "inet", table], capture_output=True)

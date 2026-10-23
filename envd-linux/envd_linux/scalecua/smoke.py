@@ -8,8 +8,18 @@ It builds sessions through `DrumsEnvironmentController`, and per attempt checks 
 contract end to end (platform, screen size, screenshot, command execution, file round trip),
 recording how long each session took to become healthy. It never trains anything.
 
-Safety (exercised only by the local 4 s-cap test in test_scalecua_smoke.py; nothing about any cloud
-instance is guaranteed-capped yet):
+TEARDOWN CONTRACT. A bounded job's teardown has up to three layers:
+  1. INNER: the wall cap, SIGTERM/SIGINT handling, `ctl.shutdown()` and `Supervisor.close()` below.
+  2. OUTER SWEEP (`envd_linux/sweep.py`, built and tested): run at start and again at the end. It removes
+     what a killed or crashed run leaves (session processes, mounts, host veth links, the `inet drums`
+     table) and restores `net.ipv4.ip_forward` to the value recorded before the run changed it. It is
+     idempotent, a no-op on a clean host, and never touches another live Supervisor. Both reports are written
+     to the output JSON as `sweep_start` and `sweep_end`. It runs only if a process survives to call it;
+     a kill -9 of THIS job is cleaned by the next sweep (the next job's start, or `python -m envd_linux.sweep`).
+  3. On AWS only: an independent instance-termination layer (a timer or scheduler outside this process that
+     terminates the instance whatever happens to the job). NOT implemented here and out of scope for this
+     code; until it exists nothing about an AWS run is guaranteed-capped.
+Tested locally only: the 4 s wall-cap test and the sweep tests (tests/test_sweep.py). Safety by layer 1:
   - a hard wall-clock cap: at the cap (or on SIGTERM/SIGINT) every session is destroyed, the
     partial results are written with status "wall_cap_reached" / "interrupted", exit code 3;
   - sessions are always torn down on exit (try/finally and atexit);
@@ -229,12 +239,25 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--events", default=None)
     a = ap.parse_args(argv)
+    from .. import sweep as sw
     from ..session import Supervisor
-    sup = Supervisor(a.state, a.template, root_mode=a.root_mode, netns=not a.no_netns, osworld_port=5000)
+    start_report = sw.sweep()  # outer sweep before: removes what an earlier killed run left
+    sup = Supervisor(a.state, a.template, root_mode=a.root_mode, netns=not a.no_netns, osworld_port=5000,
+                     sweep_on_start=False)
+    res = None
     try:
         res = run(a, sup)
     finally:
-        sup.close()
+        sup.close()  # inner teardown
+        end_report = sw.sweep()  # outer sweep after: catches anything the inner teardown missed
+        try:
+            with open(a.out) as f:
+                doc = json.load(f)
+        except (OSError, ValueError):
+            doc = {}
+        doc["sweep_start"], doc["sweep_end"] = start_report, end_report
+        with open(a.out, "w") as f:
+            json.dump(doc, f, indent=1)
     return {"ok": 0, "wall_cap_reached": 3, "interrupted": 3}.get(res["status"], 1)
 
 

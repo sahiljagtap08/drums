@@ -33,17 +33,19 @@ ipr.route("add", dst="default", gateway=gw)
 """
 
 
-def setup(slot, init_pid, python=sys.executable, base="10.200", firewall=False):
+def setup(slot, init_pid, python=sys.executable, base="10.200", firewall=False, tag="", table="drums"):
     from pyroute2 import IPRoute
     gw, ip = addresses(slot, base)
     host_if, sess_if = f"dvh{slot}", f"dvs{slot}"
     if firewall:
         from . import firewall as fw
-        fw.add_slot(slot, base)
+        fw.add_slot(slot, base, table)
     ipr = IPRoute()
     try:
         ipr.link("add", ifname=host_if, kind="veth", peer={"ifname": sess_if, "net_ns_pid": init_pid})
         idx = ipr.link_lookup(ifname=host_if)[0]
+        if tag:
+            ipr.link("set", index=idx, ifalias=tag)  # the ownership record on the host-side link
         ipr.addr("add", index=idx, address=gw, prefixlen=30)
         ipr.link("set", index=idx, state="up")
     finally:
@@ -61,8 +63,10 @@ def main(argv=None):
     ap.add_argument("--pid", type=int, required=True)
     ap.add_argument("--base", default="10.200")
     ap.add_argument("--firewall", action="store_true")
+    ap.add_argument("--tag", default="")
+    ap.add_argument("--table", default="drums")
     a = ap.parse_args(argv)
-    print(json.dumps(setup(a.slot, a.pid, base=a.base, firewall=a.firewall)))
+    print(json.dumps(setup(a.slot, a.pid, base=a.base, firewall=a.firewall, tag=a.tag, table=a.table)))
 
 
 if __name__ == "__main__":

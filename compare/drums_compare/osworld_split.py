@@ -8,6 +8,9 @@ never train and evaluate on the same task. This writes a split where:
     side, so a held-out task never shares its judge function with a training task;
   * the split is a pure function of (task ids, seed, eval_fraction); the output records all three.
 
+OUR split is OUR benchmark, not comparable to published headlines. Grouping by judge signature reduces
+contamination but does not prove there is none.
+
 Limits, stated: grouping by judge function does NOT separate tasks that share a source page, an app
 template or a setup file (a union over `source` as well collapses 242 of 361 tasks into one component,
 so it cannot be enforced); same-domain tasks therefore still resemble each other across the split. The

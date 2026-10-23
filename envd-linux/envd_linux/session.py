@@ -9,6 +9,7 @@ overlay of the whole root filesystem, a window manager."""
 
 import json
 import os
+import uuid
 import shutil
 import signal
 import subprocess
@@ -31,7 +32,8 @@ def _child_pids(pid):
 class Supervisor:
     def __init__(self, state_dir, lower_home, python="/usr/bin/python3", xvfb="Xvfb",
                  size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0,
-                 firewall=None, nat=False, block_private_egress=True):
+                 firewall=None, nat=False, block_private_egress=True,
+                 sweep_on_start=True, sweep_dir=None):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -39,8 +41,12 @@ class Supervisor:
         firewall (default: on whenever netns is): the nftables policy in firewall.py, so sessions cannot
         reach each other whatever `ip_forward` is. nat: also give sessions outbound internet by masquerade;
         this sets the host's net.ipv4.ip_forward=1 (restored by close()). block_private_egress: with nat,
-        drop session traffic to private/link-local ranges (cloud metadata, the VPC, the LAN)."""
+        drop session traffic to private/link-local ranges (cloud metadata, the VPC, the LAN).
+        sweep_on_start: first run the outer sweep (sweep.py), which removes what a crashed earlier run left
+        (sessions, links, the nftables table, ip_forward) but never touches another LIVE Supervisor. This
+        Supervisor then writes a ledger entry (in sweep_dir) so a later sweep can undo its changes if it dies."""
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
+        self.sweep_dir, self._ledger = sweep_dir, None
         self.firewall = netns if firewall is None else firewall
         self.nat, self._saved_forward = nat, None
         if self.firewall and not netns:
@@ -54,14 +60,19 @@ class Supervisor:
         self._procs = {}
         self._epochs = {}
         os.makedirs(self.state_dir, exist_ok=True)
+        from . import sweep as sw
+        self.start_sweep = sw.sweep(ledger=sweep_dir) if sweep_on_start else None
+        self.run_id = uuid.uuid4().hex[:12]
+        self.tag, self.table = f"drums:{self.run_id}", f"drums_{self.run_id}"
+        self._ledger = sw.register(self.state_dir, self.run_id, sweep_dir)
         if self.firewall:
             from . import firewall as fw
-            fw.install(nat=nat, block_private=block_private_egress)
+            sw.record(self._ledger, "tables", self.table)  # the record comes BEFORE the table exists
+            fw.install(nat=nat, block_private=block_private_egress, table=self.table)
             if nat:
-                with open("/proc/sys/net/ipv4/ip_forward") as f:
-                    self._saved_forward = f.read().strip()
-                with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
-                    f.write("1")
+                self._saved_forward = sw.read_forward()
+                sw.record(self._ledger, "forward", {"prior": self._saved_forward, "set_to": "1"})
+                sw.write_forward("1")
         if self.root_mode == "full" and self.lower:
             self._mount_template()
 
@@ -71,6 +82,8 @@ class Supervisor:
         mounted on the host and shared (one RAM copy, page cache shared) by every session."""
         self._tplfs = os.path.join(self.state_dir, "tplfs")
         os.makedirs(self._tplfs, exist_ok=True)
+        from . import sweep as sw
+        sw.record(self._ledger, "mounts", self._tplfs)  # recorded before the mount exists
         subprocess.run(["mount", "-t", "tmpfs", "tmpfs", self._tplfs], check=True)
         subprocess.run(["cp", "-a", self.lower + "/.", self._tplfs], check=True)
         self.lower = self._tplfs
@@ -90,11 +103,15 @@ class Supervisor:
             self._tplfs = None
         if self.firewall:
             from . import firewall as fw
-            fw.remove()
+            fw.remove(self.table)
             if self._saved_forward is not None:
-                with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
-                    f.write(self._saved_forward)
+                from . import sweep as sw
+                sw.write_forward(self._saved_forward)
                 self._saved_forward = None
+        if self._ledger:
+            from . import sweep as sw
+            sw.unregister(self._ledger)
+            self._ledger = None
 
     def _dir(self, slot):
         return os.path.join(self.state_dir, f"s{slot}")
@@ -118,7 +135,14 @@ class Supervisor:
         n = self.display(slot)
         host_link = f"/tmp/.X11-unix/X{n}"
         if os.path.lexists(host_link):
+            # only a symlink that is dangling or points into a state dir is ours to replace; anything
+            # else (a real X server's socket, someone else's link) is refused, never deleted
+            target = os.readlink(host_link) if os.path.islink(host_link) else None
+            if target is None or (os.path.exists(host_link) and not target.startswith(self.state_dir + "/")):
+                raise SessionError(f"{host_link} exists and is not a Drums link; refusing to replace it")
             os.unlink(host_link)
+        from . import sweep as sw
+        sw.record(self._ledger, "x11_links", host_link)
         os.symlink(os.path.join(d, "x11", f"X{n}"), host_link)
         ready = os.path.join(d, "ready")
         env = dict(os.environ, PYTHONPATH=PKG_DIR)
@@ -131,7 +155,7 @@ class Supervisor:
              "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
              "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
              "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
-             "--python", self.python],
+             "--python", self.python, "--tag", self.tag],
             env=env, stdout=initlog, stderr=subprocess.STDOUT, start_new_session=True)
         initlog.close()
         deadline = time.time() + 30
@@ -157,8 +181,9 @@ class Supervisor:
                 "unshare_pid": proc.pid, "created": time.time(), "root_mode": self.root_mode,
                 "netns": self.netns, "osworld_port": self.osworld_port}
         if self.netns:
+            sw.record(self._ledger, "links", f"dvh{slot}")  # recorded before the link exists
             r = subprocess.run([self.python, "-m", "envd_linux.netsetup", "--slot", str(slot), "--pid",
-                                str(kids[0]), *(["--firewall"] if self.firewall else [])], capture_output=True, text=True, env=env)
+                                str(kids[0]), *(["--firewall", "--table", self.table] if self.firewall else []), "--tag", self.tag], capture_output=True, text=True, env=env)
             if r.returncode != 0:
                 self._procs.pop(slot, None)
                 proc.kill()

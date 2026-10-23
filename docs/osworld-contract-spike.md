@@ -103,28 +103,55 @@ own Xvfb, browser and guest server. It is an engineering precursor, not a Drums 
 (a) The REAL Chromium end-to-end task through the daemon is in `envd-linux-spike.md`. (b) Everything in this document is the OSWorld guest-server STUB contract: accessibility tree and terminal are empty, pyautogui is absent, many routes return 501. (c) Actual OSWorld app-environment compatibility is NOT proven; (b) is not (c). This is an L0 precursor; no L1 (shared pre-warmed runtime forks) claim follows from it.
 
 
-## 4. Session network policy (added; L0 precursor, claim (b)-adjacent plumbing)
+## 4. Session network policy and the outer sweep (added; L0 precursor)
 
-`envd_linux/firewall.py` installs an nftables table `inet drums` (removed by `Supervisor.close()`). It needs the
-`nft` binary and CAP_NET_ADMIN in the host network namespace (nf_tables, NAT and masquerade in the kernel);
-this sandbox has all of them, so it ran here. A host without them cannot run it, and that is a host
-requirement for the real run.
+`envd_linux/firewall.py` installs an nftables table per run, named `drums_<run id>`. It needs the `nft` binary and
+CAP_NET_ADMIN in the host network namespace (nf_tables, NAT and masquerade in the kernel); this sandbox has all
+of them, so it ran here. A host without them cannot run it, and that is a host requirement for the real run.
 
 - Session to session: dropped in the forward chain. Inbound to a session: dropped (only replies to its own
   connections). A session may talk to the host only at its own gateway address (per-slot input chain); the
   host's other addresses and other sessions' gateways are dropped.
 - Egress is policy: with `nat=False` every session-originated forward is dropped; with `nat=True` the host
-  masquerades session traffic (and sets `net.ipv4.ip_forward=1`, restored on close) and private, link-local
-  (cloud metadata 169.254.169.254) and CGNAT destinations stay dropped (`block_private_egress`).
-- Tests (`tests/test_session_network_policy.py`): the peer behind a stand-in uplink sees the host address, not the
-  session's (NAT); private and metadata targets refused; session-to-session refused with forwarding on in both
-  directions; only the own gateway reachable on the host; firewall holds with forwarding forced on and no NAT;
-  teardown removes the table and restores `ip_forward`; a CONTROL run with the firewall off and forwarding on
-  shows the probe does reach, so the refusals are the policy's doing.
-- Not done: DNS, IPv6, bandwidth limits, per-session egress allow-lists, more than one Supervisor per host,
-  recovery after a crash. Observed once: a test run killed by a timeout left sessions, `dvh*` links, the table and
-  `ip_forward=1` behind, and the next full run failed 18 tests with 'File exists' until they were removed by hand. A
-  real run needs an outer cleanup (the instance auto-termination covers it only if one exists, which is unbuilt).
+  masquerades session traffic (and sets `net.ipv4.ip_forward=1`) and private, link-local (cloud metadata
+  169.254.169.254) and CGNAT destinations stay dropped (`block_private_egress`).
+- Tests (`tests/test_session_network_policy.py`): NAT seen as the masqueraded address behind a stand-in uplink;
+  private and metadata targets refused; session-to-session refused with forwarding on, both directions; only the
+  own gateway reachable on the host; firewall holds without NAT; a control run with the firewall off reaches.
+- Not done: DNS, IPv6, bandwidth limits, per-session egress allow-lists.
+
+### Outer sweep (`envd_linux/sweep.py`)
+
+Inner teardown is `Supervisor.close()`. If a process is killed -9, nothing runs it; one such run left sessions, a
+table and `ip_forward=1` behind, and the next full run failed 18 tests with "File exists". The sweep is the
+outer cleanup, built around OWNERSHIP, not names:
+
+- Every run has a tag `drums:<run id>` and writes a ledger entry in `/run/drums` (or `DRUMS_SWEEP_DIR`) BEFORE it
+  creates anything, appending as it goes. Records: the tag on the session cmdline (`--tag`); the interface alias
+  on the host-side veth; the table name; the mount points; the X11 symlinks; the `ip_forward` value before and
+  after the run changed it.
+- The sweep deletes ONLY resources carrying such a record. Never by name prefix: another process on a shared host
+  may own a `dvh0`, a table called `drums`, or a mount under a similar path. `ip_forward` is restored to the
+  RECORDED prior value, and only if it still has the value the run set (a foreign change is left alone).
+- A LIVE Supervisor (ledger entry whose pid and start time match a running process) is never touched, except
+  with `force`. Idempotent; a no-op on a clean host.
+- Wired in: `Supervisor.__init__` sweeps crashed predecessors before creating anything (`sweep_on_start`);
+  the smoke job sweeps before and after and writes `sweep_start` / `sweep_end` into its JSON; standalone:
+  `python -m envd_linux.sweep [--ledger DIR] [--force]`. (`daemon.py` is the single-session daemon and creates no
+  host resources; the Supervisor is the start point that matters.)
+- A leak that has no record (made before this existed, or by a process that never wrote a ledger entry) is NOT
+  swept. It must be removed by hand; that is the cost of never deleting what is not provably ours.
+- Tests (`tests/test_sweep.py`, `tests/test_sweep_ledger.py`): kill -9 a holder with NAT and two real sessions,
+  assert the leak exists, sweep, assert the run's processes, table, mount, ledger entry and `ip_forward` (prior
+  `0` and prior `1`) are restored; a foreign link `dvh9`, tables `drums` and `drums_foreign`, a tagless process under
+  the same state dir, a tmpfs mount under it and an X11 symlink all SURVIVE, including under `force`; second sweep
+  and sweep on a clean host are no-ops; a live Supervisor is untouched; a new Supervisor cleans its dead
+  predecessor at start and can reuse the slot with no "File exists"; a foreign `ip_forward` change is not
+  clobbered; the CLI works; 8 threads recording at once lose nothing (a race on a shared temp file was found and
+  fixed by this test).
+- Not covered: files left in a state dir; cgroups (none created); the AWS instance-termination layer (out of
+  scope, unbuilt). The bounded job's teardown contract is in the `smoke.py` docstring: inner teardown + outer
+  sweep + (on AWS only) that independent termination layer.
 
 ## 5. The OSWorld provider bridge (added; claim (b), not (c))
 

@@ -220,9 +220,9 @@ def test_firewall_holds_without_nat_when_forwarding_is_forced_on(tmp_path, uplin
 def test_close_removes_the_table_and_restores_forwarding(tmp_path):
     before = forward()
     n = make_stack(tmp_path, nat=True)
-    assert "table inet drums" in subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
+    assert f"inet {n.sup.table}" in subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
     close_stack(n)
-    assert "inet drums" not in subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
+    assert n.sup.table not in subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
     assert forward() == before
 
 

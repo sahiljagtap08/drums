@@ -75,6 +75,7 @@ def main(argv=None):
     ap.add_argument("--osworld-port", type=int, default=0)
     ap.add_argument("--pkg", default="")
     ap.add_argument("--python", default="/usr/bin/python3")
+    ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
     a = ap.parse_args(argv)
 
     socket.sethostname(f"drums-s{a.display}")

@@ -334,6 +334,8 @@ uses only the public OSWorld tasks cannot copy that and has to **partition** the
 - `test_small` (39) and `test_infeasible` (25) are not used for anything in the comparison; if a smoke or
   development set is needed it must be carved out of `train` before training, not out of `heldout`.
 
+**Our split is OUR benchmark, not comparable to published headlines. Grouping by judge signature reduces contamination but does not prove there is none.** These two sentences apply wherever the split or its results are mentioned.
+
 ### What the partition actually costs (from the verification above, not from intuition)
 
 1. **The held-out set is not the standard benchmark.** It is 150 of 361 tasks. Its score is not comparable
@@ -376,6 +378,8 @@ training pool.
   generator would be allowed; no such generator exists.
 - **D. The ScaleCUA 2,049 pool and judges**: still GATED. The HF dataset has `license=null`; unresolved is
   unused. This section does not change that.
+
+Routes for the start policy (licence status, what is blocked, what is buildable, no recommendation): `weights-routes.md`.
 
 ### Weights: an OPEN PERMISSION QUESTION, not a decision item
 

@@ -50,6 +50,8 @@ def test_smoke_runs_the_guest_contract_checks_and_cleans_up(tmp_path):
     assert s["attempts"] == 4 and s["ok"] == 4 and not s["faults"]
     assert s["start_s_p50"] is not None and s["session_pss_mib_mean"] > 0
     assert res["host"]["dev_kvm"] in (True, False)
+    # the outer sweep ran before and after, and on a run that tore down cleanly it found nothing to remove
+    assert res["sweep_start"]["killed"] == [] and res["sweep_end"]["killed"] == [] and res["sweep_end"]["tables"] == []
     assert veths() == [] and subprocess.run(["pgrep", "-x", "Xvfb"], capture_output=True).returncode == 1
     events = [json.loads(x) for x in (tmp_path / "events.jsonl").read_text().splitlines()]
     assert sum(1 for e in events if e["event"] == "start") == 4
