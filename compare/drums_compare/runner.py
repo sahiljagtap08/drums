@@ -133,6 +133,7 @@ def run(args):
         "cost_basis": json.loads(args.cost_json),
         "tasks_file": args.tasks, "tasks_sha256": file_sha256(args.tasks),
         "git_commit": git_commit(), "agent": args.agent_id,
+        "drums_level": args.drums_level,  # L0 or L1 for the Drums side, empty for incumbents
     }
     with open(os.path.join(args.out, "run.json"), "w") as f:
         json.dump(meta, f, indent=1)
@@ -187,6 +188,7 @@ def main(argv=None):
     ap.add_argument("--hardware-json", default="{}")
     ap.add_argument("--cost-json", default='{"usd_per_hour_total": 0.0, "source": "unset"}')
     ap.add_argument("--agent-id", default="fake-agent")
+    ap.add_argument("--drums-level", default="", choices=["", "L0", "L1"])
     ap.add_argument("--sample-resources", action="store_true")
     ap.add_argument("--sample-interval-s", type=float, default=5.0)
     ap.add_argument("--fake-latency-s", type=float, default=0.0)

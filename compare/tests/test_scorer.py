@@ -12,7 +12,8 @@ def make(tmp_path, name, *, n=200, valid_frac=0.9, slot_s=60.0, usd_h=10.0, wall
     d.mkdir()
     run = {"side": name, "fake": fake, "seed": seed, "t_start": 0.0, "t_end": wall_s, "provision_s": 0.0,
            "hardware": hardware if hardware is not None else {"x": 1},
-           "cost_basis": {"usd_per_hour_total": usd_h if cost else 0}, "tasks_sha256": sha, "agent": "a"}
+           "cost_basis": {"usd_per_hour_total": usd_h if cost else 0}, "tasks_sha256": sha, "agent": "a",
+           "drums_level": "L0" if name.startswith("drums") else ""}
     json.dump(run, open(d / "run.json", "w"))
     with open(d / "attempts.jsonl", "w") as f:
         for i in range(n):
@@ -116,3 +117,14 @@ def test_reset_percentiles(tmp_path):
         a["reset_s"] = float(i)
     m = scorer.side_metrics(run, att, samp)
     assert m["reset_s_p50"] == pytest.approx(49.5) and m["reset_s_p95"] == pytest.approx(94.05)
+
+
+def test_drums_side_without_level_blocks_verdict(tmp_path):
+    d = make(tmp_path, "drums-linux", n=200)
+    run = json.load(open(os.path.join(d, "run.json")))
+    run["drums_level"] = ""
+    json.dump(run, open(os.path.join(d, "run.json"), "w"))
+    b = make(tmp_path, "base", n=200)
+    r = scorer.main([d, b])
+    assert r["verdict"]["headline"] == "no_verdict"
+    assert any("drums_level" in p for p in r["input_problems"])

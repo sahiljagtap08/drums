@@ -15,3 +15,6 @@ Run with `PYTHONPATH=compare`. Real sides are added by registering a factory in
 Layout: `harness.py` (one attempt and validity), `runner.py` (slots, schedule, audit),
 `resources.py` (per-env RSS/CPU), `scorer.py` (metrics and verdict), `envd_http.py`,
 `verify_http.py` (real adapters), `fakes.py` (fakes, labelled).
+
+Also: `python -m drums_compare.conformance PORT` checks a guest daemon (envd-linux) against
+the envd protocol; it has run only against stubs. Drums-Linux runs set `--drums-level L0|L1`.

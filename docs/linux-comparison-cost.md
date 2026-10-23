@@ -1,69 +1,69 @@
-# First run: cost estimate and shutdown plan
+# Linux-vs-Linux comparison: cost model and shutdown plan
 
-STATUS: PROPOSAL ONLY. The USD 100 and USD 140 figures below are NOT approved. Live price
-verification and the owner's approval come first. No launch, provisioning or cloud
-credential use happens before that.
+STATUS: DRAFT MODEL, NOTHING APPROVED. The earlier Mac-based plan and its figures
+(USD 100, USD 140, a 10-hour cap) are withdrawn and are not carried into this document.
+No launch, provisioning or cloud credential use happens, and no approval is assumed.
+No price below was fetched live; every price is VERIFY LIVE and the dollar values are
+illustrations of the formula at a placeholder price, not a request for approval.
 
-NOTHING HAS BEEN LAUNCHED. No cloud resource exists, no cloud credential was used, and no
-price below was fetched live. Every price is from memory or from published figures
-and is marked VERIFY LIVE. Do not approve on these numbers; check them first (AWS Pricing
-page or Pricing API, for the exact region, on the day).
+## Shape of the first run
 
-## Plan
+One bare-metal x86 host of one instance type, used by every side in turn (design doc
+section 2): Drums-Linux, then each runnable incumbent, in alternating order. All sides on
+the same host makes hourly cost identical by construction. Drums-Linux needs no KVM and
+could be built and tested on a much smaller instance first; only the KVM incumbent
+needs metal (or nested virtualization, see below).
 
-Linux side only, on AWS. The Drums side runs on a Mac whose availability is undecided
-(section "Drums side" below).
+Instances: 1 (a second only if the host cannot be reused between a bake-off and the
+measured runs, which is not planned).
 
-| Line | Assumption | Unit price (VERIFY LIVE) | Quantity | Ceiling |
-|---|---|---|---|---|
-| Bare-metal x86 host, KVM-capable (e.g. a `c5.metal` or `c6i.metal` class, 96-128 vCPU, 192-256 GiB) | 1 instance, on-demand, one region | planning ceiling USD 8.00/h. Remembered list prices are about USD 4-6/h, so the ceiling leaves margin. | 10 h hard wall (setup 3, bake-off 3, measured runs 3, spare 1) | USD 80 |
-| EBS gp3 for base image, qcow2 copies, results | 500 GB | about USD 0.08 per GB-month, about USD 0.003 per GB-day, prorated | 1 day | USD 2 |
-| Data transfer out / image downloads | image pull ~24 GB in; results out < 1 GB | inbound free; outbound about USD 0.09/GB | < 1 GB | USD 1 |
-| Margin for price error and a failed first boot | | | | USD 17 |
-| Total proposed hard cap | | | | USD 100 |
+## Hours (a plan to confirm, not measurements)
 
-Instance choice depends on quota, which I could not check: an on-demand vCPU quota of at
-least 96 for the instance family is probably needed and a new account may have less.
-Whether newer non-metal instance types now allow nested KVM at acceptable cost is not
-verified. If they do, a smaller instance could replace the metal host. Decide at launch
-time with live information.
+| Block | Hours | Notes |
+|---|---|---|
+| Host setup: filesystem (XFS reflink), kernel limits, image pulls (OSWorld image 23.7 GB), pinned installs | 3 | The image pull and conversion time is the least certain part. |
+| Bake-off and tuning, per incumbent (3 incumbents at 1 h each, tuning time capped) | 3 | Cap is part of fairness. |
+| Drums-Linux smoke, isolation probes, conformance run | 1 | |
+| Measured runs: 4 sides x (concurrency sweep 1, 8, 16, 32 and the largest sustainable level) x 2 orders | 4 | Depends on per-attempt time, which is unknown until W1 runs. |
+| Spare, cleanup, copying results off the host | 1 | |
+| Total | 12 | |
 
-Not included, because it is not AWS and has not been priced: model API spend for
-Phase B, and Cua/CUA-Lite cloud services (not used).
+If the incumbent count shrinks (a candidate cannot run, CUA-Lite stays licence-blocked)
+the hours shrink with it.
 
-## Drums side
+## Upper bound formula
 
-Options, none chosen:
+Upper bound = hours x ceiling price per hour + EBS + transfer + margin.
 
-1. The owner's own Mac or Mac Studio: no incremental cash, but a declared hourly cost for
-   fairness (design doc section 2). Currently unavailable.
-2. EC2 Mac dedicated host: remembered on-demand cost is about USD 0.65-1.6/h depending
-   on model, with a 24-hour minimum allocation, so roughly USD 16-40 for one host-day
-   (VERIFY LIVE). Release is not instant after the minimum.
+- Ceiling price per hour: P_ceiling, to be set from the live price of the chosen type, plus
+  a stated margin. As an illustration only, at a placeholder P_ceiling of USD 8.00/h:
+  12 h x 8.00 = USD 96, plus about USD 2 EBS (500 GB gp3 for one day, remembered rate about
+  USD 0.08 per GB-month) and under USD 1 transfer, plus margin. This is an arithmetic
+  example, not a quote and not a proposal to approve.
+- Not included: inference for Phase B (model, GPU type and hours undecided; it is a
+  separate approval), and any GPU for training (Phase C is out of scope).
 
-## Upper bound
+## What must happen before any approval request
 
-Linux side: USD 100 hard cap (above). With option 2 on the Mac side, add about USD 40.
-Upper bound for the first run: about USD 140, excluding model spend. The estimate is
-dominated by the metal instance hour price and by how long setup takes; neither is
-measured.
+1. Choose the instance type from the metal families below and read its live on-demand price
+   for the chosen region.
+2. Read the account's vCPU quota (checklist below) and file an increase if needed.
+3. Confirm the type is offered in a zone of the region.
+4. Fix the hours after W1 has been dry-run on whichever side can run it locally.
+5. Only then state a dollar cap and ask for approval.
 
-## Shutdown plan
-
-Before launch, once the owner approves the cost and the exact instance type:
+## Shutdown plan (applies once something is approved)
 
 1. One tag on every resource (`purpose=drums-linux-comparison`, `expires=<UTC timestamp>`).
-2. Launch with instance-initiated shutdown behaviour set to terminate and
-   `DeleteOnTermination` on all volumes.
-3. A dead-man timer on the host: `shutdown -h +600` at boot, so it dies at 10 hours
-   even if the session is lost; re-armed deliberately, not automatically.
-4. An AWS Budget alert at USD 50 and USD 100 to the owner's email.
+2. Instance-initiated shutdown behaviour set to terminate; `DeleteOnTermination` on all volumes.
+3. A dead-man timer on the host (`shutdown -h +N`, N from the approved hours), re-armed
+   deliberately, never automatically.
+4. An AWS Budget alert at half and at the full approved cap, to the owner's email.
 5. No Elastic IP, NAT gateway, load balancer, snapshots or AMIs left behind. Results are
    copied off the host (`results/`) before terminating.
 6. At the end, list instances, volumes, snapshots and addresses in the region and confirm
    empty; report the result.
-7. Run time is visible in `run.json` (`provision_s`, `t_start`, `t_end`), so the billed
-   hours can be reconciled with the AWS bill.
+7. `run.json` records `provision_s`, `t_start`, `t_end` so billed hours reconcile with the bill.
 
 ## Nested KVM on non-metal instances (researched, read-only)
 
@@ -86,8 +86,9 @@ AWS What's New 2026-02-16 and 2026-06-18; re:Post article of 2026-02-17.
 - AWS's own guidance: for workloads that need hardware virtualization and are performance
   or latency sensitive, evaluate bare metal. Nested KVM adds a layer (L0 Nitro, L1 your
   instance, L2 the guest).
-- Consequence for this test: a tuned baseline should use bare metal for the primary run,
-  otherwise nested overhead handicaps the baseline and weakens it. A nested run on
+- Consequence for this test: the KVM incumbent should use bare metal for the primary run,
+  otherwise nested overhead handicaps it and weakens the baseline. Drums-Linux needs no
+  KVM and runs fine on the same host. A nested run on
   `m8i`/`c8i`/`r8i` is worth adding as a second data point because it is what many users
   would actually rent; it should be reported as a separate row, never swapped in.
 - Not verified: actual nested-KVM performance for desktop guests, and prices of these
@@ -133,5 +134,4 @@ first. The quota code for the Standard family is, from memory, L-1216C47A (VERIF
 
 ## What happens next
 
-Stop here. Launching needs explicit approval of the instance type, count, hours and the
-dollar cap, after live price verification.
+Stop here. Nothing is launched, and no approval is assumed.

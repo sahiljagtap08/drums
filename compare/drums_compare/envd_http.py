@@ -1,11 +1,10 @@
-"""Adapter for the in-guest daemon. Drums' envd (Swift, macOS) already speaks this
-HTTP protocol; a Linux guest daemon (`envd-linux`, referenced in pyproject.toml but NOT
-in the repo yet) must expose the same routes so both sides see identical observations
-and actions. Routes used: GET /health, POST /gen, GET /screenshot, POST /action,
+"""Adapter for the Drums-Linux guest daemon (`envd-linux`, referenced in pyproject.toml but
+NOT in this checkout yet, scoped in docs/drums-linux-architecture.md). It speaks the HTTP
+protocol of the repo's envd (Swift, macOS), which is the specification. Routes used: GET /health, POST /gen, GET /screenshot, POST /action,
 POST /kill, DELETE /pb, POST /launch.
 
 Written from the envd Swift source. Tested only against a FAKE server in the tests
-(no macOS here); never run against a real envd in this sandbox.
+(no macOS here, and envd-linux does not exist); never run against a real daemon.
 """
 
 import json
@@ -24,11 +23,18 @@ def png_size(png: bytes):
 
 
 class EnvdHttpEnv(Env):
-    def __init__(self, slot, port, launch_cmd, host="127.0.0.1", timeout_s=15.0, pid_roots=()):
-        """launch_cmd: {"path": ..., "args": [... "{url}" ...]} started on each reset."""
+    def __init__(self, slot, port, launch_cmd, host="127.0.0.1", timeout_s=15.0, pid_roots=(),
+                 pre_reset=None, pids_fn=None):
+        """launch_cmd: {"path": ..., "args": [... "{url}" ...]} started on each reset.
+
+        pre_reset(slot, gen): optional hook run before the daemon is told the new
+        generation. The Linux Drums side uses it to have the session manager destroy
+        and recreate the attempt's private sandbox. pids_fn() returns the pids to sample
+        for resources (for example every pid in the session's cgroup)."""
         self.slot, self.base, self.timeout = slot, f"http://{host}:{port}", timeout_s
         self.launch_cmd = launch_cmd
         self.pid_roots = list(pid_roots)
+        self.pre_reset, self.pids_fn = pre_reset, pids_fn
         self.gen = 0
         self.seq = 0
 
@@ -54,6 +60,8 @@ class EnvdHttpEnv(Env):
 
     def reset(self, task, gen, token):
         self.gen, self.seq = gen, 0
+        if self.pre_reset:
+            self.pre_reset(self.slot, gen)
         health = self._json("GET", "/health")
         if health.get("ax_trusted") is False or health.get("screen_recording") is False:
             raise EnvFault("permissions_missing", json.dumps(health))
@@ -81,4 +89,4 @@ class EnvdHttpEnv(Env):
         return self.observe()
 
     def pids(self):
-        return self.pid_roots
+        return self.pids_fn() if self.pids_fn else self.pid_roots

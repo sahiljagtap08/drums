@@ -1,78 +1,100 @@
-# Linux baseline candidates
+# Incumbent Linux setups: what is runnable end to end
 
-Checked on 2026-10-23 (updated after a second licence pass) from the owning repos and project pages where reachable from this
-sandbox. Nothing below was installed or run. "Not verified" means exactly that.
+Checked 2026-10-23 from the owning repos, papers and project docs reachable from this
+sandbox. Nothing below was installed or run. "Verified" means I read it in the owner's own
+source; "unverified" means I could not, and says what I did read instead.
 
-## What the repo has today (branch `exp1-sessions-per-studio`)
+## What the repo has (this checkout, branch `claude/linux-comparison-prep`)
 
-- Exists and has tests: `envd/` (Swift, macOS-only daemon: screenshot, action, pasteboard,
-  launch/kill, windows, axtext, generation guard) and `verify-server/` (Python; form
-  rows, visibility counter, leases, audit).
+- Exists and tested: `envd/` (Swift, macOS-only), `verify-server/`, and the comparison
+  harness under `compare/`.
 - Stubs: `Makefile` targets `setup-host`, `probes`, `sweep`, `reproduce` only print
-  "see Task N". `README.md` says "nothing measured yet".
-- Referenced by `pyproject.toml` but absent from the repo: `drumsctl`, `metrics`,
-  `report`, `envd-linux`.
-- Not in this checkout (the owner says the repo is correct, so read this as "missing here", not "never built elsewhere"; it may exist on another machine or branch I cannot see): `baseline-linux/`, any Gate or probe code, any task definitions
-  (`.gitignore` mentions `tasks/golden/work/` only), any Studio-based Linux VM baseline or
-  trace of one. I searched the tree and history of the branch; the Studio-based baseline
-  is not here. The word "Studio" appears only in the README ("sessions per Studio") and the
-  branch name; I read it as a Mac Studio but the repo does not say. Per the owner the
-  Studio is not available now, so this comparison does not depend on it. It also means the
-  Drums-side hardware is undecided (see the design doc, section 2).
+  "see Task N".
+- Referenced by `pyproject.toml` but absent from this checkout: `drumsctl`, `metrics`,
+  `report`, `envd-linux`. The owner says the setup may exist elsewhere; read this as
+  "missing here", not "never built".
+- Not in this checkout: `baseline-linux/`, Gate/probe code, task definitions, any
+  Studio-based Linux baseline.
 
-## Candidates
+## What "runnable" requires
 
-| Candidate | Owner / repo | License (source) | Runs without a VM? | What I could confirm |
-|---|---|---|---|---|
-| OSGym | agiopen-org/osgym | MIT per the authors: the paper (v2/v3) says the code is released under MIT, and the owner's Hugging Face dataset card (agiopen-org/osgym) has `license: mit`. The GitHub `LICENSE` file itself still could not be read from this sandbox (the crawler returns not found for the repo). Treat as MIT-stated, file unconfirmed. | No. KVM (`/dev/kvm`) in Docker, qcow2 per replica with reflink copy-on-write on XFS, pre-warmed runner pool, 6 GB per container. | Design and numbers are from the paper only, not reproduced. Setup per the README text seen in a fork: Python 3.10, Docker, OSWorld images. Not run. |
-| CUA-Lite | cua-lite/cua-lite (Berkeley RDI), created 2026-08-23 | UNRESOLVED. The repo page shows no licence, `LICENSE`, `LICENSE.md` and `main` raw paths are not found, and a third-party index lists "License file: Not found". Without a licence, default copyright applies, so reuse and redistribution are not granted. Its sibling forks under the same org (OSWorld, android_world: Apache-2.0; cua: MIT) are forks of other projects and say nothing about CUA-Lite's own code. Action: ask the maintainers (contact is on the project blog) or re-check the repo in a browser. | Its own sandboxes are VM-free Docker containers (no `/dev/kvm`); its `osworld` env is VM-in-Docker with QEMU/KVM, and `lite.osworld` is the lighter GNOME container variant. Requires Python >=3.12,<3.13 per `pyproject.toml`. | Gym-style reset/step/close, screenshots plus click/type tool calls. Young project (110 stars). Not run. Closest to Drums' "no VM" claim, but cannot be used until the licence question is answered. |
-| Cua SDK and sandboxes | trycua/cua | MIT for the SDK and most of the repo (LICENSE.md and the README licensing section, read from the owning repo). Not everything: Cua Spaces and Cua Driver Bench are source-available under FSL-1.1-MIT (competing hosted service not allowed; becomes MIT after two years); third-party parts carry their own licences (for example Ultralytics AGPL-3.0 in an optional extra). Keep to the MIT parts. | Local Linux sandbox defaults to a gVisor container, QEMU VMs also supported (project docs). Python 3.12/3.13. | Cloud sandboxes are metered and are not used here. Name clash: the "CUA-Sandbox" research paper (arXiv 2609.32750) is a different project from the trycua `cua-sandbox` package. Not run. |
-| BrowserGym | ServiceNow/BrowserGym | Apache-2.0 (LICENSE from the owning repo) | Yes, Playwright Chromium. | Browser only, not a desktop. Cannot run desktop tasks. |
+A candidate is runnable for this comparison only if all of these hold:
 
-Other incumbents with open code (for reference, not proposed as baselines): ComputerRL
-(THUDM/ComputerRL, Apache-2.0, OSWorld-derived, qemu-in-docker, needs KVM), EvoCUA
-(meituan/EvoCUA, Apache-2.0, a model and eval repo rather than the training sandbox
-fleet), CUA-Gym (xlang-ai/CUA-Gym, Apache-2.0 code, CC-BY-4.0 data). MAI-Gym's README
-says framework source is "coming soon", so it is not runnable now.
+- R1 Code: obtainable, with a licence cleared for our use.
+- R2 Images: every image the task set needs is obtainable and its licence known.
+- R3 Hardware: a host type that satisfies its requirements (for KVM sides: `/dev/kvm`,
+  see the cost doc for bare metal versus nested virtualization).
+- R4 Adapter: an adapter from our `Env` interface (screenshot, click, dblclick, type, key,
+  scroll, done) to its native API, with the cost of the translation inside the measurement.
+- R5 Task parity: the same tasks run there and are scored by the same verifier (W1), or by
+  its native evaluators (W2).
+- R6 Fault visibility: its resets, retries and failures can be observed so we count them
+  the same way (section 5 of the design doc).
+- R7 Resource attribution: its per-environment processes can be found for the sampler
+  (a container or a qemu process per env).
+- R8 Pinning: versions and digests recorded.
 
-## No candidate is called the strongest
+## Assessment
 
-Choosing by reputation or by paper numbers would weaken the test. Proposed selection:
+None of the four is runnable today: R4 (adapters) and R6/R7 (instrumentation) do not
+exist for any of them, and no host exists. The table says what else is missing.
 
-1. Put the same fixed three tasks and one fixed hardware class in front of each runnable
-   candidate (OSGym-style KVM, CUA-Lite container, Cua SDK Linux sandbox).
-2. Give each the same capped tuning effort (hours, recorded).
-3. Measure valid rollouts per hour, cost per valid rollout and RAM per env at 1, 8, 16 and
-   32 concurrent environments, with the same harness and scorer used for the final run.
-4. The best measured candidate on cost per valid rollout is the baseline. Runners-up stay
-   in the report if they were run.
+| | OSGym-style KVM + CoW | CUA-Lite | Cua SDK Linux sandbox |
+|---|---|---|---|
+| R1 code | Paper links `github.com/agiopen-org/osgym`. I could not open that repo from this sandbox. I read a fork's README (`invincible-jha/osgym`, via search) for setup and API. So existence and current contents of the owning repo: unverified. | `github.com/cua-lite/cua-lite` exists (README and `pyproject.toml` read from it; created 2026-08-23, 110 stars). | `github.com/trycua/cua` exists (README, LICENSE.md read from it). Package `cua-sandbox` on PyPI (v0.3.5 listing seen; docs mention 0.4.3 and 0.7.0, so the version in use must be pinned). |
+| R1 licence | MIT: the paper states it, and the owner's Hugging Face dataset card has `license: mit` (verified from the authors). The `LICENSE` file in the GitHub repo: unverified (not reachable). | UNRESOLVED. No licence shown on the repo page; `LICENSE` and `LICENSE.md` raw paths return not found; a third-party index says no licence file. Default copyright applies, so reuse is not granted. Blocked until the maintainers or a browser check settle it. | SDK and most of the repo: MIT (verified, LICENSE.md and README licensing section). Cua Spaces and Cua Driver Bench: FSL-1.1-MIT (verified in README). Third-party parts carry their own licences (e.g. Ultralytics AGPL-3.0 in an optional extra). Use only the MIT parts. |
+| R2 images | OSWorld images: `Ubuntu.qcow2` 23.7 GB (11.4 GB as zip) at `xlangai/ubuntu_osworld` on Hugging Face (verified file sizes), run via `happysixd/osworld-docker`. Image licence: unverified (no licence field in what I read). OSGym's task JSONs are in `agiopen-org/osgym` on Hugging Face (MIT card). | Its `osworld` env builds a `cua-lite/osworld` image `FROM happysixd/osworld-docker` and provisions the VM disk (README for the env, verified); `lite.osworld` is a lighter GNOME container variant whose image I did not inspect. Same OSWorld image licence question. | Built-in Linux images are `ghcr.io/trycua/linux:24.04` (container rootfs, gVisor if `runsc` is installed, else runc) and `24.04-disk` (QEMU VM), per the SDK docs (verified). A Fleet artifact `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04` also appears in docs. Image content licence: unverified. |
+| R3 hardware | `/dev/kvm`; reflink-capable XFS on fast NVMe for the CoW disks; raised kernel limits (aio, inotify, conntrack, file descriptors); RAM sized at about 6 GB per replica (paper). Paper's rig: 88-core, 768 GB. | `lite.osworld`: Docker only, no `/dev/kvm`. Its OSWorld VM env: KVM. Python >=3.12,<3.13. GPUs only for model serving and training, which our Phase A does not use. | Container path: Docker or Podman (+ gVisor optionally). VM path: `qemu-system-x86_64`, KVM if present, otherwise slow TCG. Python 3.11-3.13 depending on the doc page. Cloud path: Cua Cloud ended on 2026-10-18 per the docs; do not use any hosted path. |
+| R4 adapter | Its API (read from the fork README): `POST /reset` with task config, `POST /step` with an action string, `POST /shutdown`, `GET /screenshot`. Our actions must be translated into its action strings. Not written. | `lite.gym` reset/step/close with a desktop action space (click, type...) and screenshot observations. Closest to our vocabulary. Adapter not written. | `sb.screenshot()`, shell and input interfaces via `cua-spacesd` in the image. Adapter not written. |
+| R5 task parity | W1 needs a browser in the image and a route from the guest to `verify-server` (QEMU user networking exposes the host at a fixed gateway address; to be tested). W2 uses OSWorld evaluators. | Same two questions; the container variant has a different desktop. | Image has Chromium; same network question for W1. W2 not natively supported (Cua Bench is their own evaluation). |
+| R6 fault visibility | The paper says steps are retried (default 10) and failed runners reassigned; those paths need logging hooks or wrapper counting. Its health checks and runner pool recycle hide resets. | Not examined. | Sandbox lifecycle errors surface as exceptions; internal retries not examined. |
+| R7 attribution | One container wraps one qemu process per replica; the sampler needs the container's pids. | Container or VM per env. | gVisor puts the workload under a `runsc` sandbox process; per-env RSS needs a decision (the gVisor sandbox's own cgroup). |
+| Still missing before first run | host, quota, images, adapter, instrumentation, W1 task start inside each image, pinned versions, owning-repo licence check | licence answer, host, images, adapter, instrumentation, pinned versions | host, images, local runtime installed (`cua runtime doctor` reports what a host can run), adapter, instrumentation, pinned version |
 
-If a candidate cannot be made to run, it is reported as "did not run" with the reason; it
-is not silently dropped.
+Everything about incumbents' performance is from their papers and docs, not from runs here.
 
-## Tuning the baseline must not be weakened
+## No incumbent is called the strongest
 
-Applied to the KVM candidate (taken from the OSGym paper's design plus standard practice,
-each to be verified on the real box):
+Selection is by measurement, not reputation: run each runnable candidate on the same host
+class, with the same fixed workload and the same capped tuning effort (hours, recorded),
+over the same concurrency sweep, using the harness and scorer of the final run. The best on
+cost per valid rollout is the headline incumbent; the others stay in the report. If a
+candidate cannot be made to run it is reported as "did not run" with the reason, never
+dropped silently.
 
-- Reflink copy-on-write disks (XFS on NVMe or fast EBS, `cp --reflink=always` of a qcow2
-  base), `noatime`, large `allocsize`.
-- KVM with `-cpu host`, virtio devices, a fixed small guest RAM size, KSM or page sharing
-  where it helps.
-- Pre-warmed pool of booted guests recycled between tasks; fast reset by snapshot restore
-  instead of reboot if it works.
-- Kernel limits raised (aio, inotify, conntrack, file descriptors) as the paper describes.
-- Memory-bound packing: choose guests per host by RAM, since the paper reports RAM, not CPU,
-  becomes the limit at high density.
-- Same screen size and the same in-guest daemon protocol as Drums.
+## Tuning an incumbent must not be weakened
 
-For container candidates: same pool/reset ideas, resource limits matched to what the
-tasks need, shared image layers.
+KVM + CoW candidate (from the OSGym paper's design, to be verified on the real box):
+reflink CoW qcow2 copies on XFS with `noatime` and a large `allocsize`; `-cpu host`, virtio
+devices, small fixed guest RAM, page-sharing where it helps; pre-warmed runner pool recycled
+between tasks, snapshot-restore reset if it works; raised kernel limits; memory-bound
+packing (the paper finds RAM, not CPU, limits density at scale); the same screen size.
 
-## Gaps that must be closed before a real run
+Container candidates: pre-warmed pool, image layers shared, per-container limits matched to
+what the tasks need, runc versus gVisor tested and recorded.
 
-- A Linux guest daemon (`envd-linux`) speaking the same routes as `envd`, or adapters
-  from each candidate's own API to this repo's `Env` interface. Only the `envd` HTTP
-  adapter exists (`compare/drums_compare/envd_http.py`).
-- A base desktop image with the browser and the task start commands.
-- A decision on whether `verify-server` runs on the host or beside each side.
+## Matched workload and agent (what every side runs)
+
+- W1 task set from `tasks/linux_comparison/tasks.json` (three enabled browser-in-desktop
+  tasks; the specs are unvalidated on any real environment); W2 (OSWorld subset with native
+  evaluators) when the controller shim exists.
+- Same seed and task order; same group size G per task in Phase B.
+- One agent: Phase A scripted and keyboard-driven; Phase B one open VLM from a single
+  inference endpoint, same prompt, sampling and step budget on every side. Model choice is
+  open.
+- Observation 1280x800 PNG; actions in the envd vocabulary through each side's adapter.
+- Verification by `verify-server` (W1) or OSWorld evaluators (W2).
+
+## Other incumbents with open code (reference only)
+
+- ComputerRL (`THUDM/ComputerRL`, Apache-2.0 verified): OSWorld-derived, qemu-in-docker
+  Ubuntu VMs, KVM recommended; it is the environment layer behind a 9B model at 48.9% OSWorld.
+  Could be a fourth baseline if its environment layer can be run without its trainer.
+- EvoCUA (`meituan/EvoCUA`, Apache-2.0 verified): model and evaluation code, not the
+  sandbox fleet.
+- CUA-Gym (`xlang-ai/CUA-Gym`, Apache-2.0 code, CC-BY-4.0 data): task synthesis pipeline.
+- MAI-Gym (`Tongyi-MAI/MAI-Gym`): README says framework source is "coming soon"; not runnable.
+- CUA-Sandbox (arXiv 2609.32750): research paper; I found no released code. Not the same as
+  the trycua `cua-sandbox` package.
+- BrowserGym (`ServiceNow/BrowserGym`, Apache-2.0 verified): browser only; cannot run
+  desktop tasks.

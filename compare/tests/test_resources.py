@@ -43,3 +43,18 @@ def test_sampler_writes_one_line_per_env(tmp_path):
         s.sample_once(fh)
     row = json.loads(open(p).read())
     assert row["slot"] == 3 and row["rss_kib"] == 1000
+
+
+def test_overlapping_roots_are_counted_once():
+    r = LinuxProcReader()
+    me = os.getpid()
+    once = r.env_usage([me])
+    twice = r.env_usage([me, me])
+    assert abs(twice[0] - once[0]) < 0.05 * once[0]  # about the same rss, not doubled
+
+
+def test_cgroup_pids_reads_procs_file(tmp_path):
+    from drums_compare.resources import cgroup_pids
+    (tmp_path / "cgroup.procs").write_text("12\n34\n")
+    assert cgroup_pids(str(tmp_path)) == [12, 34]
+    assert cgroup_pids(str(tmp_path / "missing")) == []

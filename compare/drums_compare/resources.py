@@ -2,7 +2,7 @@
 
 Linux reader uses /proc (RSS and PSS summed over each env's process tree, so a KVM
 guest counts as its qemu process). It reports per-env numbers; run-level host totals are
-from /proc/meminfo and /proc/stat. The macOS reader (for the Drums side) uses `ps`.
+from /proc/meminfo and /proc/stat. Linux only: every side of the comparison is Linux.
 """
 
 import json
@@ -36,6 +36,15 @@ def tree(root, kids):
     return out
 
 
+def cgroup_pids(cgroup_dir):
+    """All pids in a cgroup v2 directory (for sessions that live in their own cgroup)."""
+    try:
+        with open(os.path.join(cgroup_dir, "cgroup.procs")) as f:
+            return [int(x) for x in f.read().split()]
+    except OSError:
+        return []
+
+
 class LinuxProcReader:
     clk_tck = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
@@ -45,24 +54,26 @@ class LinuxProcReader:
         rss = cpu = 0
         pss = 0
         pss_ok = True
-        for root in roots:
-            for pid in tree(root, kids):
-                try:
-                    with open(f"/proc/{pid}/stat") as f:
-                        d = f.read()
-                    fields = d[d.rindex(")") + 2:].split()
-                    cpu += int(fields[11]) + int(fields[12])  # utime + stime
-                    with open(f"/proc/{pid}/statm") as f:
-                        rss += int(f.read().split()[1]) * (os.sysconf("SC_PAGE_SIZE") // 1024)
-                except (OSError, ValueError, IndexError):
-                    continue
-                try:
-                    with open(f"/proc/{pid}/smaps_rollup") as f:
-                        for line in f:
-                            if line.startswith("Pss:"):
-                                pss += int(line.split()[1])
-                except OSError:
-                    pss_ok = False
+        # A set: roots may overlap (for example every pid of a cgroup), and a process
+        # must be counted once.
+        pids = {pid for root in roots for pid in tree(root, kids)}
+        for pid in sorted(pids):
+            try:
+                with open(f"/proc/{pid}/stat") as f:
+                    d = f.read()
+                fields = d[d.rindex(")") + 2:].split()
+                cpu += int(fields[11]) + int(fields[12])  # utime + stime
+                with open(f"/proc/{pid}/statm") as f:
+                    rss += int(f.read().split()[1]) * (os.sysconf("SC_PAGE_SIZE") // 1024)
+            except (OSError, ValueError, IndexError):
+                continue
+            try:
+                with open(f"/proc/{pid}/smaps_rollup") as f:
+                    for line in f:
+                        if line.startswith("Pss:"):
+                            pss += int(line.split()[1])
+            except OSError:
+                pss_ok = False
         return rss, (pss if pss_ok else None), cpu
 
     def host(self):
@@ -77,41 +88,6 @@ class LinuxProcReader:
         idle = ticks[3] + (ticks[4] if len(ticks) > 4 else 0)
         return {"mem_total_kib": mem["MemTotal"], "mem_avail_kib": mem["MemAvailable"],
                 "cpu_busy_ticks": sum(ticks) - idle, "cpu_total_ticks": sum(ticks)}
-
-
-class MacPsReader:
-    """Not exercised in this sandbox (no macOS). Parses `ps -axo pid,ppid,rss,time`."""
-
-    clk_tck = 1  # cpu_ticks are reported in seconds
-
-    def _table(self):
-        out = subprocess.run(["ps", "-axo", "pid=,ppid=,rss=,cputime="], capture_output=True,
-                             text=True, check=True).stdout
-        rows = {}
-        for line in out.splitlines():
-            pid, ppid, rss, cpu = line.split()
-            secs = 0.0
-            for part in cpu.split(":"):
-                secs = secs * 60 + float(part)
-            rows[int(pid)] = (int(ppid), int(rss), secs)
-        return rows
-
-    def env_usage(self, roots):
-        rows = self._table()
-        kids = {}
-        for pid, (ppid, _, _) in rows.items():
-            kids.setdefault(ppid, []).append(pid)
-        rss = 0
-        cpu = 0.0
-        for root in roots:
-            for pid in tree(root, kids):
-                if pid in rows:
-                    rss += rows[pid][1]
-                    cpu += rows[pid][2]
-        return rss, None, cpu
-
-    def host(self):
-        return {}
 
 
 class Sampler:

@@ -198,6 +198,8 @@ def check_inputs(run, label):
         problems.append(f"{label}: hardware missing in run.json")
     if not run.get("cost_basis", {}).get("usd_per_hour_total"):
         problems.append(f"{label}: cost_basis.usd_per_hour_total missing or zero")
+    if run["side"].startswith("drums") and not run.get("fake") and not run.get("drums_level"):
+        problems.append(f"{label}: Drums side must record drums_level (L0 or L1)")
     return problems
 
 

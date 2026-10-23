@@ -153,3 +153,11 @@ def test_envd_adapter_unreachable(tmp_path):
     with pytest.raises(EnvFault) as e:
         env.observe()
     assert e.value.kind == "daemon_unreachable"
+
+
+def test_pre_reset_hook_runs_before_daemon_calls(envd_port):
+    order = []
+    env = EnvdHttpEnv(0, envd_port, {"path": "p", "args": []},
+                      pre_reset=lambda slot, gen: order.append(("hook", slot, gen, len(FakeEnvd.calls))))
+    env.reset(Task("t", "", {"start_url": ""}), 3, "T")
+    assert order == [("hook", 0, 3, 0)]  # no daemon call had happened when the hook ran
