@@ -53,14 +53,14 @@ Private per session:
 - L0: everything above. One kernel and one set of system services, shared files and
   page cache, private state. Sessions each run their own display, window manager,
   session bus and application processes.
-- L1: L0 plus shared running application runtime: attempt processes are forked from a
+- L1 (where the Drums claim lives): L0 plus shared running application runtime: attempt processes are forked from a
   pre-initialised template process (a Chromium-style zygote or fork server), so the
   initialisation work and its memory are shared, not just the files. This is what the
   CUA-Sandbox paper reports sharing, and it is where most of the further memory saving
   would have to come from.
 - L2 and beyond (process checkpoint/restore, for example CRIU) is research, not planned.
 
-Rule: every result must state the level it ran at (`run.json` field `drums_level`).
+L0 is a precursor, not a Drums result. Rule: every result must state the level it ran at (`run.json` field `drums_level`).
 A result at L0 must not be described as an L1 result.
 
 Honest note, because the owner asked for the real architecture and not a container
@@ -92,6 +92,19 @@ research item after L0 works.
 
 The reset time and everything above is measured by the harness (`reset_s`, RSS/PSS, cgroup
 usage); none of it is an assumption in the results.
+
+### Decisions made (no owner input needed)
+
+- Window manager: for fidelity runs, the image's native desktop components; a small EWMH
+  window manager (openbox is the candidate; licence to check at install) only after a
+  per-task parity study passes. The spike runs with no window manager (none installed here).
+- Networking: shared host network namespace (v0) is acceptable only for envd-linux
+  spikes and Phase A. Anything that runs the OSWorld guest (fixed ports 5000, 9222, 8080)
+  needs a network namespace per session (v1). This is forced by the ScaleCUA candidate; see
+  `docs/training-comparison-plan.md` section 3.
+- OSWorld shim: run OSWorld's own guest server inside each session; do not reimplement it.
+- Root filesystem: full-root overlay (pivot_root onto overlayfs) for any run that executes
+  OSWorld tasks; the spike overlays only `$HOME`.
 
 ## 4. What envd-linux must implement
 

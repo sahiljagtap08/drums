@@ -30,9 +30,9 @@ def report(tmp_path, d_kw, b_kw):
     return scorer.main([d, b, "--out", str(tmp_path / "r.json")])
 
 
-def test_drums_wins_when_clearly_cheaper_and_faster(tmp_path):
+def test_clearly_cheaper_and_faster_is_flagged_precursor_at_l0(tmp_path):
     r = report(tmp_path, dict(n=400, usd_h=5.0), dict(n=200, usd_h=10.0))
-    assert r["verdict"]["headline"] == "drums_wins"
+    assert r["verdict"]["headline"] == "precursor_only"
 
 
 def test_baseline_wins_when_drums_is_worse(tmp_path):
@@ -128,3 +128,17 @@ def test_drums_side_without_level_blocks_verdict(tmp_path):
     r = scorer.main([d, b])
     assert r["verdict"]["headline"] == "no_verdict"
     assert any("drums_level" in p for p in r["input_problems"])
+
+
+def test_l0_win_is_only_a_precursor(tmp_path):
+    r = report(tmp_path, dict(n=400, usd_h=5.0), dict(n=200, usd_h=10.0))
+    assert r["verdict"]["headline"] == "precursor_only"  # make() records drums_level L0
+
+
+def test_l1_win_is_a_drums_result(tmp_path):
+    d = make(tmp_path, "drums", n=400, usd_h=5.0)
+    run = json.load(open(os.path.join(d, "run.json")))
+    run["drums_level"] = "L1"
+    json.dump(run, open(os.path.join(d, "run.json"), "w"))
+    b = make(tmp_path, "base", n=200, usd_h=10.0)
+    assert scorer.main([d, b])["verdict"]["headline"] == "drums_wins"

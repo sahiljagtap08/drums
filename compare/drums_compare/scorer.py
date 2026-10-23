@@ -219,9 +219,13 @@ def main(argv=None):
     if dr.get("agent") != br.get("agent"):
         problems.append("agent ids differ")
     d, b = side_metrics(dr, da, ds), side_metrics(br, ba, bs)
-    report = {"drums": d, "baseline": b, "input_problems": problems,
-              "verdict": {"headline": "no_verdict", "reasons": problems} if problems
-              and not (dr.get("fake") and br.get("fake")) else verdict(d, b)}
+    v = ({"headline": "no_verdict", "reasons": problems} if problems
+         and not (dr.get("fake") and br.get("fake")) else verdict(d, b))
+    # L0 is a precursor, not a Drums result: the Drums claim lives at L1.
+    if v.get("headline") == "drums_wins" and str(dr.get("drums_level", "")) != "L1":
+        v = {**v, "headline": "precursor_only",
+             "reasons": ["Drums side ran at " + (dr.get("drums_level") or "unknown level") + "; only L1 supports a Drums claim"]}
+    report = {"drums": d, "baseline": b, "input_problems": problems, "verdict": v}
     text = json.dumps(report, indent=1, default=str)
     if a.out:
         with open(a.out, "w") as f:

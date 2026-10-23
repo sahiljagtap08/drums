@@ -56,8 +56,7 @@ W2 (needed to read against published results): a subset of OSWorld tasks, with O
 own evaluators, in the OSWorld Ubuntu image. Every incumbent above is built around
 OSWorld. For D this needs an OSWorld-controller shim over `envd-linux` (the evaluators
 read files, browser state and accessibility data through the environment's controller),
-and a file-read route that neither guest daemon has. W2 is blocked until that exists and
-is not in Phase A.
+and a file-read route that neither guest daemon has. W2 is not in Phase A. Decision (revised, see `docs/training-comparison-plan.md` section 3): the "shim" is OSWorld's own unmodified guest server (Apache-2.0) running inside each Drums session on the OSWorld root filesystem, not a reimplementation; the per-session network namespace and full-root overlay it forces are required for W2 and for Phase C.
 
 Phases:
 
@@ -167,7 +166,7 @@ Verdict (fixed before any real run; `scorer.verdict`), D against each incumbent 
   points higher.
 - `mixed` if D wins cost but loses on rate or interference. `inconclusive` otherwise.
 
-D's result is only comparable at its stated level (`drums_level`, L0 or L1). The 50-valid
+D's result is only comparable at its stated level (`drums_level`, L0 or L1). L0 is a precursor, not a Drums result: the Drums claim lives at L1 (shared pre-warmed runtime forks), so the scorer never reports `drums_wins` for an L0 run (`precursor_only` instead). The 50-valid
 minimum and the 2-point margin are placeholders for the owner to confirm before the run.
 
 ## 8. Threats to validity

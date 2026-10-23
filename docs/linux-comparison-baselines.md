@@ -36,8 +36,7 @@ A candidate is runnable for this comparison only if all of these hold:
 
 ## Assessment
 
-None of the four is runnable today: R4 (adapters) and R6/R7 (instrumentation) do not
-exist for any of them, and no host exists. The table says what else is missing.
+None of the candidates is configured by us yet, here. They are real, published systems, and "not runnable" means only that we have not set them up: R4 (adapters) and R6/R7 (instrumentation) do not exist yet, and no host exists. The table says what else is missing.
 
 | | OSGym-style KVM + CoW | CUA-Lite | Cua SDK Linux sandbox |
 |---|---|---|---|
