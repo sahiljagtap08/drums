@@ -181,6 +181,12 @@ interference finding, not a reason to drop data.
 
 ## 7. What was and was not tested
 
+A local spike now exists (`docs/envd-linux-spike.md`): a real daemon process, real X11 screenshots and
+XTEST input, and a real Chromium task in a PID+mount+IPC+UTS namespace with an overlayfs on `$HOME`,
+run end to end through the comparison harness. The notes below predate it; where they say
+"not tested", the spike doc is the current record.
+
+
 Tested here: PID + mount namespace with overlayfs for two sessions (isolation of writes,
 lower untouched); two Xvfb displays started (idle memory measured). The conformance
 suite runs against a stub written to the spec, and also against two deliberately

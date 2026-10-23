@@ -80,6 +80,7 @@ def test_legit_history_is_not_flagged_as_foreign(verify_url):
 class FakeEnvd(BaseHTTPRequestHandler):
     calls = []
     gen = 0
+    shots = []  # optional queue of PNGs to serve; the last one repeats
 
     def log_message(self, *a):
         pass
@@ -97,7 +98,8 @@ class FakeEnvd(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send(200, json.dumps({"ax_trusted": True, "screen_recording": True}).encode())
         elif self.path.startswith("/screenshot"):
-            self._send(200, tiny_png(), {"Content-Type": "image/png", "X-Drums-Gen": str(FakeEnvd.gen),
+            png = (FakeEnvd.shots.pop(0) if len(FakeEnvd.shots) > 1 else FakeEnvd.shots[0]) if FakeEnvd.shots else tiny_png()
+            self._send(200, png, {"Content-Type": "image/png", "X-Drums-Gen": str(FakeEnvd.gen),
                                          "X-Drums-Stale": "false", "X-Drums-Black": "false"})
         else:
             self._send(404)
@@ -160,4 +162,35 @@ def test_pre_reset_hook_runs_before_daemon_calls(envd_port):
     env = EnvdHttpEnv(0, envd_port, {"path": "p", "args": []},
                       pre_reset=lambda slot, gen: order.append(("hook", slot, gen, len(FakeEnvd.calls))))
     env.reset(Task("t", "", {"start_url": ""}), 3, "T")
-    assert order == [("hook", 0, 3, 0)]  # no daemon call had happened when the hook ran
+    # the new generation is posted first (late actions refused), then the hook runs
+    assert order == [("hook", 0, 3, 1)]
+    assert FakeEnvd.calls[0][1] == "/gen" 
+
+
+def test_settle_waits_for_a_change_then_for_stability(envd_port):
+    # blank, blank, then painted and stable: the adapter must not accept the first blank frame
+    FakeEnvd.shots = [tiny_png(4, 3), tiny_png(4, 3), tiny_png(5, 3), tiny_png(5, 3), tiny_png(5, 3)]
+    env = EnvdHttpEnv(0, envd_port, {"path": "p", "args": []}, settle_timeout_s=5, settle_poll_s=0.01,
+                      settle_quiet_s=60)
+    env.reset(Task("t", "", {"start_url": ""}), 1, "T")
+    # reset consumed the change and the following stable frames, then observe() read the last one
+    assert FakeEnvd.shots[0] == tiny_png(5, 3)
+    FakeEnvd.shots = []
+
+
+def test_settle_accepts_a_frame_that_never_changes_after_the_quiet_period(envd_port):
+    FakeEnvd.shots = [tiny_png(4, 3)]
+    env = EnvdHttpEnv(0, envd_port, {"path": "p", "args": []}, settle_timeout_s=5, settle_poll_s=0.01,
+                      settle_quiet_s=0.1)
+    env.reset(Task("t", "", {"start_url": ""}), 1, "T")
+    FakeEnvd.shots = []
+
+
+def test_settle_times_out_if_the_display_keeps_changing(envd_port):
+    import itertools
+    FakeEnvd.shots = [tiny_png(4 + i % 7, 3) for i in range(1, 400)]
+    env = EnvdHttpEnv(0, envd_port, {"path": "p", "args": []}, settle_timeout_s=0.3, settle_poll_s=0.01)
+    with pytest.raises(EnvFault) as e:
+        env.reset(Task("t", "", {"start_url": ""}), 1, "T")
+    assert e.value.kind == "settle_timeout"
+    FakeEnvd.shots = []

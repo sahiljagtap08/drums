@@ -24,7 +24,7 @@ def png_size(png: bytes):
 
 class EnvdHttpEnv(Env):
     def __init__(self, slot, port, launch_cmd, host="127.0.0.1", timeout_s=15.0, pid_roots=(),
-                 pre_reset=None, pids_fn=None):
+                 pre_reset=None, pids_fn=None, settle_timeout_s=0.0, settle_poll_s=0.5, settle_quiet_s=3.0):
         """launch_cmd: {"path": ..., "args": [... "{url}" ...]} started on each reset.
 
         pre_reset(slot, gen): optional hook run before the daemon is told the new
@@ -35,6 +35,8 @@ class EnvdHttpEnv(Env):
         self.launch_cmd = launch_cmd
         self.pid_roots = list(pid_roots)
         self.pre_reset, self.pids_fn = pre_reset, pids_fn
+        self.settle_timeout_s, self.settle_poll_s = settle_timeout_s, settle_poll_s
+        self.settle_quiet_s = settle_quiet_s
         self.gen = 0
         self.seq = 0
 
@@ -60,18 +62,53 @@ class EnvdHttpEnv(Env):
 
     def reset(self, task, gen, token):
         self.gen, self.seq = gen, 0
+        # The new generation goes in first, so a late action from the previous attempt is
+        # refused (409) while the session is being rebuilt; only then is the sandbox recreated.
+        self._json("POST", "/gen", {"gen": gen})
         if self.pre_reset:
             self.pre_reset(self.slot, gen)
         health = self._json("GET", "/health")
         if health.get("ax_trusted") is False or health.get("screen_recording") is False:
             raise EnvFault("permissions_missing", json.dumps(health))
-        self._json("POST", "/gen", {"gen": gen})
         self._json("POST", "/kill", {"gen": gen, "all": True})
         self._req("DELETE", f"/pb?gen={gen}")
         url = task.verifier.get("start_url", "").format(slot=self.slot, token=token, gen=gen)
         args = [a.format(url=url) for a in self.launch_cmd["args"]]
-        self._json("POST", "/launch", {"gen": gen, "path": self.launch_cmd["path"], "args": args})
+        body = {"gen": gen, "path": self.launch_cmd["path"], "args": args}
+        if self.launch_cmd.get("env"):
+            body["env"] = self.launch_cmd["env"]
+        self._json("POST", "/launch", body)
+        self._settle()
         return self.observe()
+
+    def _settle(self):
+        """Wait until a freshly launched app has painted: the display must be non-black and
+        stop changing. A frame that never changes is accepted after settle_quiet_s (apps that
+        paint once), otherwise at least one change must be seen first (a browser window
+        usually paints its chrome before the page). Counted as reset time. Off unless
+        settle_timeout_s > 0."""
+        if self.settle_timeout_s <= 0:
+            return
+        import time
+        start = time.time()
+        last, first_t, changed, stable = None, None, False, 0
+        while time.time() - start < self.settle_timeout_s:
+            status, headers, png = self._req("GET", "/screenshot")
+            h = {k.lower(): v for k, v in headers.items()}
+            if status == 200 and h.get("x-drums-black") != "true":
+                digest = hash(png)
+                now = time.time()
+                if last is None:
+                    first_t = now
+                elif digest != last:
+                    changed, stable = True, 0
+                else:
+                    stable += 1
+                last = digest
+                if (changed and stable >= 2) or (not changed and now - first_t >= self.settle_quiet_s):
+                    return
+            time.sleep(self.settle_poll_s)
+        raise EnvFault("settle_timeout", "display did not settle")
 
     def observe(self):
         status, headers, png = self._req("GET", "/screenshot")
