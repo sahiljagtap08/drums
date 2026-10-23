@@ -18,6 +18,9 @@ It does not change `ip_forward` (the Supervisor does that when egress is request
 
 Requires the `nft` binary and CAP_NET_ADMIN in the host network namespace (kernel: nf_tables, NAT,
 masquerade). IPv6: sessions get no IPv6 address and the table does not cover it.
+Crash behaviour (observed): if the process is killed, nothing runs close(); the table, the session
+veths and, with nat, `ip_forward=1` stay behind and the next run fails with 'File exists' until they are removed
+(`nft delete table inet drums`, delete `dvh*` links, set `ip_forward` back).
 Not covered: DNS (a session's resolv.conf is the host's, which may point at a loopback stub the session
 cannot reach), bandwidth limits, and per-session egress allow-lists."""
 

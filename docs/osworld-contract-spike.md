@@ -122,8 +122,9 @@ requirement for the real run.
   teardown removes the table and restores `ip_forward`; a CONTROL run with the firewall off and forwarding on
   shows the probe does reach, so the refusals are the policy's doing.
 - Not done: DNS, IPv6, bandwidth limits, per-session egress allow-lists, more than one Supervisor per host,
-  nftables rules persistence or recovery after a crash (a stale table survives until the next Supervisor
-  replaces it, or `nft delete table inet drums`).
+  recovery after a crash. Observed once: a test run killed by a timeout left sessions, `dvh*` links, the table and
+  `ip_forward=1` behind, and the next full run failed 18 tests with 'File exists' until they were removed by hand. A
+  real run needs an outer cleanup (the instance auto-termination covers it only if one exists, which is unbuilt).
 
 ## 5. The OSWorld provider bridge (added; claim (b), not (c))
 
