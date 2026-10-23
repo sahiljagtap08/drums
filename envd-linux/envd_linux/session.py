@@ -30,12 +30,23 @@ def _child_pids(pid):
 
 class Supervisor:
     def __init__(self, state_dir, lower_home, python="/usr/bin/python3", xvfb="Xvfb",
-                 size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0):
+                 size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0,
+                 firewall=None, nat=False, block_private_egress=True):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
-        lower_home is a $HOME-shaped tree in "home" mode and a root-shaped tree in "full" mode."""
+        lower_home is a $HOME-shaped tree in "home" mode and a root-shaped tree in "full" mode.
+        firewall (default: on whenever netns is): the nftables policy in firewall.py, so sessions cannot
+        reach each other whatever `ip_forward` is. nat: also give sessions outbound internet by masquerade;
+        this sets the host's net.ipv4.ip_forward=1 (restored by close()). block_private_egress: with nat,
+        drop session traffic to private/link-local ranges (cloud metadata, the VPC, the LAN)."""
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
+        self.firewall = netns if firewall is None else firewall
+        self.nat, self._saved_forward = nat, None
+        if self.firewall and not netns:
+            raise ValueError("the firewall needs a network namespace per session")
+        if nat and not self.firewall:
+            raise ValueError("nat requires the firewall (egress without policy is refused)")
         self.state_dir = os.path.abspath(state_dir)
         self.lower = os.path.abspath(lower_home) if lower_home else ""
         self._tplfs = None
@@ -43,6 +54,14 @@ class Supervisor:
         self._procs = {}
         self._epochs = {}
         os.makedirs(self.state_dir, exist_ok=True)
+        if self.firewall:
+            from . import firewall as fw
+            fw.install(nat=nat, block_private=block_private_egress)
+            if nat:
+                with open("/proc/sys/net/ipv4/ip_forward") as f:
+                    self._saved_forward = f.read().strip()
+                with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
+                    f.write("1")
         if self.root_mode == "full" and self.lower:
             self._mount_template()
 
@@ -69,6 +88,13 @@ class Supervisor:
             else:
                 subprocess.run(["umount", "-l", self._tplfs], check=False)
             self._tplfs = None
+        if self.firewall:
+            from . import firewall as fw
+            fw.remove()
+            if self._saved_forward is not None:
+                with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
+                    f.write(self._saved_forward)
+                self._saved_forward = None
 
     def _dir(self, slot):
         return os.path.join(self.state_dir, f"s{slot}")
@@ -132,7 +158,7 @@ class Supervisor:
                 "netns": self.netns, "osworld_port": self.osworld_port}
         if self.netns:
             r = subprocess.run([self.python, "-m", "envd_linux.netsetup", "--slot", str(slot), "--pid",
-                                str(kids[0])], capture_output=True, text=True, env=env)
+                                str(kids[0]), *(["--firewall"] if self.firewall else [])], capture_output=True, text=True, env=env)
             if r.returncode != 0:
                 self._procs.pop(slot, None)
                 proc.kill()

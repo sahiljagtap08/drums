@@ -96,3 +96,15 @@ pre-warmed runtime forks) would have to beat.
 ## Claim discipline
 
 This document describes (a): the REAL Chromium end-to-end task through the namespace + overlayfs + Xvfb daemon. It says nothing about (b) the OSWorld guest-server stub contract (see `osworld-contract-spike.md`) and nothing about (c) actual OSWorld app-environment compatibility, which is NOT proven. It is an L0 precursor (shared files, private state, per-session processes); no L1 (shared pre-warmed runtime forks) claim follows.
+
+
+## Running the suite (and why counts differ between environments)
+
+`pytest` with no path from the repo root also collects `verify-server/tests` (5 tests). `pytest envd-linux compare`
+does not. The project's `uv run pytest` environment has no `agentrl-worker`, so `test_scalecua_real_interface.py`
+(3 tests) skips as a module and `test_scalecua_worker_entry.py` (1) skips without `DRUMS_AGW_PYTHON`. The 108 -> 100
+passed + 1 skipped seen in one earlier report was therefore 108 (global pytest with agentrl, no path: 103 +
+5 verify-server) versus 100 (uv env, two paths: minus 5 verify-server, minus 3 real-interface), at the
+same commit. Nothing disappeared; the invocations differed. Quote the exact command with any count.
+Integration tests need root, overlayfs, Xvfb, nft and system python3 with python-xlib and pyroute2, and must
+not run concurrently (veth names and the `inet drums` table are host-global).

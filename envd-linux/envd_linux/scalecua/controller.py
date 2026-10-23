@@ -10,8 +10,8 @@ Interface (read from the MIT `agentrl-worker` 0.4.0 package, `agentrl/worker/env
     sync_* wrappers run the coroutine on `self.loop`, which the worker's task sets.
 
 `url` for an OSWorld subtype is the host that serves the guest ports. The bridge from that to
-OSWorld's `DesktopEnv` provider interface is NOT implemented here (the only version was
-quarantined, see _quarantined_provider.py). Blocking pool work runs in the loop's executor.
+OSWorld's `DesktopEnv` provider interface is osworld_provider.py (public-API-only; the earlier
+version was quarantined, see _quarantined_provider.py). Blocking pool work runs in the loop's executor.
 
 Not covered: how ScaleCUA's own worker code calls these (its `osworld_env` code is licence-
 unresolved and is not used), and registering the driver in the real `create_controller`

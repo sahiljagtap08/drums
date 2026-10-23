@@ -5,11 +5,11 @@ Installs the "drums" driver into `agentrl.worker.environment.create_controller` 
 would. Arguments are passed through unchanged.
 
 QUARANTINE BOUNDARY: this file and everything it imports must not import
-`_quarantined_provider.py` (licence provenance, see its docstring). What is therefore MISSING is the
-bridge from a session address to OSWorld's `DesktopEnv` provider interface. A task that needs that
-bridge (ScaleCUA's `OSWorldTask`, whose worker code is itself licence-unresolved and not used here)
-cannot run through this entry point until the bridge is written independently or permission is
-granted. Only tasks that talk to the guest port directly (for example `GuestClient`) work.
+`_quarantined_provider.py` (licence provenance, see its docstring). The bridge from a session address to
+OSWorld's `DesktopEnv` provider interface now exists separately as `osworld_provider.py` (written from the
+public Apache-2.0 OSWorld API only), but nothing here wires it in: a task that wants it calls
+`osworld_provider.install(pool)` itself, and ScaleCUA's `OSWorldTask` (licence-unresolved worker code, not
+used here) has never run through this entry point. Only our own fake task has.
 
 Targeted interface: the MIT PyPI `agentrl-worker==0.4.0`. The newer copy bundled in ScaleCUA's
 `osworld_env` is licence-unresolved and was not read for this file; known risk: it may add

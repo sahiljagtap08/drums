@@ -5,8 +5,9 @@ Run as root with a Python that has pyroute2 (`pip install pyroute2`; dual GPL-2.
 Apache-2.0). The session's namespace is created by `unshare --net`; when its last process dies
 the kernel removes the veth pair, so there is no teardown step.
 
-Not done: NAT to the outside network (no internet in the sandbox this was built in), DNS,
-firewalling between sessions (sessions can reach each other's addresses through the host)."""
+Policy (NAT, session-to-session firewall, input restriction) lives in firewall.py and is installed by
+the Supervisor; `setup` adds the per-slot input chain before the link comes up when `firewall=True`.
+Not done: DNS for sessions."""
 
 import argparse
 import json
@@ -32,10 +33,13 @@ ipr.route("add", dst="default", gateway=gw)
 """
 
 
-def setup(slot, init_pid, python=sys.executable, base="10.200"):
+def setup(slot, init_pid, python=sys.executable, base="10.200", firewall=False):
     from pyroute2 import IPRoute
     gw, ip = addresses(slot, base)
     host_if, sess_if = f"dvh{slot}", f"dvs{slot}"
+    if firewall:
+        from . import firewall as fw
+        fw.add_slot(slot, base)
     ipr = IPRoute()
     try:
         ipr.link("add", ifname=host_if, kind="veth", peer={"ifname": sess_if, "net_ns_pid": init_pid})
@@ -56,8 +60,9 @@ def main(argv=None):
     ap.add_argument("--slot", type=int, required=True)
     ap.add_argument("--pid", type=int, required=True)
     ap.add_argument("--base", default="10.200")
+    ap.add_argument("--firewall", action="store_true")
     a = ap.parse_args(argv)
-    print(json.dumps(setup(a.slot, a.pid, base=a.base)))
+    print(json.dumps(setup(a.slot, a.pid, base=a.base, firewall=a.firewall)))
 
 
 if __name__ == "__main__":

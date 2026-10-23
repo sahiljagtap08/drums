@@ -54,9 +54,7 @@ read for response shapes only; the stub is our own code.
   about 394 MiB PSS (908 MiB RSS); host tmpfs growth of about 35 MiB for the private upper layers after one
   attempt; creating a session with the full-root overlay and network namespace took under a second
   (0.69 s for the first, measured by hand, not asserted).
-- Session-to-session reachability is pinned by a test: with host `net.ipv4.ip_forward=0` (this sandbox) a
-  session cannot reach another session's address. That is a side effect of the sysctl, not a designed
-  firewall (see below).
+- Session-to-session reachability is now refused by POLICY (section 4), including with host forwarding forced on.
 
 ## 3. Stubbed, not proven, or needs a real host
 
@@ -68,9 +66,9 @@ read for response shapes only; the stub is our own code.
 | The OSWorld Ubuntu image, GNOME, systemd | NOT used. The root filesystem here is this sandbox's. Whether the image's GNOME session and systemd-dependent services run in a namespaced session without systemd as PID 1 is still the open technical risk. |
 | KVM | Absent here. The incumbent QEMU-in-Docker backend cannot run in this sandbox at all. |
 | Chrome DevTools on 9222 | Only a generic listener on 9222 was tested. Chrome itself binds DevTools to loopback; the OSWorld image forwards it with a helper (not reproduced here). |
-| Internet from a session | None (no NAT configured, none available in this sandbox). Tasks that need real websites cannot run. Egress/NAT and DNS are not implemented. |
-| Network isolation between sessions | No firewall. See the sysctl note above; a host with forwarding on (needed for NAT) would let sessions reach each other until a firewall is added. |
-| The real ScaleCUA worker | NOT used. The controller is checked against the real `agentrl-worker` 0.4.0 interface and local stubs only; how the worker's session code calls the provider, the bundled (newer) framework copy, and are unverified. The entry point exists but only a fake task of ours has run through it. |
+| Internet from a session | Optional masquerade NAT exists (section 4) and was tested against a local stand-in uplink and, where the host itself has it, a real TCP connection to 1.1.1.1:443. DNS inside sessions is NOT handled (the session's resolv.conf is the host's, which may point at a loopback stub). No HTTP-level task has used it. |
+| Network isolation between sessions | nftables policy, tested with forwarding on (section 4). Not covered: IPv6 (sessions get none), bandwidth, per-session egress allow-lists, one Supervisor per host (the table is global). |
+| The real ScaleCUA worker | NOT used. The controller is checked against the real `agentrl-worker` 0.4.0 interface and local stubs only; how the real ScaleCUA worker's session code calls a provider, and the bundled (newer) framework copy, are unverified. The entry point exists but only a fake task of ours has run through it. The OSWorld provider bridge now exists (section 5) but has only met stand-ins of the public API, not the real `desktop_env` package. |
 | Memory and cgroups | Upper layers are RAM-backed tmpfs and are not limited or accounted per session. No cgroup limits. |
 | Scale | Two to four sessions at most in any test. No load, no soak, no failure injection into real sessions beyond a fake backend. |
 | Reset speed claims | A rebuild per attempt took about a second here for an empty session; the cost with a real GNOME desktop is unknown. |
@@ -103,3 +101,38 @@ own Xvfb, browser and guest server. It is an engineering precursor, not a Drums 
 ## Claim discipline
 
 (a) The REAL Chromium end-to-end task through the daemon is in `envd-linux-spike.md`. (b) Everything in this document is the OSWorld guest-server STUB contract: accessibility tree and terminal are empty, pyautogui is absent, many routes return 501. (c) Actual OSWorld app-environment compatibility is NOT proven; (b) is not (c). This is an L0 precursor; no L1 (shared pre-warmed runtime forks) claim follows from it.
+
+
+## 4. Session network policy (added; L0 precursor, claim (b)-adjacent plumbing)
+
+`envd_linux/firewall.py` installs an nftables table `inet drums` (removed by `Supervisor.close()`). It needs the
+`nft` binary and CAP_NET_ADMIN in the host network namespace (nf_tables, NAT and masquerade in the kernel);
+this sandbox has all of them, so it ran here. A host without them cannot run it, and that is a host
+requirement for the real run.
+
+- Session to session: dropped in the forward chain. Inbound to a session: dropped (only replies to its own
+  connections). A session may talk to the host only at its own gateway address (per-slot input chain); the
+  host's other addresses and other sessions' gateways are dropped.
+- Egress is policy: with `nat=False` every session-originated forward is dropped; with `nat=True` the host
+  masquerades session traffic (and sets `net.ipv4.ip_forward=1`, restored on close) and private, link-local
+  (cloud metadata 169.254.169.254) and CGNAT destinations stay dropped (`block_private_egress`).
+- Tests (`tests/test_session_network_policy.py`): the peer behind a stand-in uplink sees the host address, not the
+  session's (NAT); private and metadata targets refused; session-to-session refused with forwarding on in both
+  directions; only the own gateway reachable on the host; firewall holds with forwarding forced on and no NAT;
+  teardown removes the table and restores `ip_forward`; a CONTROL run with the firewall off and forwarding on
+  shows the probe does reach, so the refusals are the policy's doing.
+- Not done: DNS, IPv6, bandwidth limits, per-session egress allow-lists, more than one Supervisor per host,
+  nftables rules persistence or recovery after a crash (a stale table survives until the next Supervisor
+  replaces it, or `nft delete table inet drums`).
+
+## 5. The OSWorld provider bridge (added; claim (b), not (c))
+
+`envd_linux/scalecua/osworld_provider.py`: `DrumsProvider` and `DrumsVMManager` for OSWorld's public
+`desktop_env.providers.base` API. Written solely from the public Apache-2.0 xlang-ai/OSWorld sources (base
+classes, factory, `DesktopEnv`); the quarantined module and ScaleCUA's `osworld_env` were not opened. Findings
+from the public code that shape it: the factory is a fixed if/elif and `DesktopEnv` rejects unknown
+`provider_name`s, so `install()` wraps the factory and selects Drums by `region="drums"` with
+`provider_name="docker"`; the ip string is `host:server:chromium:vnc:vlc`, parsed with `rsplit(':', 4)`;
+`revert_to_snapshot` may return a new path. Tested against a replica of those parts of `DesktopEnv` and against
+real sessions (private state per attempt, the next attempt starts clean). NOT tested against the real
+`desktop_env` package, which is not installed here, and the session behind it answers with the guest STUB.

@@ -236,19 +236,16 @@ def test_controller_events_count_every_start_and_reset(stack):
     assert not [r for r in rows if r["event"] == "fault"], "no faults expected in this run"
 
 
-def test_session_to_session_reachability_follows_the_host_forwarding_sysctl(stack):
-    """There is NO firewall between session networks. Isolation here is only a side effect of the
-    host's `net.ipv4.ip_forward`: with forwarding off (this sandbox) a session cannot reach another
-    session's address; any host that turns forwarding on (for NAT/internet access, as Docker hosts
-    do) makes sessions reach each other unless a firewall is added. This test pins both outcomes."""
-    forwarding = open("/proc/sys/net/ipv4/ip_forward").read().strip() == "1"
+def test_session_to_session_is_refused_by_policy(stack):
+    """The firewall (firewall.py) refuses session-to-session traffic whatever the host's ip_forward is.
+    Here forwarding is whatever this host has; test_session_network_policy.py repeats the check with
+    forwarding forced on, which is what proves it is policy and not an accident of the sysctl."""
     sa, ia, ca = start(stack)
     sb, ib, cb = start(stack)
     try:
         r = ca.execute(["/usr/bin/python3", "-c",
                         f"import urllib.request;print(urllib.request.urlopen('http://{ib['ip']}:5000/platform',timeout=4).read())"])
-        reachable = "Linux" in r["output"]
-        assert reachable == forwarding, (forwarding, r)
+        assert "Linux" not in r["output"], r
     finally:
         stack.ctl.sync_end_session(sa)
         stack.ctl.sync_end_session(sb)
