@@ -95,6 +95,13 @@ Primary:
 - Valid rollouts per hour, end to end (billed time including boot) and steady state.
 - Cost per valid rollout = total cost / valid rollouts.
 
+Total-cost view (the owner's end goal): total cost = environments + inference + training +
+failed runs. The harness measures environment cost and the cost share of invalid attempts
+(`failed_run_cost_usd`). Inference and training cost are supplied by the operator in
+`run.json` under `cost_basis.other_usd` and reported as `total_cost_all_per_valid_usd`. Phase A
+has no inference or training cost. The verdict below still uses environment cost only;
+extending it to total cost needs Phase B data and a rule fixed beforehand.
+
 Secondary: RSS (and PSS where readable) per environment, CPU cores per environment,
 host memory used, reset time, invalid reasons, interference attempts, success rate.
 
@@ -140,3 +147,39 @@ change them before the run, and they must not change afterwards.
 Mac model and its declared hourly cost; baseline winner (chosen by a measured bake-off, see
 baselines doc); Phase B model and spend; whether disabled office tasks get a file route
 first; guest daemon for Linux (`envd-linux` does not exist yet).
+
+## 10. Reading our results against incumbent setups
+
+Goal: let a reader place our numbers next to what others published. This is not a promise
+of a benchmark-score win, and our first runs are not comparable to any score below: we use
+simple browser-in-desktop tasks, a small host, and (Phase A) no model. Only the
+infrastructure-side claims can be read against ours, and only if hardware, task and
+concurrency are stated beside them. Fake runs are engineering validation and never appear
+in any such table.
+
+None of these papers publishes a dollar figure for total training cost except OSGym (per
+replica-day). For the others a reader can only compare what was published (GPU count,
+hours, throughput, reset time, memory). Any total-cost comparison therefore needs our own
+costing of an incumbent's published hardware, labelled as an estimate.
+
+| Incumbent (source) | What it published | Our metric that maps onto it | What does not map |
+|---|---|---|---|
+| OSGym (arXiv 2511.11672, v3 Mar 2026) | 1000+ OS replicas; 1420 multi-turn trajectories/min at 1024 replicas (about 15 turns each); USD 0.2-0.3 per replica per day, 0.23 on an 88-core / 768 GB server; 88% less disk and 37x faster disk provisioning from reflink copy-on-write; each container limited to 6 GB; step retry default 10 | `cost_per_valid_usd` and `valid_per_hour` (convert: replica-day cost to cost per valid rollout needs their trajectories/hour per replica, which the paper gives only in aggregate); RSS/PSS per env against the 6 GB limit; reset time | Their trajectory counts are not filtered by our validity rule; their retries hide faults that we count. Disk saving: we do not measure it in Phase A. Scale (1000+) is far beyond our first run. |
+| ComputerRL (arXiv 2508.14040, ICLR 2026) | Thousands of parallel desktops (qemu-in-docker Ubuntu VMs); 7-node environment cluster, 200 envs per environment server, each VM 2 cores / 4 GB; about 80 rollouts per GPU; training needs at least 4 GPU nodes; AutoGLM-OS 9B 48.9% on OSWorld | RAM and CPU per env (compare 2 cores / 4 GB); envs per host; cost per valid rollout once we cost their hardware ourselves | Their OSWorld score depends on model and RL recipe, not on environment infrastructure. We report no OSWorld score. |
+| EvoCUA and EvoCUA-1.5 (arXiv 2601.15876, 2607.09773) | QEMU-KVM in Docker; claims 100,000+ concurrent sandboxes and tens of thousands bootstrapped in under a minute; EvoCUA-32B 56.7% OSWorld, EvoCUA-1.5 63.2% OSWorld-Verified; asynchronous RL with staleness-controlled buffer. A reviewer-style summary notes the concurrent sandbox count, rollout volume and GPU hours for 1.5 are not disclosed. | Only the idea that environment interaction is the bottleneck maps: our reset time, valid fraction and valid per hour. | Their fleet size and boot-burst claim cannot be tested at our scale. No hardware or cost disclosed to compare cost per rollout. |
+| MAI-Gym (arXiv 2610.20939, Oct 2026) | Up to 20,000 parallel environments; 1,000 desktop instances GUI-ready in 88.9 s; desktop reset p50 37.2 s / p95 100.1 s; 1.9% unscored aborts on desktop; RL run on 512 GPUs, peak 20,000 environments, about 96 h; MAI-Gym-9B 76.2% OSWorld-Verified. Framework source is "coming soon" per its repo, so it cannot be run yet. | `reset_s` (we should report median and p95, add p95 to the scorer), invalid fraction against their unscored-abort rate, interference attempts (they report concurrent-attempt interference as the main desktop failure) | Their aborts exclude failures they chose to retry; ours count every fault. Their training cost is 512 GPUs for about 96 h, but no price is given. |
+| CUA-Sandbox (arXiv 2609.32750; unrelated to the `cua-sandbox` PyPI package from trycua, same name) | Shares initialised application runtimes across envs with private state; OSWorld at 8 concurrent envs: memory per env 2653.8 to 837.3 MiB, throughput 0.291 to 0.895 env/s, incremental storage 62.7 to 29.1 MiB, up to 6.20x throughput (VisualWebArena) and 3.08x (OSWorld) at 8 envs, 5.14x OSWorld at 16; host with 8 GPUs, 192 cores, 1.5 TiB; they state maximum density is unmeasured | RAM per env, valid per hour, reset time, all at concurrency 8 and 16 (the same two levels); this is the closest published method to Drums' shared-session idea and the most direct comparison | Their throughput unit is envs/s of a measured batch, not valid rollouts per hour with failures counted. Our hardware is much smaller. |
+| CUA-Lite (cua-lite.github.io, Berkeley RDI blog Sep 2026) | VM-free Docker sandboxes with no `/dev/kvm`; 30k+ verifiable tasks; 15+ benchmarks; Lite.OSWorld runs OSWorld tasks and evaluators unchanged. No environment count, hardware, throughput or cost figures found in the blog or README. | Nothing published to read against; it is a runnable baseline candidate (licence unresolved, see baselines doc), so we would produce the numbers ourselves. | The blog's own caveat: Docker isolates less than a VM. |
+
+Mapping from our metrics to their claims, in one line each:
+
+- `valid_per_hour` and `cost_per_valid_usd`: OSGym throughput and cost claims; CUA-Sandbox throughput.
+- RSS/PSS and CPU per env: OSGym 6 GB limit, ComputerRL 2 cores / 4 GB, CUA-Sandbox memory per env.
+- `reset_s_mean` (add p50/p95): MAI-Gym reset medians, CUA-Sandbox reset operation speedups.
+- invalid reasons and interference attempts: MAI-Gym unscored aborts and concurrent-attempt interference; OSGym retries; ComputerRL stability complaints about vanilla OSWorld.
+- `failed_run_cost_usd`: no incumbent publishes it. This is where a "counted failures" comparison can differ from theirs.
+
+Where a reader would want a benchmark score (OSWorld-Verified and similar) we do not
+claim one. A score claim would need a trained model on a recognised benchmark, which is
+outside this plan.
+

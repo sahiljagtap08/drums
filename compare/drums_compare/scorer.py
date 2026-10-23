@@ -95,6 +95,11 @@ def side_metrics(run, attempts, samples):
         for r in a["invalid_reasons"]:
             reasons[r] = reasons.get(r, 0) + 1
     succ = sum(1 for a in valid if a["passed"])
+    invalid_slot_s = sum(a["wall_s"] for a in attempts if not a["valid"])
+    # Optional costs the harness cannot see, supplied by the operator in run.json under
+    # cost_basis.other_usd, e.g. {"inference": 12.3, "training": 0.0}. Phase A has none.
+    other = run["cost_basis"].get("other_usd", {})
+    other_total = sum(other.values())
     interf = [a for a in attempts if a["interference_with"] or "interference:stale_write_after_reset" in a["invalid_reasons"]]
     m = {
         "side": run["side"], "fake": run.get("fake", False), "n_attempts": n, "n_valid": len(valid),
@@ -104,10 +109,19 @@ def side_metrics(run, attempts, samples):
         "valid_per_hour_end_to_end": len(valid) / (billed_s / 3600) if billed_s > 0 else None,
         "valid_per_hour_steady": len(valid) / (wall_s / 3600) if wall_s > 0 else None,
         "cost_per_valid_usd": total_cost / len(valid) if valid else None,
+        # Failed-run cost: environment cost attributable to attempts that were not valid.
+        "failed_run_cost_usd": total_cost * invalid_slot_s / slot_s if slot_s > 0 else None,
+        "other_cost_usd": other,
+        # Environment cost plus operator-supplied inference/training cost. The verdict still
+        # uses environment cost only (section 7 of the design doc) until Phase B supplies the rest.
+        "total_cost_all_usd": total_cost + other_total,
+        "total_cost_all_per_valid_usd": (total_cost + other_total) / len(valid) if valid else None,
         "success_rate_among_valid": succ / len(valid) if valid else None,
         "success_ci95": wilson(succ, len(valid)),
         "interference_attempts": len(interf),
         "reset_s_mean": sum(a["reset_s"] for a in attempts) / n if n else None,
+        "reset_s_p50": percentile([a["reset_s"] for a in attempts], 0.5),
+        "reset_s_p95": percentile([a["reset_s"] for a in attempts], 0.95),
         "resources": resource_summary(samples),
         "slot_seconds": slot_s,
     }

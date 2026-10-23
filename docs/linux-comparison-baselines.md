@@ -1,6 +1,6 @@
 # Linux baseline candidates
 
-Checked on 2026-10-23 from the owning repos and project pages where reachable from this
+Checked on 2026-10-23 (updated after a second licence pass) from the owning repos and project pages where reachable from this
 sandbox. Nothing below was installed or run. "Not verified" means exactly that.
 
 ## What the repo has today (branch `exp1-sessions-per-studio`)
@@ -12,7 +12,7 @@ sandbox. Nothing below was installed or run. "Not verified" means exactly that.
   "see Task N". `README.md` says "nothing measured yet".
 - Referenced by `pyproject.toml` but absent from the repo: `drumsctl`, `metrics`,
   `report`, `envd-linux`.
-- Not in the repo at all: `baseline-linux/`, any Gate or probe code, any task definitions
+- Not in this checkout (the owner says the repo is correct, so read this as "missing here", not "never built elsewhere"; it may exist on another machine or branch I cannot see): `baseline-linux/`, any Gate or probe code, any task definitions
   (`.gitignore` mentions `tasks/golden/work/` only), any Studio-based Linux VM baseline or
   trace of one. I searched the tree and history of the branch; the Studio-based baseline
   is not here. The word "Studio" appears only in the README ("sessions per Studio") and the
@@ -24,10 +24,16 @@ sandbox. Nothing below was installed or run. "Not verified" means exactly that.
 
 | Candidate | Owner / repo | License (source) | Runs without a VM? | What I could confirm |
 |---|---|---|---|---|
-| OSGym | agiopen-org/osgym (code link from the paper) | MIT, stated in the paper (arXiv 2511.11672). I could not open the owning repo or its LICENSE file from here; a fork's README also says MIT, which is not authoritative. Verify before use. | No. KVM (`/dev/kvm`) in Docker, qcow2 per replica with reflink copy-on-write on XFS, pre-warmed runner pool, per-container 6 GB limit. | Design and numbers are from the paper only (88% disk saving, 37x faster provisioning, 1420 trajectories/min at 1024 replicas, USD 0.2-0.3 per replica-day on 88-core / 768 GB machines). Not reproduced by us. Setup per README of the fork: Python 3.10, Docker, OSWorld images. |
-| CUA-Lite | cua-lite/cua-lite (Berkeley RDI), created 2026-08-23 | Not verified: the repo page fetched showed no license field and `LICENSE` raw returned not found. | Yes for its own sandboxes (Docker, no `/dev/kvm`); it can also wrap OSWorld VMs. | README: `uv sync --all-extras`, Gym-style reset/step/close, screenshot observations, click/type tool calls, 30k+ tasks in containers. The project page itself notes Docker is the trade-off against a VM. Young project (110 stars). This is the closest competitor to Drums' "no VM" claim. |
-| Cua SDK and sandboxes | trycua/cua | MIT (LICENSE.md fetched from the owning repo) | Local Linux sandbox defaults to a gVisor container; QEMU Linux VMs also supported (from project docs, via a search result, not the repo). Python 3.12/3.13. | Active repo (30k stars). The repo's focus is macOS VMs (Lume) and Cua Bench; its cloud sandboxes are metered and must not be used for this test. Fit for a tuned Linux baseline not confirmed. |
-| BrowserGym | ServiceNow/BrowserGym | Apache-2.0 (LICENSE fetched from the owning repo) | Yes, Playwright Chromium. | Browser only, not a desktop. Cannot run desktop tasks, so it is not a baseline for this comparison. It would only suit a browser-only variant. |
+| OSGym | agiopen-org/osgym | MIT per the authors: the paper (v2/v3) says the code is released under MIT, and the owner's Hugging Face dataset card (agiopen-org/osgym) has `license: mit`. The GitHub `LICENSE` file itself still could not be read from this sandbox (the crawler returns not found for the repo). Treat as MIT-stated, file unconfirmed. | No. KVM (`/dev/kvm`) in Docker, qcow2 per replica with reflink copy-on-write on XFS, pre-warmed runner pool, 6 GB per container. | Design and numbers are from the paper only, not reproduced. Setup per the README text seen in a fork: Python 3.10, Docker, OSWorld images. Not run. |
+| CUA-Lite | cua-lite/cua-lite (Berkeley RDI), created 2026-08-23 | UNRESOLVED. The repo page shows no licence, `LICENSE`, `LICENSE.md` and `main` raw paths are not found, and a third-party index lists "License file: Not found". Without a licence, default copyright applies, so reuse and redistribution are not granted. Its sibling forks under the same org (OSWorld, android_world: Apache-2.0; cua: MIT) are forks of other projects and say nothing about CUA-Lite's own code. Action: ask the maintainers (contact is on the project blog) or re-check the repo in a browser. | Its own sandboxes are VM-free Docker containers (no `/dev/kvm`); its `osworld` env is VM-in-Docker with QEMU/KVM, and `lite.osworld` is the lighter GNOME container variant. Requires Python >=3.12,<3.13 per `pyproject.toml`. | Gym-style reset/step/close, screenshots plus click/type tool calls. Young project (110 stars). Not run. Closest to Drums' "no VM" claim, but cannot be used until the licence question is answered. |
+| Cua SDK and sandboxes | trycua/cua | MIT for the SDK and most of the repo (LICENSE.md and the README licensing section, read from the owning repo). Not everything: Cua Spaces and Cua Driver Bench are source-available under FSL-1.1-MIT (competing hosted service not allowed; becomes MIT after two years); third-party parts carry their own licences (for example Ultralytics AGPL-3.0 in an optional extra). Keep to the MIT parts. | Local Linux sandbox defaults to a gVisor container, QEMU VMs also supported (project docs). Python 3.12/3.13. | Cloud sandboxes are metered and are not used here. Name clash: the "CUA-Sandbox" research paper (arXiv 2609.32750) is a different project from the trycua `cua-sandbox` package. Not run. |
+| BrowserGym | ServiceNow/BrowserGym | Apache-2.0 (LICENSE from the owning repo) | Yes, Playwright Chromium. | Browser only, not a desktop. Cannot run desktop tasks. |
+
+Other incumbents with open code (for reference, not proposed as baselines): ComputerRL
+(THUDM/ComputerRL, Apache-2.0, OSWorld-derived, qemu-in-docker, needs KVM), EvoCUA
+(meituan/EvoCUA, Apache-2.0, a model and eval repo rather than the training sandbox
+fleet), CUA-Gym (xlang-ai/CUA-Gym, Apache-2.0 code, CC-BY-4.0 data). MAI-Gym's README
+says framework source is "coming soon", so it is not runnable now.
 
 ## No candidate is called the strongest
 

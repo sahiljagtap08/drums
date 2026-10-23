@@ -95,3 +95,24 @@ def test_resource_summary_cpu_and_rss():
          {"kind": "env", "slot": 0, "t": 10.0, "rss_kib": 1024 * 300, "pss_kib": None, "cpu_ticks": 500, "clk_tck": 100}]
     r = scorer.resource_summary(s)
     assert r["rss_mib_mean"] == 200 and r["cpu_cores_mean_per_env"] == pytest.approx(0.5)
+
+
+def test_failed_run_cost_and_total_cost_with_other_costs(tmp_path):
+    d = make(tmp_path, "drums", n=100, valid_frac=0.8, usd_h=10.0, wall_s=3600.0)
+    run = json.load(open(os.path.join(d, "run.json")))
+    run["cost_basis"]["other_usd"] = {"inference": 4.0, "training": 6.0}
+    json.dump(run, open(os.path.join(d, "run.json"), "w"))
+    run, att, samp = scorer.load(d)
+    m = scorer.side_metrics(run, att, samp)
+    assert m["failed_run_cost_usd"] == pytest.approx(10.0 * 0.2)  # 20% of slot time was invalid
+    assert m["total_cost_all_usd"] == pytest.approx(20.0)
+    assert m["total_cost_all_per_valid_usd"] == pytest.approx(20.0 / 80)
+
+
+def test_reset_percentiles(tmp_path):
+    d = make(tmp_path, "drums", n=100)
+    run, att, samp = scorer.load(d)
+    for i, a in enumerate(att):
+        a["reset_s"] = float(i)
+    m = scorer.side_metrics(run, att, samp)
+    assert m["reset_s_p50"] == pytest.approx(49.5) and m["reset_s_p95"] == pytest.approx(94.05)
