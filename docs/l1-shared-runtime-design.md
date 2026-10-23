@@ -125,3 +125,43 @@ Only after L1-M0 to L1-M4 pass may a result set `drums_level=L1`. L1-M6 is the f
 
 Nothing in this document authorises building or running anything; it is the specification a future build would
 be judged against.
+
+## 8. PROTOTYPE pre-registration (written and committed BEFORE any measurement; local sandbox, no spend)
+
+**PROTOTYPE. UNBUILT-to-L1.** This section fixes the thresholds for a minimum feasibility prototype of mechanism F (fork
+server) on the real Chromium workload. A positive result is feasibility evidence for the fork mechanism on the processes
+that can be forked; it is not an L1 proof, and any scorer run still records `drums_level=L0`.
+
+What is built (only after this section is committed): a zygote process, started once, that pre-imports the guest server's
+heavy dependencies and forks one process per session; each forked child becomes the session's PID 1 (new PID, mount, IPC,
+UTS and network namespaces), uses the same filesystem and network setup as L0, starts its own Xvfb, openbox, D-Bus, AT-SPI
+by `exec`, and runs the REAL OSWorld guest server (the kit, `main.py` unmodified) as a fork of itself. Chromium is
+started by `exec` in every arm: a browser with live X, D-Bus, GPU-less compositor threads and a sandbox cannot be forked
+from a template (to be shown, not assumed, in the hazard test).
+
+Arms, identical in everything else (kit, template, Xvfb size, Chromium flags and profile, host, run order interleaved):
+- **C0** cold as shipped: `python main.py` (OSWorld's debug reloader, so two interpreter processes);
+- **C1** cold module entry: a fresh interpreter that imports `main` and calls `main.app.run(debug=False)`, the same
+  entry the fork arm uses, so C1 isolates fork from entry-point differences;
+- **F** fork: the guest server is a fork of the zygote, `main` imported after the fork (pyautogui connects to X at import,
+  so the fork-safe point is before that import).
+
+Measurements, N >= 20 per arm:
+
+| ID | Measurement | Design | PASS threshold (fixed now) |
+|---|---|---|---|
+| a | Marginal host memory per additional session: slope of (MemTotal - MemAvailable) against concurrent session count at 1, 4, 8, 12, 16, 20 sessions, 3 trials per arm, sessions destroyed between trials | Same as L1-M1, host-level, not per-process PSS | F slope <= 0.85 x C1 slope (at least 15% lower) AND the 95% bootstrap interval of (C1 slope - F slope) over trials excludes 0 |
+| b | Server-ready latency: session create request to guest `/platform` answering, inside the session | 20 sequential sessions per arm, interleaved | F p95 < C1 p95 AND F median <= 0.7 x C1 median |
+| c | App-ready latency: session create request to the Chromium page title visible over CDP | 20 sequential sessions per arm | F p95 < C1 p95 |
+| d | State hygiene of siblings: distinct PID namespaces and pids, each with its own Xvfb, no shared listening socket, numpy global RNG state differs between siblings | direct checks in two simultaneous forked sessions | all hold |
+| e | Hazard test, fork of a RUNNING server: fork the live guest server (X connection, D-Bus and listening socket already open) and report exactly what is shared or broken | direct experiment | no threshold; every observed breakage is reported |
+| f | Share bound: Chromium processes' share of per-session private memory, and the resulting upper bound on what forking only the non-Chromium processes can save | smaps_rollup of one session of each arm | no threshold; reported |
+
+L0 reference datapoints (single samples, not comparable by construction, same sandbox): 0.8 s empty session ready, about
+2.5 s reset plus settle with Chromium, about 350 MiB application memory per session.
+
+Expected outcome, stated in advance so it can lose: (a) likely FAILS, because Chromium dominates per-session memory and is
+not forked; (b) likely passes; (c) likely shows no gain; (d) and (e) are where fork risk shows. If (a) fails the honest
+conclusion is that mechanism F alone cannot deliver the L1 memory claim on this workload and mechanism K (page merging) or a
+different sharing mechanism would be needed; K is measured separately only if the host allows it and is labelled K.
+
