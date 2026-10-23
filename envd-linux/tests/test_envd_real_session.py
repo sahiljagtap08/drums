@@ -121,6 +121,7 @@ def stack(tmp_path_factory):
     s.daemon.wait(10)
     for slot in (0, 1):
         s.sup.destroy(slot)
+    s.sup.close()  # removes the sweep ledger entry
     s.verify.shutdown()
 
 
