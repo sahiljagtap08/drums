@@ -1,8 +1,27 @@
-"""The OSWorld `Provider` interface over a Drums controller.
+"""QUARANTINED. DO NOT IMPORT FROM ANY RUN PATH.
 
-OSWorld's DesktopEnv asks its provider to start an emulator and then reads one string,
-"ip:server:chromium:vnc:vlc" (plus an app port for ScienceBoard), to find the guest services.
-This is our own implementation of that interface from its documented shape."""
+This module is shaped like a provider class in ScaleCUA's `osworld_env/worker` source, which has no
+licence of its own (source-readable is not permission) and which its author read before that was
+known. A rewrite by the same person is not a clean-room cure, so this file stays quarantined:
+no driver entry point, smoke path, test run path or documentation example may import it.
+
+Resolution paths, in order:
+  (a) an independent implementation by someone who has NOT read `osworld_env`, working only from the
+      MIT `agentrl-worker` 0.4.0 interface and public OSWorld API documentation (Apache-2.0); or
+  (b) written permission from the rightsholder.
+
+What is missing while it is quarantined: the bridge between OSWorld's `DesktopEnv` (which expects a
+`Provider` with start_emulator / get_ip_address / revert_to_snapshot / stop_emulator) and
+`DrumsEnvironmentController`. Without it the real ScaleCUA worker path cannot drive a Drums session;
+the controller, the guest-server stub and the smoke job do not depend on it.
+
+Kept in git history on purpose. Importing it raises unless DRUMS_ALLOW_QUARANTINED=1 is set, which
+exists only so the guard test can prove the quarantine is enforced."""
+
+import os
+
+if os.environ.get("DRUMS_ALLOW_QUARANTINED") != "1":
+    raise ImportError("scalecua/_quarantined_provider.py is quarantined (licence provenance); see its docstring")
 
 GUEST_PORT = 5000
 

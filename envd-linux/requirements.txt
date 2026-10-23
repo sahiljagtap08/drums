@@ -1,0 +1,5 @@
+# Pins for the envd-linux spike and the ScaleCUA controller. Nothing here is installed by the repo's own
+# pyproject/uv.lock (untouched).
+python-xlib          # XTEST input in the session daemon (system python)
+pyroute2             # per-session veth
+agentrl-worker==0.4.0  # MIT (PyPI); the interface the controller targets. Only needed for the real-interface tests and the worker entry point.

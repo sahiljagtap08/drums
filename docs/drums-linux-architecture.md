@@ -196,3 +196,8 @@ Not tested here: cgroups, bwrap, XTEST input, a window manager, a browser, anyth
 with `/dev/kvm` (absent), an overlay on top of the OSWorld image, and any real envd. A
 screenshot of an Xvfb display with a terminal came back blank (459 bytes, identical for
 two displays), so capture of a drawn window was not demonstrated.
+
+
+## Claim discipline
+
+Keep three things apart: (a) REAL Chromium end-to-end through the daemon; (b) the OSWorld guest-server STUB contract (accessibility tree and terminal empty, pyautogui absent); (c) actual OSWorld app-environment compatibility, NOT proven. Keep L1 (shared pre-warmed runtime forks, the real Drums claim) separate from L0 (what is built so far). The OSWorld provider bridge is QUARANTINED (licence provenance); see `training-comparison-plan.md` section 4.

@@ -9,8 +9,9 @@ Interface (read from the MIT `agentrl-worker` 0.4.0 package, `agentrl/worker/env
     async execute_shell / create_shell / get_env_variables / background_task
     sync_* wrappers run the coroutine on `self.loop`, which the worker's task sets.
 
-`url` for an OSWorld subtype is the host that serves the guest ports; the OSWorld provider
-turns it into "host:5000:9222:8006:8080". Blocking pool work runs in the loop's executor.
+`url` for an OSWorld subtype is the host that serves the guest ports. The bridge from that to
+OSWorld's `DesktopEnv` provider interface is NOT implemented here (the only version was
+quarantined, see _quarantined_provider.py). Blocking pool work runs in the loop's executor.
 
 Not covered: how ScaleCUA's own worker code calls these (its `osworld_env` code is licence-
 unresolved and is not used), and registering the driver in the real `create_controller`
@@ -27,7 +28,7 @@ GUEST_PORTS = [5000, 9222, 8006, 8080]
 
 
 class DrumsEnvironmentDelegation(EnvironmentDelegation):
-    def __init__(self, name="osworld", subtypes=("Ubuntu-modified",)):
+    def __init__(self, name="osworld", subtypes=("ubuntu",)):
         super().__init__(name)
         self._subtypes = list(subtypes)
 

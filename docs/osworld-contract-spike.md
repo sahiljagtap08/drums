@@ -8,7 +8,7 @@ Builds on `docs/envd-linux-spike.md` and implements the decisions in
 
 Unresolved-licence assets were not used or copied: `osworld_env` (no licence of its own), VeriGen and the
 HF task pool and judges. Disclosure: I read `osworld_env/worker` source before its licence status was known,
-so `scalecua/provider.py` (shaped like the worker's provider class) should be reviewed or replaced before use
+so `scalecua/provider.py` was QUARANTINED (renamed `_quarantined_provider.py`, import-guarded, imported by nothing, enforced by a test; resolution is an independent implementation or written permission)
 outside this branch; see `docs/training-comparison-plan.md` section 4. The OSWorld guest-server shapes were
 taken from the Apache-2.0 upstream OSWorld repository (xlang-ai/OSWorld, `desktop_env/server/main.py`),
 read for response shapes only; the stub is our own code.
@@ -21,8 +21,8 @@ read for response shapes only; the stub is our own code.
 | Template layer | Copied once into a tmpfs mounted on the host and shared by all sessions (overlayfs refuses a layer that sits inside another layer, and `/` is a lower layer). One RAM copy, shared page cache. |
 | Network namespace per session | `unshare --net` plus a veth pair (`netsetup.py`, uses pyroute2): host `10.200.<slot>.1/30`, session `10.200.<slot>.2/30`, default route via the host side. The kernel removes the veth when the namespace dies. |
 | OSWorld guest-server STUB | `osworld_server.py`: stdlib server on port 5000 inside each session with the routes and response shapes environment layers use (`/platform`, `/screenshot`, `/screen_size`, `/cursor_position`, `/execute`, `/setup/launch`, `/file`, `/list_directory`, `/desktop_path`, `/run_python`, `/window_size`, plus stubbed `/accessibility` and `/terminal`). `GET /__contract` lists what is implemented. Download, upload, open-file, wallpaper, recording, activate/close return 501. |
-| Controller | `scalecua/controller.py`: `DrumsEnvironmentController` and `DrumsEnvironmentDelegation` subclass the REAL `agentrl-worker` 0.4.0 classes (MIT, read from PyPI): async `start_session(subtypes, immutable, **kw) -> (session_id, {subtype: env_id}, {subtype: url})`, `renew_session`, `end_session`, `execute_command` (via the guest `/execute`), `execute_shell`, `get_env_variables`, a reaper `background_task`; `sync_*` wrappers come from the real base. `scalecua/pool.py`: the blocking pool underneath: exclusive sessions, a rebuilt session for every attempt, start failures recorded and another slot tried, every start, reset and fault in an events file. `patch.py` registers a "drums" driver in the real `create_controller` (which otherwise knows only manual/docker/k8s). `provider.py` (OSWorld provider shape, `"ip:5000:9222:8006:8080"`), `client.py` (`GuestClient`). |
-| Smoke job | `scalecua/smoke.py`: the bounded validation job (stage (a) of the money path): sessions through the controller, per-attempt guest-contract checks, start-time and fault statistics, memory low-water mark, mean session PSS, hard wall-clock cap, SIGTERM handling, guaranteed teardown; JSON output. |
+| Controller | `scalecua/controller.py`: `DrumsEnvironmentController` and `DrumsEnvironmentDelegation` subclass the REAL `agentrl-worker` 0.4.0 classes (MIT, read from PyPI): async `start_session(subtypes, immutable, **kw) -> (session_id, {subtype: env_id}, {subtype: url})`, `renew_session`, `end_session`, `execute_command` (via the guest `/execute`), `execute_shell`, `get_env_variables`, a reaper `background_task`; `sync_*` wrappers come from the real base. `scalecua/pool.py`: the blocking pool underneath: exclusive sessions, a rebuilt session for every attempt, start failures recorded and another slot tried, every start, reset and fault in an events file. `patch.py` registers a "drums" driver in the real `create_controller` (which otherwise knows only manual/docker/k8s). `client.py` (`GuestClient`). |
+| Smoke job | `scalecua/smoke.py`: the bounded validation job (stage (a) of the money path): sessions through the controller, per-attempt guest-contract checks, start-time and fault statistics, memory low-water mark, mean session PSS, hard wall-clock cap, SIGTERM handling, teardown (verified only by the local 4 s-cap test; nothing about AWS is guaranteed-capped); JSON output. `worker_entry.py` installs the driver then runs `agentrl.worker` (tested against real `agentrl-worker==0.4.0` with our own fake task; the provider bridge is missing by design). |
 
 ## 2. Proven here (tests that ran and passed)
 
@@ -70,7 +70,7 @@ read for response shapes only; the stub is our own code.
 | Chrome DevTools on 9222 | Only a generic listener on 9222 was tested. Chrome itself binds DevTools to loopback; the OSWorld image forwards it with a helper (not reproduced here). |
 | Internet from a session | None (no NAT configured, none available in this sandbox). Tasks that need real websites cannot run. Egress/NAT and DNS are not implemented. |
 | Network isolation between sessions | No firewall. See the sysctl note above; a host with forwarding on (needed for NAT) would let sessions reach each other until a firewall is added. |
-| The real ScaleCUA worker | NOT used. The controller is checked against the real `agentrl-worker` 0.4.0 interface and local stubs only; how the worker's session code calls the provider, the bundled (newer) framework copy, and a worker entry point that installs the driver are unverified. |
+| The real ScaleCUA worker | NOT used. The controller is checked against the real `agentrl-worker` 0.4.0 interface and local stubs only; how the worker's session code calls the provider, the bundled (newer) framework copy, and are unverified. The entry point exists but only a fake task of ours has run through it. |
 | Memory and cgroups | Upper layers are RAM-backed tmpfs and are not limited or accounted per session. No cgroup limits. |
 | Scale | Two to four sessions at most in any test. No load, no soak, no failure injection into real sessions beyond a fake backend. |
 | Reset speed claims | A rebuild per attempt took about a second here for an empty session; the cost with a real GNOME desktop is unknown. |
@@ -98,3 +98,8 @@ Neither is in `pyproject.toml` or `uv.lock`; the integration tests skip when the
 
 Still L0. Sessions share files and page cache and now also a read-only template tmpfs, but each runs its
 own Xvfb, browser and guest server. It is an engineering precursor, not a Drums result.
+
+
+## Claim discipline
+
+(a) The REAL Chromium end-to-end task through the daemon is in `envd-linux-spike.md`. (b) Everything in this document is the OSWorld guest-server STUB contract: accessibility tree and terminal are empty, pyautogui is absent, many routes return 501. (c) Actual OSWorld app-environment compatibility is NOT proven; (b) is not (c). This is an L0 precursor; no L1 (shared pre-warmed runtime forks) claim follows from it.

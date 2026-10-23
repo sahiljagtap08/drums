@@ -118,7 +118,7 @@ installs the driver, and anything on real infrastructure.
 | `scalecua_rl` (trainer, controller, worker framework) | MIT, Z.ai (`scalecua_rl/LICENSE` read) | Use, with attribution. |
 | `osworld_eval` | Apache-2.0 (owner-verified; not independently read here) | Use under its terms, with attribution and notices. |
 | `osworld_env/vm_image/snapshot` | MIT (owner-verified) | May be used for the tuned baseline's fast reset. |
-| `osworld_env` (worker code, `config.yaml`, k8s templates, scripts) | UNRESOLVED. The repo root licence is null and `osworld_env` has no LICENSE of its own (only `vm_image/snapshot` does). Source-readable is not permission. | Read for understanding only; write our own code; copy nothing. Disclosure: I read `osworld_env/worker/src/{environment,session,task}.py` and `config.yaml` before the owner's licence note arrived, so I am not a clean-room author of anything that resembles them. The Drums driver was built from the MIT `agentrl-worker` interface and the Apache OSWorld provider shape, but `provider.py` was informed by having read the worker's provider class and should be reviewed by someone who has not, or replaced, or covered by written permission, before any use outside this branch. |
+| `osworld_env` (worker code, `config.yaml`, k8s templates, scripts) | UNRESOLVED. The repo root licence is null and `osworld_env` has no LICENSE of its own (only `vm_image/snapshot` does). Source-readable is not permission. | Read for understanding only; write our own code; copy nothing. Disclosure: I read `osworld_env/worker/src/{environment,session,task}.py` and `config.yaml` before the owner's licence note arrived, so I am not a clean-room author of anything that resembles them. The controller and pool target the MIT `agentrl-worker` 0.4.0 interface. **QUARANTINED: `envd-linux/envd_linux/scalecua/_quarantined_provider.py`** (the OSWorld provider bridge, informed by that reading; a rewrite by me is not a clean-room cure). It is kept in history only, guarded so it cannot be imported, not imported by the entry point, the smoke path or any test (a test enforces this), and not used in any run path. Resolution: (a) an independent implementation by someone who has not read `osworld_env`, from the MIT PyPI `agentrl-worker` and public OSWorld API docs, or (b) written permission. **Missing until then:** the session-address to `DesktopEnv` provider bridge, so ScaleCUA's `OSWorldTask` cannot run through our entry point. |
 | VeriGen code | UNRESOLVED (no LICENSE) | Not needed: tasks are released, not regenerated. Do not use or copy. |
 | HF task pool and judge functions (`extreme1228/ScaleCUA`: `osworld/rl_tasks`, `osworld/judge_functions/rl_tasks`) | UNRESOLVED, HARD GATE: the dataset's `license` is null and nothing grants a licence | Blocked. Unresolved means unused, until written terms or permission exist. Route around: OSWorld's own Apache-2.0 task set split into disjoint train and held-out parts (about 350 tasks; smaller and noisier; labelled "OSWorld-split", not the published benchmark protocol). A third party building on the same assets does not change this. |
 | Model weights (`extreme1228/ScaleCUA-*-sft`) | The model card says exactly: "Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B)" (the Qwen3.5 card reads the same with Qwen3.5-9B). The base `Qwen/Qwen3-VL-8B-Instruct` is Apache-2.0 per the owner's check. | Treat conservatively per the exact wording: research use. Confirm that a published comparison counts as research use and what the derived-weights terms require before use; do not read it as a grant beyond that. If unsuitable, fall back to the licensed base model with a higher cost to first signal. |
@@ -272,7 +272,7 @@ Stage (a), a bounded validation job, is the only thing proposed first:
 
 1. Infrastructure smoke (`envd_linux.scalecua.smoke`, already runnable locally): builds sessions
    through the controller, checks the guest contract per attempt, records start times, faults and
-   memory, with a hard wall-clock cap and guaranteed session teardown.
+   memory, with a hard wall-clock cap and session teardown (teardown is tested only by the local 4 s-cap test; nothing about AWS is guaranteed-capped yet: instance-level auto-termination is unbuilt and unverified).
 2. The two-step trainer smoke on the cheapest GPU node that fits (section 6), with a hard
    wall-clock cap, automatic instance termination, and a verified hourly price. It is labelled
    engineering validation with an uncertain outcome (it may fail on memory or on the environment
@@ -295,3 +295,14 @@ Whether the driver matches the copy of `agentrl.worker` bundled in the ScaleCUA 
 against 0.4.0 from PyPI); whether a GNOME session runs in a
 namespaced session; the real minimum GPU footprint (needs the smoke run); step time at
 8 GPUs; environment CPU and RAM actually needed per VM under this workload; whether a published comparison is within the weights' research-use wording; every price; and the licence of the unresolved assets.
+
+
+## Claim discipline (applies to every doc on this branch)
+
+Three different things must never be conflated:
+
+- (a) **REAL**: a Chromium end-to-end task through the namespace + overlayfs + Xvfb daemon (`envd-linux-spike.md`).
+- (b) **STUB contract**: our OSWorld guest-server stub (port 5000 routes, accessibility tree and terminal empty, pyautogui absent). It shows our sessions can answer the contract's HTTP shape. It is not OSWorld.
+- (c) **Actual OSWorld app-environment compatibility** (real guest server, pyautogui, AT-SPI, the OSWorld image, its apps and GNOME session): **NOT proven.** (b) must never be read as (c).
+
+L0 (shared files and page cache, private state, per-session processes) is a precursor. The Drums claim is L1 (shared pre-warmed runtime forks). L0 results never support an L1 claim; the scorer reports `precursor_only` unless `drums_level` is L1.

@@ -30,7 +30,7 @@ def test_bases_are_the_real_agentrl_classes():
 def test_real_sync_wrappers_drive_the_drums_controller():
     c = make()
     assert c.delegation.controller is c  # the real base wires the delegation back to the controller
-    sid, envs, urls = c.sync_start_session("Ubuntu-modified")
+    sid, envs, urls = c.sync_start_session("ubuntu")
     c.sync_renew_session(sid)
     rc = c.sync_execute_command  # exists on the real base
     assert callable(rc)

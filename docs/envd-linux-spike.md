@@ -91,3 +91,8 @@ reset order changed to "post the generation, then rebuild".
 This is L0: shared files and page cache, private state, per-session processes. It is an
 engineering precursor, not a Drums result. The memory number above is what L1 (shared
 pre-warmed runtime forks) would have to beat.
+
+
+## Claim discipline
+
+This document describes (a): the REAL Chromium end-to-end task through the namespace + overlayfs + Xvfb daemon. It says nothing about (b) the OSWorld guest-server stub contract (see `osworld-contract-spike.md`) and nothing about (c) actual OSWorld app-environment compatibility, which is NOT proven. It is an L0 precursor (shared files, private state, per-session processes); no L1 (shared pre-warmed runtime forks) claim follows.

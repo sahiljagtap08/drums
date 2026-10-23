@@ -8,7 +8,8 @@ It builds sessions through `DrumsEnvironmentController`, and per attempt checks 
 contract end to end (platform, screen size, screenshot, command execution, file round trip),
 recording how long each session took to become healthy. It never trains anything.
 
-Safety, by construction:
+Safety (exercised only by the local 4 s-cap test in test_scalecua_smoke.py; nothing about any cloud
+instance is guaranteed-capped yet):
   - a hard wall-clock cap: at the cap (or on SIGTERM/SIGINT) every session is destroyed, the
     partial results are written with status "wall_cap_reached" / "interrupted", exit code 3;
   - sessions are always torn down on exit (try/finally and atexit);
@@ -149,10 +150,10 @@ def run(args, backend, now=time.time):
             t0 = now()
             sid = None
             try:
-                sid, envs, urls = ctl.sync_start_session("Ubuntu-modified")
+                sid, envs, urls = ctl.sync_start_session("ubuntu")
                 row["start_s"] = now() - t0
-                info = ctl.session_info(sid)["Ubuntu-modified"]
-                row["failed"] = check_guest(GuestClient(urls["Ubuntu-modified"]))
+                info = ctl.session_info(sid)["ubuntu"]
+                row["failed"] = check_guest(GuestClient(urls["ubuntu"]))
                 row["ok"] = not row["failed"]
                 from ..x11 import pidns_members
                 with lock:

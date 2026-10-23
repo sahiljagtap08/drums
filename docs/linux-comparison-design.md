@@ -235,3 +235,8 @@ Where a reader would want a benchmark score (OSWorld-Verified and similar) we do
 claim one. A score claim would need a trained model on a recognised benchmark, which is
 outside this plan.
 
+
+
+## Claim discipline
+
+L0 results (shared files, private state, per-session processes) are reported as `precursor_only`, never as a Drums win; only L1 (shared pre-warmed runtime forks) can support the Drums claim. Fakes are engineering validation, not results. OSWorld-stub compatibility is not OSWorld compatibility. Teardown guarantees are only what the local 4 s-cap test exercises; nothing about AWS is guaranteed-capped yet.

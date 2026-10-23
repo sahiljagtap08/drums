@@ -10,7 +10,6 @@ import pytest
 
 from envd_linux.scalecua.controller import DrumsEnvironmentController, DrumsEnvironmentDelegation
 from envd_linux.scalecua.pool import DrumsSessionPool, PoolExhausted, SessionStartError
-from envd_linux.scalecua.provider import DrumsVMProvider
 
 
 class FakeBackend:
@@ -63,9 +62,9 @@ class PoolAdapter:
 
 def test_start_returns_the_documented_shape():
     c = ctl(FakeBackend())
-    sid, containers, addrs = c.sync_start_session("Ubuntu-modified", image_path="/x")
-    assert isinstance(sid, str) and containers["Ubuntu-modified"].startswith("drums-slot-")
-    assert addrs["Ubuntu-modified"].startswith("10.9.0.")
+    sid, containers, addrs = c.sync_start_session("ubuntu", image_path="/x")
+    assert isinstance(sid, str) and containers["ubuntu"].startswith("drums-slot-")
+    assert addrs["ubuntu"].startswith("10.9.0.")
     assert c.session_info(sid)["slot"] in (0, 1)
 
 
@@ -167,27 +166,40 @@ def real_controller(backend, slots=2, **kw):
     return c
 
 
-def test_provider_follows_the_osworld_provider_shape():
-    c = real_controller(FakeBackend())
-    p = DrumsVMProvider(c)
-    p.start_emulator("/vm", True, os_type="Ubuntu-modified")
-    parts = p.get_ip_address().split(":")
-    assert parts[0].startswith("10.9.0.") and parts[1:] == ["5000", "9222", "8006", "8080"]
-    p.revert_to_snapshot("/vm")
-    assert p.session_id is None
-    with pytest.raises(NotImplementedError):
-        p.save_state()
-    p2 = DrumsVMProvider(c, os_type="Ubuntu2_scienceboard")
-    p2.start_emulator("/vm", True)
-    assert p2.get_ip_address().endswith(":8000")
-    c.shutdown()
+def test_quarantined_provider_cannot_be_imported_and_nothing_imports_it():
+    """provider.py is quarantined for licence provenance. Importing it must fail, and no module in
+    the package, the tests (other than this guard) or the smoke path may reference it."""
+    import importlib
+    import os
+    import pathlib
+    with pytest.raises(ImportError):
+        importlib.import_module("envd_linux.scalecua._quarantined_provider")
+    root = pathlib.Path(__file__).resolve().parents[1]
+    import ast
+    offenders = []
+    for path in list((root / "envd_linux").rglob("*.py")) + list((root / "tests").glob("*.py")):
+        if path.name in ("_quarantined_provider.py", "test_scalecua_controller.py"):
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""] + [a.name for a in node.names]
+            elif isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "import_module" and node.args \
+                    and isinstance(node.args[0], ast.Constant):
+                names = [str(node.args[0].value)]
+            if any("_quarantined_provider" in n or n.endswith("scalecua.provider") or n == "DrumsVMProvider"
+                   for n in names):
+                offenders.append(str(path))
+    assert not offenders, offenders
 
 
 def test_async_interface_matches_the_agentrl_controller_shape():
     b = FakeBackend()
     c = real_controller(b)
-    sid, envs, urls = c.sync_start_session("Ubuntu-modified", immutable=True, image_path="/vm")
-    assert set(envs) == set(urls) == {"Ubuntu-modified"} and urls["Ubuntu-modified"].startswith("10.9.0.")
+    sid, envs, urls = c.sync_start_session("ubuntu", immutable=True, image_path="/vm")
+    assert set(envs) == set(urls) == {"ubuntu"} and urls["ubuntu"].startswith("10.9.0.")
     c.sync_renew_session(sid)
     c.sync_end_session(sid)
     assert c.stats() if hasattr(c, "stats") else True
@@ -246,7 +258,7 @@ def test_reaper_ends_expired_sessions():
 
 def test_delegation_matches_the_agentrl_delegation_interface():
     d = DrumsEnvironmentDelegation()
-    assert d.get_name() == "osworld" and d.get_subtypes() == ["Ubuntu-modified"]
+    assert d.get_name() == "osworld" and d.get_subtypes() == ["ubuntu"]
     assert d.is_exclusive("x") and d.get_concurrency_limit("x") == 1 and d.get_reuse_limit("x") == 1
     assert d.get_service_port("x") == [5000, 9222, 8006, 8080]
     import asyncio

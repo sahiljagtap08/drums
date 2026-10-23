@@ -81,9 +81,9 @@ def stack(tmp_path_factory):
 
 
 def start(stack):
-    sid, cont, addr = stack.ctl.sync_start_session("Ubuntu-modified")
-    info = stack.ctl.session_info(sid)["Ubuntu-modified"]
-    return sid, info, GuestClient(addr["Ubuntu-modified"])
+    sid, cont, addr = stack.ctl.sync_start_session("ubuntu")
+    info = stack.ctl.session_info(sid)["ubuntu"]
+    return sid, info, GuestClient(addr["ubuntu"])
 
 
 LISTENER = ("import socketserver, http.server;"

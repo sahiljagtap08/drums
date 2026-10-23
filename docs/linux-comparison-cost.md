@@ -3,7 +3,7 @@
 STATUS: DRAFT MODEL, NOTHING APPROVED. The earlier Mac-based plan and its figures
 (USD 100, USD 140, a 10-hour cap) are withdrawn and are not carried into this document.
 No launch, provisioning or cloud credential use happens, and no approval is assumed.
-No price below was fetched live; every price is VERIFY LIVE and the dollar values are
+Prices are the owner's to ground independently; none is a verified figure here. No price below was fetched live; every price is VERIFY LIVE and the dollar values are
 illustrations of the formula at a placeholder price, not a request for approval.
 
 ## Shape of the first run
