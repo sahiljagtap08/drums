@@ -140,7 +140,9 @@ def _tagged_procs(tag):
         except OSError:
             continue
         argv = [a.decode(errors="replace") for a in argv]
-        if "envd_linux.session_init" in argv and "--tag" in argv and argv[argv.index("--tag") + 1] == tag:
+        # session_init processes, and the L1-F prototype's zygote plus every session it forked (they share its argv)
+        if ("envd_linux.session_init" in argv or "envd_linux.l1proto.zygote" in argv) and "--tag" in argv \
+                and argv[argv.index("--tag") + 1] == tag:
             pid = int(p.split("/")[2])
             if pid != me:
                 out.append(pid)

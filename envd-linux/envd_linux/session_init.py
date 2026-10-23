@@ -7,6 +7,7 @@ process tree, IPC and hostname. Shared with the host: kernel, the rest of the ro
 filesystem, and (in this spike) the network namespace."""
 
 import argparse
+import json
 import os
 import signal
 import socket
@@ -63,6 +64,72 @@ def setup_full_root(a):
     sh("umount", "-l", "/.drums-old")
 
 
+TIMING = {"f": None}
+
+
+def mark(name, **kw):
+    if TIMING["f"]:
+        TIMING["f"].write(json.dumps(dict(kw, mark=name, t=time.time())) + "\n")
+        TIMING["f"].flush()
+
+
+def http_ok(url, timeout=0.5):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status == 200, r.read()
+    except Exception:
+        return False, b""
+
+
+def lo_up():
+    """Bring the loopback interface up (a fresh network namespace starts with it down; the session's own readiness
+    probes talk to 127.0.0.1 before the supervisor has configured the veth)."""
+    import fcntl
+    import struct
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        fcntl.ioctl(s, 0x8914, struct.pack("16sH14x", b"lo", 0x1 | 0x40))  # SIOCSIFFLAGS: IFF_UP | IFF_RUNNING
+    except OSError:
+        pass
+    finally:
+        s.close()
+
+
+def start_server(a, env, kit):
+    """The real OSWorld server, one of three ways (the arms of the L1-F prototype)."""
+    log = open("/tmp/osworld-real-server.log", "wb")
+    server_dir = f"{kit}/server"
+    py = f"{kit}/venv/bin/python"
+    entry = "import main; main.app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)"
+    if a.server_mode == "asshipped":  # `python main.py`: OSWorld's debug reloader, so two interpreters
+        return subprocess.Popen([py, "main.py"], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+    if a.server_mode == "module":  # fresh interpreter, same entry as the fork arm
+        return subprocess.Popen([py, "-c", entry], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+    pid = os.fork()  # "fork": this process was itself forked from the zygote, so flask, lxml, ... are already mapped
+    if pid == 0:
+        try:
+            os.dup2(log.fileno(), 1)
+            os.dup2(log.fileno(), 2)
+            os.environ.update(env)
+            os.chdir(server_dir)
+            sys.path.insert(0, server_dir)
+            sys.argv = ["main.py"]
+            import main  # pyautogui connects to X here: after the fork, to THIS session's display
+            main.app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+        finally:
+            os._exit(1)
+    return pid
+
+
+def start_chromium(a, env):
+    html = "data:text/html,<title>drums-ready</title><h1>ready</h1>"
+    return subprocess.Popen(
+        [a.chrome, "--no-sandbox", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+         f"--user-data-dir={a.home}/profile", "--remote-debugging-port=9222", "--window-size=1280,800", html],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def start_real_desktop(a):
     """Session bus, AT-SPI, a window manager, then the public OSWorld server (main.py, unmodified).
 
@@ -82,9 +149,24 @@ def start_real_desktop(a):
     subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately"], **quiet)
     subprocess.Popen(["openbox"], **quiet)
     time.sleep(0.5)
-    log = open("/tmp/osworld-real-server.log", "wb")
-    subprocess.Popen([f"{kit}/venv/bin/python", "main.py"], cwd=f"{kit}/server", env=env, stdout=log,
-                     stderr=subprocess.STDOUT)
+    lo_up()
+    mark("desktop_stack_started")
+    start_server(a, env, kit)
+    mark("server_spawned")
+    deadline = time.time() + 60
+    while time.time() < deadline and not http_ok("http://127.0.0.1:5000/platform")[0]:
+        time.sleep(0.02)
+    mark("server_ready")
+    if a.workload == "chromium":
+        start_chromium(a, env)
+        mark("chromium_spawned")
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            ok, body = http_ok("http://127.0.0.1:9222/json/list")
+            if ok and b"drums-ready" in body:
+                break
+            time.sleep(0.02)
+        mark("chromium_ready")
 
 
 def main(argv=None):
@@ -105,9 +187,17 @@ def main(argv=None):
     ap.add_argument("--python", default="/usr/bin/python3")
     ap.add_argument("--osworld-real", default="")  # kit dir (realkit.py): run the REAL OSWorld server instead of the stub
     ap.add_argument("--exec-systemd", action="store_true")  # EXPERIMENT: exec systemd as PID 1 after the root setup
+    # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8)
+    ap.add_argument("--server-mode", choices=["asshipped", "module", "fork"], default="asshipped")
+    ap.add_argument("--workload", choices=["", "chromium"], default="")
+    ap.add_argument("--timing", default="")  # jsonl of wall-clock marks, opened before the pivot
+    ap.add_argument("--chrome", default="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
     ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
     a = ap.parse_args(argv)
 
+    if a.timing:
+        TIMING["f"] = open(a.timing, "a")
+    mark("init_start")
     socket.sethostname(f"drums-s{a.display}")
     xlog = open(a.xlog, "wb")
     ready = open(a.ready, "w")

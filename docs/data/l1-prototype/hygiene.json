@@ -1,0 +1,76 @@
+{
+ "zygote_preloaded": [
+  "json",
+  "flask",
+  "werkzeug.serving",
+  "jinja2",
+  "lxml.etree",
+  "requests",
+  "PIL.Image",
+  "PIL.ImageGrab",
+  "tkinter",
+  "gi",
+  "pyatspi",
+  "pyscreeze",
+  "Xlib.display",
+  "Xlib.X",
+  "psutil",
+  "ctypes",
+  "numpy"
+ ],
+ "zygote_failed": {},
+ "pid_ns": [
+  "pid:[4026532267]",
+  "pid:[4026532322]"
+ ],
+ "pid_ns_distinct": true,
+ "pid_sets_disjoint": true,
+ "net_ns_distinct": true,
+ "mnt_ns_distinct": true,
+ "xvfb_per_session": [
+  1,
+  1
+ ],
+ "x_sockets_visible_in_each_session": [
+  [
+   "X90"
+  ],
+  [
+   "X91"
+  ]
+ ],
+ "listening_ports_per_session": [
+  [
+   5000,
+   9222
+  ],
+  [
+   5000,
+   9222
+  ]
+ ],
+ "zygote_fds_leaked_into_sessions": [],
+ "fork_probe_siblings": [
+  {
+   "pid": 28002,
+   "random": 0.9011382539403999,
+   "urandom": "bb13d687",
+   "uuid4": "d363de97-8a80-4736-b6c0-3d4d04112d0f",
+   "numpy_global": 0.491780204372252
+  },
+  {
+   "pid": 28003,
+   "random": 0.33560918180561083,
+   "urandom": "71592201",
+   "uuid4": "4a5c2125-f770-4997-8987-db4da08216d9",
+   "numpy_global": 0.8058617692835176
+  }
+ ],
+ "probe_distinct": {
+  "pid": true,
+  "random": true,
+  "urandom": true,
+  "uuid4": true,
+  "numpy_global": true
+ }
+}

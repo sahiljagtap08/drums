@@ -165,3 +165,97 @@ not forked; (b) likely passes; (c) likely shows no gain; (d) and (e) are where f
 conclusion is that mechanism F alone cannot deliver the L1 memory claim on this workload and mechanism K (page merging) or a
 different sharing mechanism would be needed; K is measured separately only if the host allows it and is labelled K.
 
+## 9. PROTOTYPE results (measured; thresholds are the ones committed in 84a9241)
+
+**PROTOTYPE. Not an L1 proof.** Everything below is mechanism F applied to the guest-server process only; Chromium is started by
+exec in every arm. Any scorer run built on it records `drums_level=L0`. Raw data: `docs/data/l1-prototype/` (`bench.json`,
+`hazard.jsonl`, `hygiene.json`). Code: `envd_linux/l1proto/` (zygote, bench, hygiene, hazard test, report) and the
+`server_mode`/`workload` options of the Supervisor and `session_init`. Single sandbox (4 vCPU, 16 GiB, kernel 6.18), the real
+OSWorld guest server from the kit, Chromium 1194 on a blank data page with a template profile, N = 20 sessions per arm for
+latency (after 2 discarded warm-ups, arm order rotated) and 4 trials per arm of 20 concurrent sessions for memory.
+
+### Verdict against the pre-registered thresholds
+
+| ID | Threshold (fixed in 84a9241) | Measured | Verdict |
+|---|---|---|---|
+| a memory | F slope <= 0.85 x C1 slope AND 95% bootstrap interval of (C1 - F) excludes 0 | C0 281.0, C1 231.1, F 216.8 MiB per additional session (per-trial slopes C1 231.0 / 232.6 / 230.2 / 230.8, F 218.1 / 216.9 / 215.7 / 216.6). F/C1 = 0.938; C1 - F = 14.3 MiB, interval [13.1, 15.5] | **FAIL**: the saving is real in direction (the interval excludes 0) but 6.2%, not the required 15% |
+| b server ready | F p95 < C1 p95 AND F p50 <= 0.7 x C1 p50 | p50 0.86 / 1.08 / 1.53 s and p95 0.93 / 1.17 / 1.62 s for F / C1 / C0. F p95 < C1 p95 holds; F p50 is 0.80 x C1 p50 (needs <= 0.70) | **FAIL** on the median condition (p95 condition passes) |
+| c Chromium ready | F p95 < C1 p95 | 1.33 s vs 1.53 s (C0 2.01 s). The Chromium-specific part is the same 0.35 s in every arm | **PASS**, and the whole gain is the server's, not Chromium's |
+| d hygiene | all hold | distinct PID, mount and network namespaces; pid sets disjoint; one Xvfb per session; each session sees only its own X socket (X90, X91); listening ports 5000 and 9222 exist in each separate network namespace; no zygote file descriptor in either session; siblings' `random`, `os.urandom`, `uuid4` and numpy global draws all differ | **PASS** (the numpy-global duplicate-state hazard did NOT reproduce with numpy 2.5.4: distinct draws; a library with its own RNG state is still a hazard class, this one does not exhibit it) |
+| e hazard, fork of a RUNNING server | no threshold | see below | reported |
+| f share bound | no threshold | see below | reported |
+
+Overall: mechanism F, applied where it can be, does not meet the memory threshold (a) or the latency threshold (b). It meets
+(c) and (d). This is the outcome the pre-registration said was likely.
+
+### Full latency table (seconds, p50 / p95, n = 20 per arm)
+
+| | C0 as shipped | C1 module entry | F fork |
+|---|---|---|---|
+| session init to server ready | 1.49 / 1.57 | 1.03 / 1.13 | 0.85 / 0.91 |
+| request to server ready (b) | 1.53 / 1.62 | 1.08 / 1.17 | 0.86 / 0.93 |
+| request to Chromium ready (c) | 1.89 / 2.01 | 1.43 / 1.53 | 1.21 / 1.33 |
+| `create()` returns (includes network setup) | 2.44 / 2.62 | 2.00 / 2.09 | 1.74 / 1.88 |
+
+The zygote is a fixed cost: preload 0.22 s, RSS 55 MiB (PSS 51 MiB), paid once. With a saving of 14.3 MiB per session it breaks
+even at about 4 sessions, and at 20 sessions the net host saving is about 235 MiB of roughly 4.6 GiB (about 5%).
+
+Reading C0 honestly: C0 (OSWorld's `python main.py`, whose debug reloader runs two interpreters) is 281 MiB per session and F is
+23% below it, but C1 (the same fresh-interpreter entry as F, without the reloader) already accounts for 18 points of that. The
+fair comparison for the fork mechanism is F against C1: 6.2%.
+
+### (f) Share bound: what fork can reach at all
+
+Private memory of one session at N = 20, trial 0 (from `smaps_rollup`, MiB private; Xvfb, D-Bus, AT-SPI and openbox are exec'd and
+are not shared by fork):
+
+| process group | C0 | C1 | F |
+|---|---|---|---|
+| Chromium (10 processes) | 89 | 90 | 90 |
+| guest server (Python) | 91 | 41 | in the next row |
+| session init (+ forked server in F) | 10 | 10 | 37 |
+| Xvfb | 8 | 8 | 8 |
+| D-Bus, AT-SPI, openbox | 6 | 6 | 6 |
+| total private | 207 | 157 | 142 |
+
+The forkable part is the Python server plus session init: 51 MiB in C1, 37 MiB in F, a difference of 14 MiB, which is exactly the
+measured slope difference (14.3). Even if ALL of that Python memory were shared across sessions the saving could not exceed about
+51 MiB of the 231 MiB per-session host cost (22%). The rest of the per-session host cost is Chromium (about 90 MiB private here),
+the other exec'd processes, tmpfs for the session uppers (31.5 MiB per session in every arm) and kernel structures. Chromium is the
+largest forkable-in-principle component and it was not forked: it is exec'd in all arms.
+
+These per-session numbers are not comparable with the L0 datapoints of section 2 (363 MiB PSS for a Chromium session that
+loads a form page, 0.8 s empty session, 2.5 s reset plus settle): the workload (blank page, real guest server, no form), the
+accounting (host delta versus per-process PSS) and the readiness definition all differ.
+
+### (e) Hazard test: forking a RUNNING server (what breaks)
+
+`hazard_running_fork.py` starts a process that holds what the live guest server holds: an X connection with a window, a D-Bus
+connection, a listening socket and a thread holding a lock, forks it, and uses both copies. Findings (raw: `hazard.jsonl`):
+
+1. **No isolation from X.** The forked child saw the parent's window (`PARENT-SESSION-WINDOW`): both copies are clients of the same
+   X server, so a "second session" made this way shares one display. Isolation requires a separate Xvfb per session, which
+   means connecting AFTER the fork, as the working F arm does (pyautogui imports and connects after the fork).
+2. **A shared X connection deadlocks both copies.** Parent and child issued requests on the inherited socket concurrently: the
+   parent hung (no result after 12 s) and the child hung (killed at 15 s, no output): replies are consumed by the wrong process.
+3. **A shared listening socket is shared.** Of 100 connections, the child accepted all 100 and the parent 0 (either process can
+   accept; there is no routing to "its" session).
+4. **D-Bus identity is duplicated and the child's connection is dead.** Parent and child report the same unique name (`:1.0`); the
+   parent's call returned in 8 ms, the child's call failed after 3.0 s with a timeout, because the connection's worker thread
+   does not exist in the child.
+5. **A lock held by another thread at fork time stays held.** The child could not acquire it in 2 s. (A first run of this check was
+   invalid: the holder's 30 s sleep had ended before the check ran, so it reported "acquired"; it was re-run with a 600 s hold.)
+
+Chromium itself was not forked or probed: a multi-process, multi-threaded, sandboxed browser with live X and D-Bus state would
+hit every one of the findings above, and it is exec'd in every arm. That is an inference from the findings, not a Chromium test.
+
+### What this does and does not support
+
+- Supports: fork-from-a-pre-warmed-template WORKS for a process that has not yet opened its X, D-Bus or socket state (hygiene
+  passes, the server answers the real guest contract, and the session machinery is the same as L0), and it gives a small, real
+  saving (14 MiB per session, 0.2 s per start) on the part it can reach.
+- Does not support: any claim that mechanism F delivers the L1 memory saving on this workload. It fails the pre-registered
+  thresholds, and the share bound shows the reachable ceiling is about 22% even if the Python part were wholly shared.
+- Open, not run: whether another mechanism (page merging, checkpoint/restore, a different process model for the browser) reaches the
+  Chromium memory; none was attempted. The design doc's section 3 entries K and R remain candidates with unknown feasibility.
+

@@ -29,11 +29,37 @@ def _child_pids(pid):
     return [int(x) for x in out]
 
 
+class _ForkedProc:
+    """Stand-in for Popen: a session PID 1 forked by the zygote (not our child, so no wait())."""
+
+    def __init__(self, pid):
+        self.pid = pid
+
+    def poll(self):
+        try:
+            with open(f"/proc/{self.pid}/stat") as f:
+                return 0 if f.read().rsplit(")", 1)[1].split()[0] == "Z" else None
+        except OSError:
+            return 0
+
+    def kill(self):
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def wait(self, timeout=None):
+        end = time.time() + (timeout or 10)
+        while self.poll() is None and time.time() < end:
+            time.sleep(0.02)
+
+
 class Supervisor:
     def __init__(self, state_dir, lower_home, python="/usr/bin/python3", xvfb="Xvfb",
                  size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0,
                  firewall=None, nat=False, block_private_egress=True,
-                 sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False):
+                 sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
+                 zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -52,6 +78,9 @@ class Supervisor:
             # namespace (docker0, netfilter tables, ip_forward) and wrote cgroups into the host hierarchy
             raise ValueError("exec_systemd is an experiment with host side effects: it needs netns=True and "
                              "DRUMS_ALLOW_SYSTEMD_PROBE=1, and still writes into the host cgroup hierarchy")
+        # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8): sessions forked from a zygote
+        self.zygote, self.server_mode, self.workload = zygote, server_mode, workload
+        self.init_python, self.ready_timeout = init_python or python, ready_timeout
         self.exec_systemd = exec_systemd  # EXPERIMENT: systemd as the session's PID 1 (see systemd_probe.py)
         self.osworld_real_kit = osworld_real_kit  # path to a realkit.py kit: run the REAL OSWorld server
         self.firewall = netns if firewall is None else firewall
@@ -154,20 +183,28 @@ class Supervisor:
         ready = os.path.join(d, "ready")
         env = dict(os.environ, PYTHONPATH=PKG_DIR)
         initlog = open(os.path.join(d, "init.log"), "wb")
-        proc = subprocess.Popen(
-            ["unshare", "--mount", "--pid", "--ipc", "--uts", *(["--net"] if self.netns else []),
-             "--fork", "--kill-child", "--mount-proc",
-             self.python, "-m", "envd_linux.session_init",
-             "--lower", self.lower, "--upper", os.path.join(d, "upper"), "--work", os.path.join(d, "work"),
-             "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
-             "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
-             "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
-             "--python", self.python, "--tag", self.tag,
-             *(["--osworld-real", self.osworld_real_kit] if self.osworld_real_kit else []),
-             *(["--exec-systemd"] if self.exec_systemd else [])],
-            env=env, stdout=initlog, stderr=subprocess.STDOUT, start_new_session=True)
-        initlog.close()
-        deadline = time.time() + 30
+        timing = os.path.join(d, "timing.jsonl")
+        sargs = ["--lower", self.lower, "--upper", os.path.join(d, "upper"), "--work", os.path.join(d, "work"),
+                 "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
+                 "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
+                 "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
+                 "--python", self.python, "--tag", self.tag,
+                 *(["--osworld-real", self.osworld_real_kit] if self.osworld_real_kit else []),
+                 *(["--exec-systemd"] if self.exec_systemd else []),
+                 *(["--server-mode", self.server_mode, "--timing", timing] if self.osworld_real_kit else []),
+                 *(["--workload", self.workload] if self.workload else [])]
+        self.t_request = {**getattr(self, "t_request", {}), slot: time.time()}
+        if self.zygote:  # PROTOTYPE: fork from the pre-warmed zygote instead of exec'ing a fresh interpreter
+            proc = _ForkedProc(self.zygote.spawn(sargs, env, os.path.join(d, "init.log"), net=self.netns))
+        else:
+            initlog = open(os.path.join(d, "init.log"), "wb")
+            proc = subprocess.Popen(
+                ["unshare", "--mount", "--pid", "--ipc", "--uts", *(["--net"] if self.netns else []),
+                 "--fork", "--kill-child", "--mount-proc",
+                 self.init_python, "-m", "envd_linux.session_init", *sargs],
+                env=env, stdout=initlog, stderr=subprocess.STDOUT, start_new_session=True)
+            initlog.close()
+        deadline = time.time() + self.ready_timeout
         def is_ready():
             try:
                 with open(ready) as f:
@@ -178,10 +215,12 @@ class Supervisor:
         while not is_ready():
             if proc.poll() is not None or time.time() > deadline:
                 proc.kill()
+                if os.path.islink(host_link):
+                    os.unlink(host_link)
                 with open(os.path.join(d, "init.log")) as f:
                     raise SessionError(f"session {slot} did not start: {f.read()[-400:]}")
             time.sleep(0.05)
-        kids = _child_pids(proc.pid)
+        kids = [proc.pid] if self.zygote else _child_pids(proc.pid)
         if not kids:
             raise SessionError("session init pid not found")
         self._procs[slot] = proc
@@ -215,7 +254,7 @@ class Supervisor:
             os.kill(info["init_pid"], signal.SIGKILL)  # killing PID 1 of the namespace kills all of it
         except (OSError, FileNotFoundError, KeyError, ValueError):
             pass
-        if proc is not None:
+        if proc is not None and not isinstance(proc, _ForkedProc):
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
