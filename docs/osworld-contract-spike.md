@@ -134,5 +134,32 @@ from the public code that shape it: the factory is a fixed if/elif and `DesktopE
 `provider_name`s, so `install()` wraps the factory and selects Drums by `region="drums"` with
 `provider_name="docker"`; the ip string is `host:server:chromium:vnc:vlc`, parsed with `rsplit(':', 4)`;
 `revert_to_snapshot` may return a new path. Tested against a replica of those parts of `DesktopEnv` and against
-real sessions (private state per attempt, the next attempt starts clean). NOT tested against the real
-`desktop_env` package, which is not installed here, and the session behind it answers with the guest STUB.
+real sessions (private state per attempt, the next attempt starts clean); the replica caveat is closed by
+section 6. The session behind the bridge still answers with the guest STUB.
+
+
+## 6. The bridge against the REAL `desktop_env` package (claim (b))
+
+`tests/test_osworld_real_package.py` (driver `tests/helpers/osworld_real_driver.py`) runs in a separate venv with
+the real package: PyPI `desktop-env` 1.0.2 (Apache-2.0) and, optionally, a checkout of the public
+xlang-ai/OSWorld main (`04718ea`, 2026-10-23). It skips unless `DRUMS_OSW_PYTHON` (and optionally
+`DRUMS_OSW_SRC`) are set, plus the usual root/overlayfs/nft prerequisites. Both targets pass.
+
+Proven: the bridge's bases are the real `Provider` and `VMManager` (5 and 7 abstract methods, all
+implemented, both classes instantiate); every call shape `DesktopEnv` uses binds (including the 3-argument
+`start_emulator` of the docker-shaped call and the 2-argument abstract base); the REAL `DesktopEnv(
+provider_name="docker", region="drums")` constructs, starts a real Drums session, parses the address with its
+own code, builds its real `PythonController` and `SetupController`, resets, receives a real PNG screenshot over
+HTTP from the session's guest (the STUB), takes the revert path to a fresh session on the next reset, and closes.
+
+Real-host boundary, found by running it:
+- The PyPI 1.0.2 release and current main differ. Main's `ensure_recording_server` (run at every start) executes
+  an installer probe in the guest that requires the guest server to be a supported OSWorld **systemd unit**;
+  against our stub it raises `Server is not in a supported OSWorld systemd unit`. The run uses
+  `OSWORLD_RECORDING_UPDATE=off`, a documented option. On a real image the probe runs, so this ties to the open
+  systemd-in-a-namespace question (`gnome-namespace-investigation.md`).
+- `DesktopEnv` rejects any `provider_name` outside a fixed set, so Drums rides on `"docker"` with `region="drums"`.
+- Not exercised: `evaluate()` (the `evaluators.metrics/getters` package inits are replaced by empty modules because they
+  import torch, librosa, easyocr and more; `metrics.utils` stays real), accessibility tree and terminal
+  observations, `step()` with real pyautogui, task `config` setup steps. This is not actual OSWorld
+  compatibility (c).

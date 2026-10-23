@@ -122,7 +122,7 @@ installs the driver, and anything on real infrastructure.
 | `osworld_env` (worker code, `config.yaml`, k8s templates, scripts) | UNRESOLVED. The repo root licence is null and `osworld_env` has no LICENSE of its own (only `vm_image/snapshot` does). Source-readable is not permission. | Read for understanding only; write our own code; copy nothing. Disclosure: I read `osworld_env/worker/src/{environment,session,task}.py` and `config.yaml` before the owner's licence note arrived, so I am not a clean-room author of anything that resembles them. The controller and pool target the MIT `agentrl-worker` 0.4.0 interface. **QUARANTINED: `envd-linux/envd_linux/scalecua/_quarantined_provider.py`** (the OSWorld provider bridge, informed by that reading; a rewrite by me is not a clean-room cure). It is kept in history only, guarded so it cannot be imported, not imported by the entry point, the smoke path or any test (a test enforces this), and not used in any run path. Resolution: (a) an independent implementation by someone who has not read `osworld_env`, from the MIT PyPI `agentrl-worker` and public OSWorld API docs, or (b) written permission. **Missing until then:** the session-address to `DesktopEnv` provider bridge, so ScaleCUA's `OSWorldTask` cannot run through our entry point. |
 | VeriGen code | UNRESOLVED (no LICENSE) | Not needed: tasks are released, not regenerated. Do not use or copy. |
 | HF task pool and judge functions (`extreme1228/ScaleCUA`: `osworld/rl_tasks`, `osworld/judge_functions/rl_tasks`) | UNRESOLVED, HARD GATE: the dataset's `license` is null and nothing grants a licence | Blocked. Unresolved means unused, until written terms or permission exist. Route around: OSWorld's own Apache-2.0 task set split into disjoint train and held-out parts (about 350 tasks; smaller and noisier; labelled "OSWorld-split", not the published benchmark protocol). A third party building on the same assets does not change this. |
-| Model weights (`extreme1228/ScaleCUA-*-sft`) | The model card says exactly: "Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B)" (the Qwen3.5 card reads the same with Qwen3.5-9B). The base `Qwen/Qwen3-VL-8B-Instruct` shows `License: apache-2.0` on its Hugging Face page (re-checked directly on the pages this session; the ScaleCUA card's own metadata licence field was not visible in what I could read, and the card text above is the only statement). | Treat conservatively per the exact wording: research use. Confirm that a published comparison counts as research use and what the derived-weights terms require before use; do not read it as a grant beyond that. If unsuitable, fall back to the licensed base model with a higher cost to first signal. |
+| Model weights (`extreme1228/ScaleCUA-*-sft`) | The model card says exactly: "Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B)" (the Qwen3.5 card reads the same with Qwen3.5-9B). The base `Qwen/Qwen3-VL-8B-Instruct` shows `License: apache-2.0` on its Hugging Face page (re-checked directly on the pages this session; the ScaleCUA card's own metadata licence field was not visible in what I could read, and the card text above is the only statement). | Treat conservatively per the exact wording: research use. UNRESOLVED permission question (section 13): whether a published comparison is within "research" use is not settled by anyone acknowledging the wording; only a grant covering it does. Until then treat the weights as unusable and fall back to the licensed base model with a higher cost to first signal. |
 | OSWorld Ubuntu image | Licence field not visible in what I read | Confirm before use; it is also the proposed overlay lower layer. |
 
 Permission requests (to the repository owners, as an issue or by email) are part of the
@@ -292,13 +292,104 @@ are published, including inconclusive and negative ones.
 
 ## 12. Still unknown
 
-Closed this round: the weights wording is verified verbatim against the `extreme1228/ScaleCUA-qwen3-vl-osworld` card (above). What stays open about it is interpretive, not factual: the card says "for research" while the base is Apache-2.0, and whether a published cost-per-success comparison counts as research.
+The weights wording is verified verbatim against the `extreme1228/ScaleCUA-qwen3-vl-osworld` card, but whether a published cost-per-success comparison is within "research" use is an OPEN PERMISSION QUESTION that only a grant resolves (section 13), not a decision.
 
 Whether the driver matches the copy of `agentrl.worker` bundled in the ScaleCUA repo (checked only
 against 0.4.0 from PyPI); whether a GNOME session runs in a
 namespaced session; the real minimum GPU footprint (needs the smoke run); step time at
 8 GPUs; environment CPU and RAM actually needed per VM under this workload; whether a published comparison is within the weights' research-use wording; every price; and the licence of the unresolved assets.
 
+
+## 13. Licensed alternative: a matched comparison on public OSWorld tasks (Apache-2.0)
+
+Verified at source this session (clone of xlang-ai/OSWorld main at `04718ea`, `LICENSE` is Apache-2.0; clone of
+THUDM/SCALE-CUA at `3929e2f`; GitHub's API was not usable from this session, so licences were read from the
+`LICENSE` files):
+
+| Fact | Source |
+|---|---|
+| OSWorld ships four task lists, all subsets of the 369-task `test_all.json`: `test_all` 369 (chrome 46, gimp 26, libreoffice_calc 47, libreoffice_impress 47, libreoffice_writer 23, multi_apps 101, os 24, thunderbird 15, vlc 17, vs_code 23), `test_nogdrive` 361 (the same minus 8 multi_apps Google Drive tasks), `test_small` 39, `test_infeasible` 25 | counted from the JSON files; the OSWorld site says the 361-task evaluation is officially permitted when stating which was used |
+| ScaleCUA's evaluation script defaults to `test_nogdrive.json` (361) and calls it "the training/evaluation protocol that excludes Google Drive tasks"; the full 369 is a non-default override | `REPRODUCE.md`, `osworld_eval/README.md` |
+| WHICH list the headline 67.7% (Qwen3-VL-8B) and 68.7% (Qwen3.5-9B) were scored on is NOT stated in the README or in the paper text I read | UNVERIFIED; the 361 default is the only evidence |
+| ScaleCUA's training pool is not the public benchmark: 2,049 OSWorld RL tasks (and 1,163 ScienceBoard) generated by VeriGen, plus 24,655 task-only candidates | README, paper |
+| Their separation is by construction plus an audit: Appendix B.6 / Table 8 compares the `traj_verify` subset (N = 1,049, about half of the 2,049) with the benchmark pool: 0 exact JSON duplicates, 0 exact instruction duplicates, 0.19% (2) objective near-duplicates, 2.10% (22) exact judge reuse (generic evaluator templates). The other 1,000 tasks are unaudited in what I read | paper |
+| ScienceBoard upstream (OS-Copilot/ScienceBoard) `LICENSE` is MIT (its copyright line is an unfilled "[fullname]" placeholder: note it). The checkout holds 224 task JSON files (`tasks/VM` 169, `tasks/Dual` 29, `tasks/Raw` 26); it needs its own VM image and scientific applications | clone |
+
+**A matched comparison can run on licensed public tasks. Not by training on the 369.** The public tasks are
+the incumbents' EVALUATION set. Training on a task and then scoring it is contamination and invalidates the
+comparison. ScaleCUA avoids this by generating its training pool separately and auditing overlap; a path that
+uses only the public OSWorld tasks cannot copy that and has to **partition** them.
+
+### The split (specified, not yet used)
+
+`compare/drums_compare/osworld_split.py` writes it deterministically (seed and fraction recorded in the output):
+
+- Pool: `test_nogdrive.json`, 361 tasks. The 8 Google Drive tasks are used on neither side.
+- Tasks are grouped by evaluator-function signature; a whole group goes to ONE side, so a held-out task never
+  shares its judge function with a training task. 147 groups exist (largest 55, 109 singletons).
+- Default 40% held out, seed 0: **211 training-eligible, 150 held out** (output saved with the run).
+- **Never mix.** Training reads only `train`; every evaluation (before and after training, both backends) reads
+  only `heldout`. The split file's hash goes into every `run.json`. A task id in both lists is a stop condition,
+  checked by the script and to be rechecked by the runner.
+- `test_small` (39) and `test_infeasible` (25) are not used for anything in the comparison; if a smoke or
+  development set is needed it must be carved out of `train` before training, not out of `heldout`.
+
+### What the partition actually costs (from the verification above, not from intuition)
+
+1. **The held-out set is not the standard benchmark.** It is 150 of 361 tasks. Its score is not comparable
+   with the published 67.7%/68.7%, with any leaderboard number, or with an incumbent's reported result. The
+   comparison is Drums-backed versus baseline-backed on the SAME split, which stays internally valid, and the
+   headline remains gain per dollar, not an absolute score.
+2. **Evaluation power falls, which is an evaluation-validity cost and not only a diversity cost.** Worst-case
+   binomial 95% half-width at p = 0.5 is about 5.2 points at n = 361, 8.0 at n = 150 and 9.4 at n = 109 (an
+   independent-sample bound; a paired design on identical tasks is tighter, and the paired interval must be
+   what is reported). A gain smaller than the interval cannot be distinguished from noise.
+3. **The judge-group constraint skews the domains.** With seed 0 the held-out side has 45 `libreoffice_calc`
+   tasks and the training side 2; held-out `gimp` 19 versus 7 training. The held-out score then measures
+   transfer to domains the policy barely trained on, not in-distribution generalisation. Trying other seeds
+   changes this; no seed removes the tension, because judge functions cluster by domain.
+4. **Residual leakage remains.** Tasks that share a source page, an application template or a setup file can
+   sit on opposite sides of the split (a union over `source` as well collapses 242 of 361 tasks into one group,
+   so it cannot be enforced). The B.6-style audit (exact duplicates, normalised instructions, objective
+   similarity, judge reuse) has to be run on OUR split and reported; it has not been.
+5. **The training pool is small and narrow.** 211 tasks versus 2,049: diversity is lower and domain
+   coverage uneven (item 3). At the scaled run's planning size (S = 50 steps, batch 8, so 400 task draws),
+   a 211-task pool is drawn about 1.9 times per task and the 2,049 pool about 0.2 times. A 50-step run is
+   therefore not memorisation-bound by pool size, but frontier sampling sees fewer distinct tasks, and a
+   longer run would.
+6. **The start point may already have seen these tasks.** Whether the released ScaleCUA SFT checkpoint was
+   trained on trajectories from the public OSWorld tasks is NOT established in what I read. Until it is, a
+   held-out score from that start point carries a possible contamination that the split cannot remove.
+   Starting from the licensed base model avoids it at a higher cost to first signal.
+
+So the earlier, simpler statement ("369 versus 2,049 affects only training-task diversity") was not correct and
+is withdrawn: the consequence is a smaller, domain-skewed, non-standard evaluation set as well as a smaller
+training pool.
+
+### Options (not decided)
+
+- **A. OSWorld partition as above** (licensed, runnable, weaker evaluation).
+- **B. ScienceBoard (MIT) as a second, separate pool**: a different VM image and applications, so a different
+  environment backend to build; its tasks could be a training pool for a ScienceBoard evaluation, but that is
+  not an OSWorld result.
+- **C. Our own generated tasks** (what VeriGen does): VeriGen's licence is unresolved, so only a from-scratch
+  generator would be allowed; no such generator exists.
+- **D. The ScaleCUA 2,049 pool and judges**: still GATED. The HF dataset has `license=null`; unresolved is
+  unused. This section does not change that.
+
+### Weights: an OPEN PERMISSION QUESTION, not a decision item
+
+The exact wording on the `extreme1228/ScaleCUA-qwen3-vl-osworld` card (read directly this session):
+
+> Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B). Repository code is under the licenses in the GitHub repo.
+
+The base `Qwen/Qwen3-VL-8B-Instruct` page shows `License: apache-2.0`. Open question, UNRESOLVED: whether
+publishing a cost-per-success comparison that uses these weights is "research" use under that wording, and
+whether "for research" restricts anything the Apache-2.0 base licence would otherwise permit. The wording is
+ambiguous on both. Someone acknowledging the wording is not a grant, and no decision by the project owner
+substitutes for the rights holders' grant. It is resolved only by a grant that covers the use: licence text
+that says so, or written permission from the rights holders. Until then the weights are treated as
+unresolved, and the fallback is the licensed base model (Apache-2.0) with a higher cost to first signal.
 
 ## Claim discipline (applies to every doc on this branch)
 
