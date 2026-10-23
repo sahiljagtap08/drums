@@ -1,0 +1,84 @@
+"""Adapter for the in-guest daemon. Drums' envd (Swift, macOS) already speaks this
+HTTP protocol; a Linux guest daemon (`envd-linux`, referenced in pyproject.toml but NOT
+in the repo yet) must expose the same routes so both sides see identical observations
+and actions. Routes used: GET /health, POST /gen, GET /screenshot, POST /action,
+POST /kill, DELETE /pb, POST /launch.
+
+Written from the envd Swift source. Tested only against a FAKE server in the tests
+(no macOS here); never run against a real envd in this sandbox.
+"""
+
+import json
+import struct
+import urllib.error
+import urllib.request
+
+from .protocol import Env
+from .types import EnvFault, Observation
+
+
+def png_size(png: bytes):
+    if png[:8] != b"\x89PNG\r\n\x1a\n":
+        raise EnvFault("bad_screenshot", "not a PNG")
+    return struct.unpack(">II", png[16:24])
+
+
+class EnvdHttpEnv(Env):
+    def __init__(self, slot, port, launch_cmd, host="127.0.0.1", timeout_s=15.0, pid_roots=()):
+        """launch_cmd: {"path": ..., "args": [... "{url}" ...]} started on each reset."""
+        self.slot, self.base, self.timeout = slot, f"http://{host}:{port}", timeout_s
+        self.launch_cmd = launch_cmd
+        self.pid_roots = list(pid_roots)
+        self.gen = 0
+        self.seq = 0
+
+    def _req(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(self.base + path, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                return r.status, dict(r.headers), r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise EnvFault("daemon_unreachable", str(e)) from e
+
+    def _json(self, method, path, body=None):
+        status, _, raw = self._req(method, path, body)
+        if status == 409:
+            raise EnvFault("stale_gen", raw.decode(errors="replace"))
+        if status != 200:
+            raise EnvFault(f"http_{status}", raw.decode(errors="replace")[:200])
+        return json.loads(raw or b"{}")
+
+    def reset(self, task, gen, token):
+        self.gen, self.seq = gen, 0
+        health = self._json("GET", "/health")
+        if health.get("ax_trusted") is False or health.get("screen_recording") is False:
+            raise EnvFault("permissions_missing", json.dumps(health))
+        self._json("POST", "/gen", {"gen": gen})
+        self._json("POST", "/kill", {"gen": gen, "all": True})
+        self._req("DELETE", f"/pb?gen={gen}")
+        url = task.verifier.get("start_url", "").format(slot=self.slot, token=token, gen=gen)
+        args = [a.format(url=url) for a in self.launch_cmd["args"]]
+        self._json("POST", "/launch", {"gen": gen, "path": self.launch_cmd["path"], "args": args})
+        return self.observe()
+
+    def observe(self):
+        status, headers, png = self._req("GET", "/screenshot")
+        if status != 200:
+            raise EnvFault("screenshot_failed", f"http {status}")
+        h = {k.lower(): v for k, v in headers.items()}
+        w, hgt = png_size(png)
+        return Observation(png=png, width=w, height=hgt, gen=int(h.get("x-drums-gen", -1)),
+                           stale=h.get("x-drums-stale") == "true",
+                           black=h.get("x-drums-black") == "true")
+
+    def act(self, action):
+        self.seq += 1
+        self._json("POST", "/action", {"gen": self.gen, "seq": self.seq, **action.to_json()})
+        return self.observe()
+
+    def pids(self):
+        return self.pid_roots

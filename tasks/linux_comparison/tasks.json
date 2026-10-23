@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "note": "Enabled tasks run a real browser inside the real desktop and are verified by verify-server, outside the agent. Disabled tasks need a file-read route that neither guest daemon has yet. Task specs here are NOT yet validated on a real environment.",
+  "tasks": [
+    {
+      "id": "web_form_token",
+      "enabled": true,
+      "instruction": "A browser window is open on a form. Type this exact token into the Token field and press Submit: {token}",
+      "verifier": {"kind": "verify_server_row", "start_url": "http://127.0.0.1:7600/form?env={slot}"},
+      "max_steps": 15,
+      "timeout_s": 180
+    },
+    {
+      "id": "web_form_new_window",
+      "enabled": true,
+      "instruction": "The form is open in a browser. Open a new browser window (cmd/ctrl+N), load the same address again, type this token into the Token field and Submit: {token}",
+      "verifier": {"kind": "verify_server_row", "start_url": "http://127.0.0.1:7600/form?env={slot}"},
+      "max_steps": 25,
+      "timeout_s": 240
+    },
+    {
+      "id": "web_form_after_busy_tab",
+      "enabled": true,
+      "instruction": "Two tabs are open. The front tab shows a counter; switch to the other tab, type this token into the Token field and Submit: {token}",
+      "verifier": {"kind": "verify_server_row", "start_url": "http://127.0.0.1:7600/form?env={slot}"},
+      "max_steps": 25,
+      "timeout_s": 240
+    },
+    {
+      "id": "office_save_text",
+      "enabled": false,
+      "requires": ["file_read_route"],
+      "instruction": "In the text editor type {token} and save the file as token.txt in the Documents folder.",
+      "verifier": {"kind": "file_contains", "path": "~/Documents/token.txt"},
+      "max_steps": 30,
+      "timeout_s": 300
+    },
+    {
+      "id": "office_spreadsheet_sum",
+      "enabled": false,
+      "requires": ["file_read_route"],
+      "instruction": "In the spreadsheet enter 3 and 4 in A1 and A2, put their sum in A3, save as sum.csv in Documents. Token: {token}",
+      "verifier": {"kind": "file_contains", "path": "~/Documents/sum.csv"},
+      "max_steps": 40,
+      "timeout_s": 360
+    }
+  ]
+}
