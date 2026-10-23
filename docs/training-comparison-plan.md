@@ -62,13 +62,24 @@ The environment contract is not a screenshot/click API. It is the OSWorld VM con
   OSWorld guest server on 5000 (screenshot, command execution, files, accessibility tree,
   setup steps), Chrome DevTools on 9222, VLC on 8080, VNC on 5900/8006, SSH on 22,
   plus 8000 for ScienceBoard apps.
-- A backend is an `EnvironmentDelegation` (`get_subtypes`, `is_exclusive`,
-  `create_docker_container`, `create_k8s_pod`) and an `EnvironmentController`
-  (`sync_start_session(os_type, image_path)` returning session id, container ids and
-  addresses; `sync_end_session`). `create_controller(env_driver, delegation, ...)` selects
-  the driver. I read how `osworld_env/worker` uses these; I could not open the
-  `agentrl.worker.environment` source itself (path not found), so the exact base-class
-  signatures are unverified.
+- The contract a backend must satisfy is the AgentRL environment interface, read from the
+  MIT-licensed `agentrl-worker` 0.4.0 package on PyPI (`agentrl/worker/environment`), which
+  ScaleCUA bundles under `scalecua_rl/worker`:
+  - `EnvironmentController` (async): `start_session(subtypes, immutable=True, **kwargs)` returns
+    `(session_id, {subtype: environment_id}, {subtype: url})`; `renew_session`, `end_session`,
+    `execute_command(environment_id, command, timeout) -> (returncode, stdout, stderr)`,
+    `create_shell`, `execute_shell`, `get_env_variables`, `background_task`; `sync_*` wrappers
+    run the coroutine on `self.loop`.
+  - `EnvironmentDelegation`: `get_subtypes`, `get_service_port`, `is_exclusive`,
+    `supports_reuse`, `get_concurrency_limit`, `get_reuse_limit`, `get_max_execution_time`,
+    `create_docker_container`, `create_k8s_pod`, `get_container_images`.
+  - `create_controller(driver, delegation, **config)` knows only `manual`, `docker` and `k8s`
+    and raises for anything else, so a Drums driver needs a patch (`scalecua/patch.py`
+    registers one) or a worker entry point that builds the controller itself.
+  - Caveat: 0.4.0 from PyPI is not necessarily the copy bundled in the ScaleCUA repo; the
+    worker code in `osworld_env` passes an extra `image_path` argument to
+    `create_docker_container`, so the bundled framework is newer. Compatibility with the
+    bundled copy is unverified.
 - Each VM is 2 vCPU and 4 GiB by default (`vm_cpu: 2`, `vm_ram: 4` in the worker config;
   Kubernetes requests cpu/2 and memory, limits cpu+0.1 and memory+1 GiB; Ubuntu minimum 1
   CPU, 4 GiB). The paper does not state per-environment CPU or RAM.
@@ -93,20 +104,24 @@ What this means for Drums-Linux (decisions, mine):
    systemd-dependent services run inside a namespaced session without systemd as PID 1.
    If not, the affected tasks are excluded from the pool for both backends and listed.
 
-Cost of this drop-in on the Drums side: the OSWorld-server-in-session work, a per-session
-network namespace, full-root overlay, and a Drums `EnvironmentController`. None exists yet.
+Status of that drop-in work, all local and against stubs (see `docs/osworld-contract-spike.md`):
+per-session network namespace, full-root overlay, an OSWorld guest-server STUB in each session, a
+`DrumsEnvironmentController`/`DrumsEnvironmentDelegation` against the real `agentrl-worker` 0.4.0
+interface, and a bounded smoke job. Not done: the real OSWorld guest server (needs pyautogui and
+AT-SPI), the OSWorld Ubuntu image, GNOME, KVM-based incumbent, the worker entry point that
+installs the driver, and anything on real infrastructure.
 
 ## 4. Licence ledger and routes (nothing unresolved is used)
 
 | Asset | Status | Route |
 |---|---|---|
-| `scalecua_rl` (trainer, controller, worker framework) | MIT (`scalecua_rl/LICENSE` read) | Use. |
-| `osworld_eval` | Apache-2.0 (owner-reported check; not independently read here) | Use after confirming the file. |
-| Snapshot image assets | MIT (owner-reported) | Use for the tuned baseline's fast reset after confirming. |
-| `osworld_env/worker` code | UNRESOLVED (no root LICENSE; the root repo page shows none) | Do not copy, modify or redistribute. I have read it, so I am not a clean-room author. Either obtain written permission from the rightsholder, or have it written by someone who has not read it, against the MIT `agentrl.worker` API and Apache `desktop_env` provider interface. |
-| VeriGen code | UNRESOLVED | Not needed: tasks are released, not regenerated. Do not use. |
-| HF task pool and judge functions (`extreme1228/ScaleCUA`) | UNRESOLVED (dataset card shows no licence in what I read) | Request written permission before any run. A user's statement that it is fine is not a substitute for the rightsholder's permission. Route around if refused: use OSWorld's own Apache-2.0 task set split into disjoint train and held-out parts (about 350 tasks; a much smaller pool, so a smaller and noisier run; labelled "OSWorld-split", not the published benchmark protocol). |
-| Model weights | "other" licence inheriting the base model (Qwen3-VL-8B or Qwen3.5-9B) | Read the exact base terms (research use, publication of results, redistribution) before use. If unsuitable, the fallback is the licensed base model with a higher cost to first signal. |
+| `scalecua_rl` (trainer, controller, worker framework) | MIT, Z.ai (`scalecua_rl/LICENSE` read) | Use, with attribution. |
+| `osworld_eval` | Apache-2.0 (owner-verified; not independently read here) | Use under its terms, with attribution and notices. |
+| `osworld_env/vm_image/snapshot` | MIT (owner-verified) | May be used for the tuned baseline's fast reset. |
+| `osworld_env` (worker code, `config.yaml`, k8s templates, scripts) | UNRESOLVED. The repo root licence is null and `osworld_env` has no LICENSE of its own (only `vm_image/snapshot` does). Source-readable is not permission. | Read for understanding only; write our own code; copy nothing. Disclosure: I read `osworld_env/worker/src/{environment,session,task}.py` and `config.yaml` before the owner's licence note arrived, so I am not a clean-room author of anything that resembles them. The Drums driver was built from the MIT `agentrl-worker` interface and the Apache OSWorld provider shape, but `provider.py` was informed by having read the worker's provider class and should be reviewed by someone who has not, or replaced, or covered by written permission, before any use outside this branch. |
+| VeriGen code | UNRESOLVED (no LICENSE) | Not needed: tasks are released, not regenerated. Do not use or copy. |
+| HF task pool and judge functions (`extreme1228/ScaleCUA`: `osworld/rl_tasks`, `osworld/judge_functions/rl_tasks`) | UNRESOLVED, HARD GATE: the dataset's `license` is null and nothing grants a licence | Blocked. Unresolved means unused, until written terms or permission exist. Route around: OSWorld's own Apache-2.0 task set split into disjoint train and held-out parts (about 350 tasks; smaller and noisier; labelled "OSWorld-split", not the published benchmark protocol). A third party building on the same assets does not change this. |
+| Model weights (`extreme1228/ScaleCUA-*-sft`) | The model card says exactly: "Weights are released for research; the model inherits the license of its base model (Qwen3-VL-8B)" (the Qwen3.5 card reads the same with Qwen3.5-9B). The base `Qwen/Qwen3-VL-8B-Instruct` is Apache-2.0 per the owner's check. | Treat conservatively per the exact wording: research use. Confirm that a published comparison counts as research use and what the derived-weights terms require before use; do not read it as a grant beyond that. If unsuitable, fall back to the licensed base model with a higher cost to first signal. |
 | OSWorld Ubuntu image | Licence field not visible in what I read | Confirm before use; it is also the proposed overlay lower layer. |
 
 Permission requests (to the repository owners, as an issue or by email) are part of the
@@ -190,7 +205,7 @@ seeds and task order; only the environment backend differs. Equal total budget.
 |---|---|
 | Start policy | ScaleCUA SFT start point for Qwen3-VL-8B (OSWorld), subject to the weights-terms check |
 | Trainer | `scalecua_rl` as shipped, commit pinned |
-| Config | `qw3vl_train_std.yaml` with: task batch 8 (shipped 16, paper 32), n 8, concurrency 64, steps S (planning value 50, shipped 1,000), everything else unchanged. 64 rollouts per step, 3,200 per run at S = 50. |
+| Config | `qw3vl_train_std.yaml` with: task batch 8, n 8, concurrency 64, steps S (planning value 50), everything else unchanged. This is a deliberate scale-down: 64 rollouts per step against 128 in the shipped config (batch 16, n 8, concurrency 256, 1,000 steps, rollout TP 2, `max_model_len` 200000: 2x smaller per step) and 256 in the paper recipe (batch 32: 4x smaller), and S = 50 steps against 1,000. 3,200 rollouts per run at S = 50. Labelled a scaled subset everywhere. |
 | Task subset | A fixed subset of the pool chosen by the signal gate: initial pass rate in [0.1, 0.9] from 4 rollouts each; domains limited to those that run in both backends after the parity study |
 | Held-out set | Disjoint from training by our own audit (section 7); fixed seed; the same set before and after, in a neutral harness (section 9, item E) |
 | Backend A (Drums-Linux) | Section 3 design, at L1 for the Drums claim; an L0 run is reported separately as a precursor |
@@ -251,6 +266,22 @@ plan says so up front.
 
 Phase C stays unscheduled until all seven hold.
 
+## 10a. Money path: two stages, nothing launched
+
+Stage (a), a bounded validation job, is the only thing proposed first:
+
+1. Infrastructure smoke (`envd_linux.scalecua.smoke`, already runnable locally): builds sessions
+   through the controller, checks the guest contract per attempt, records start times, faults and
+   memory, with a hard wall-clock cap and guaranteed session teardown.
+2. The two-step trainer smoke on the cheapest GPU node that fits (section 6), with a hard
+   wall-clock cap, automatic instance termination, and a verified hourly price. It is labelled
+   engineering validation with an uncertain outcome (it may fail on memory or on the environment
+   path, and that is a result).
+
+Stage (b), the full matched run, is priced from stage (a)'s observations (step time, environment
+wait share, faults, memory), not from the planning bounds in section 8. No spend is approved for
+either stage; each needs live prices and the owner's approval.
+
 ## 11. Reading the result
 
 Pre-registered before any run: per backend, per seed, the held-out gain and the total cost;
@@ -260,7 +291,7 @@ are published, including inconclusive and negative ones.
 
 ## 12. Still unknown
 
-Exact `agentrl.worker.environment` signatures; whether a GNOME session runs in a
+Whether the driver matches the copy of `agentrl.worker` bundled in the ScaleCUA repo (checked only
+against 0.4.0 from PyPI); whether a GNOME session runs in a
 namespaced session; the real minimum GPU footprint (needs the smoke run); step time at
-8 GPUs; environment CPU and RAM actually needed per VM under this workload; the weights'
-exact terms; every price; and the licence of the unresolved assets.
+8 GPUs; environment CPU and RAM actually needed per VM under this workload; whether a published comparison is within the weights' research-use wording; every price; and the licence of the unresolved assets.

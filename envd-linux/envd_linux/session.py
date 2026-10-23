@@ -30,13 +30,45 @@ def _child_pids(pid):
 
 class Supervisor:
     def __init__(self, state_dir, lower_home, python="/usr/bin/python3", xvfb="Xvfb",
-                 size="1280x800x24", display_base=90):
+                 size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0):
+        """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
+        whole root filesystem (pivot_root). netns: a network namespace per session (veth,
+        10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
+        lower_home is a $HOME-shaped tree in "home" mode and a root-shaped tree in "full" mode."""
+        self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.state_dir = os.path.abspath(state_dir)
-        self.lower = os.path.abspath(lower_home)
+        self.lower = os.path.abspath(lower_home) if lower_home else ""
+        self._tplfs = None
         self.python, self.xvfb, self.size, self.display_base = python, xvfb, size, display_base
         self._procs = {}
         self._epochs = {}
         os.makedirs(self.state_dir, exist_ok=True)
+        if self.root_mode == "full" and self.lower:
+            self._mount_template()
+
+    def _mount_template(self):
+        """In "full" mode the overlay's lower layers include `/`, and overlayfs refuses a layer
+        that sits inside another layer. So the template is copied once into its own tmpfs,
+        mounted on the host and shared (one RAM copy, page cache shared) by every session."""
+        self._tplfs = os.path.join(self.state_dir, "tplfs")
+        os.makedirs(self._tplfs, exist_ok=True)
+        subprocess.run(["mount", "-t", "tmpfs", "tmpfs", self._tplfs], check=True)
+        subprocess.run(["cp", "-a", self.lower + "/.", self._tplfs], check=True)
+        self.lower = self._tplfs
+
+    def close(self):
+        for slot in list(self._procs):
+            self.destroy(slot)
+        if self._tplfs:
+            # Sessions are gone, so the template can normally be unmounted at once; fall back to a lazy
+            # unmount if something still holds it. A leftover mount would block removing the state dir.
+            for _ in range(20):
+                if subprocess.run(["umount", self._tplfs], capture_output=True).returncode == 0:
+                    break
+                time.sleep(0.1)
+            else:
+                subprocess.run(["umount", "-l", self._tplfs], check=False)
+            self._tplfs = None
 
     def _dir(self, slot):
         return os.path.join(self.state_dir, f"s{slot}")
@@ -66,11 +98,14 @@ class Supervisor:
         env = dict(os.environ, PYTHONPATH=PKG_DIR)
         initlog = open(os.path.join(d, "init.log"), "wb")
         proc = subprocess.Popen(
-            ["unshare", "--mount", "--pid", "--ipc", "--uts", "--fork", "--kill-child", "--mount-proc",
+            ["unshare", "--mount", "--pid", "--ipc", "--uts", *(["--net"] if self.netns else []),
+             "--fork", "--kill-child", "--mount-proc",
              self.python, "-m", "envd_linux.session_init",
              "--lower", self.lower, "--upper", os.path.join(d, "upper"), "--work", os.path.join(d, "work"),
              "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
-             "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log")],
+             "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
+             "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
+             "--python", self.python],
             env=env, stdout=initlog, stderr=subprocess.STDOUT, start_new_session=True)
         initlog.close()
         deadline = time.time() + 30
@@ -93,7 +128,16 @@ class Supervisor:
         self._procs[slot] = proc
         self._epochs[slot] = self._epochs.get(slot, 0) + 1
         info = {"epoch": self._epochs[slot], "display": n, "init_pid": kids[0], "home": HOME,
-                "unshare_pid": proc.pid, "created": time.time()}
+                "unshare_pid": proc.pid, "created": time.time(), "root_mode": self.root_mode,
+                "netns": self.netns, "osworld_port": self.osworld_port}
+        if self.netns:
+            r = subprocess.run([self.python, "-m", "envd_linux.netsetup", "--slot", str(slot), "--pid",
+                                str(kids[0])], capture_output=True, text=True, env=env)
+            if r.returncode != 0:
+                self._procs.pop(slot, None)
+                proc.kill()
+                raise SessionError(f"network setup failed: {r.stderr[-400:]}")
+            info.update(json.loads(r.stdout))
         with open(os.path.join(d, "session.json.tmp"), "w") as f:
             json.dump(info, f)
         os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))

@@ -43,6 +43,15 @@ Upper bound = hours x ceiling price per hour + EBS + transfer + margin.
 - Not included: inference for Phase B (model, GPU type and hours undecided; it is a
   separate approval), and any GPU for training (Phase C is out of scope).
 
+## Two-stage money path (from the training plan)
+
+Nothing is approved. If and when approval is asked, it is asked in two stages: (a) a bounded
+validation job (the infrastructure smoke, then a two-step trainer smoke on the cheapest node that
+fits), with a hard wall-clock cap, automatic instance termination and a verified hourly price,
+labelled engineering validation with an uncertain outcome; (b) the full matched run, priced from
+stage (a)'s observations rather than the planning bounds. See `docs/training-comparison-plan.md`
+section 10a. The 12-hour block above is superseded by that staging for any Phase C spend.
+
 ## What must happen before any approval request
 
 1. Choose the instance type from the metal families below and read its live on-demand price

@@ -225,7 +225,8 @@ class XBackend(Backend):
         log = open(os.path.join(self.state_dir, f"s{self.slot}", f"proc-{int(time.time()*1000)}.log"), "wb")
         try:
             p = subprocess.Popen(
-                ["nsenter", "-t", str(st["init_pid"]), "--mount", "--pid", "--ipc", "--uts", "--",
+                ["nsenter", "-t", str(st["init_pid"]), "--mount", "--pid", "--ipc", "--uts",
+                 *(["--net"] if st.get("netns") else []), "--",
                  spec["path"], *spec["args"]],
                 env=env, cwd="/", start_new_session=True, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT)
