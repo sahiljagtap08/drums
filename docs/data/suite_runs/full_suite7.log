@@ -1,0 +1,128 @@
+........................................................................ [ 37%]
+........................................................................ [ 75%]
+..............................F.................                         [100%]
+=================================== FAILURES ===================================
+________ test_control_without_the_firewall_sessions_do_reach_each_other ________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-157/test_control_without_the_firew0')
+
+    def test_control_without_the_firewall_sessions_do_reach_each_other(tmp_path):
+        """The test can lose: the same probe succeeds when the policy is off and forwarding is on, so the
+        refusals above are the firewall's doing and not a broken probe."""
+        n = make_stack(tmp_path, nat=False, firewall=False)
+        try:
+            set_forward("1")
+            sa, ia, ca = start(n)
+            sb, ib, cb = start(n)
+            try:
+>               assert "Linux" in tcp(ca, ib["ip"], 5000), "probe is broken: no firewall and forwarding on must reach"
+E               AssertionError: probe is broken: no firewall and forwarding on must reach
+E               assert 'Linux' in 'HTTP/1.0 200 OK\n Server: BaseHTTP/0.6 Python/3.13.16\n Date: Sat, 24 Oct 2026 10:07:36 GMT\n Content-Type: text/html; charset=utf-8\n Content-Length: 5'
+E                +  where 'HTTP/1.0 200 OK\n Server: BaseHTTP/0.6 Python/3.13.16\n Date: Sat, 24 Oct 2026 10:07:36 GMT\n Content-Type: text/html; charset=utf-8\n Content-Length: 5' = tcp(<envd_linux.scalecua.client.GuestClient object at 0x7f10beaf4410>, '10.200.1.2', 5000)
+
+tests/test_session_network_policy.py:252: AssertionError
+=============================== warnings summary ===============================
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0/state/s1/root
+  <class 'OSError'>: [Errno 16] Device or resource busy: '/tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0/state/s1/root'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0/state/s1
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0/state/s1'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0/state
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0/state'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df/test_chained_checkpoints_keep_0'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-71ba8f13-ed11-4faf-badd-8f7fecc915df'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0/state/s1/root
+  <class 'OSError'>: [Errno 16] Device or resource busy: '/tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0/state/s1/root'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0/state/s1
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0/state/s1'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0/state
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0/state'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5/test_chained_checkpoints_keep_0'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-129cac62-1d5c-4483-8cb0-980b883fbbf5'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0/state/s1/root
+  <class 'OSError'>: [Errno 16] Device or resource busy: '/tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0/state/s1/root'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0/state/s1
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0/state/s1'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0/state
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0/state'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487/test_chained_checkpoints_keep_0'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-ae92dd05-4e74-4a8d-bad6-181343b08487'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0/state/s1/root
+  <class 'OSError'>: [Errno 16] Device or resource busy: '/tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0/state/s1/root'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0/state/s1
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0/state/s1'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0/state
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0/state'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b/test_chained_checkpoints_keep_0'
+    warnings.warn(
+
+../../../../root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95
+  /root/.local/share/uv/tools/pytest/lib/python3.13/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b
+  <class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-root/garbage-3f0cd7f1-ffb6-4590-bbc2-4a6f01322a0b'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_session_network_policy.py::test_control_without_the_firewall_sessions_do_reach_each_other
+1 failed, 191 passed, 20 warnings in 415.06s (0:06:55)
