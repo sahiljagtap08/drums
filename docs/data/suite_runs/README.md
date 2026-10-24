@@ -14,3 +14,5 @@ Every full-suite run made on this branch since the K measurement, kept as run, i
 | `full_suite8.log` | 192 passed in 388.93 s | at `65da9c4` (probe fix, `close()` fix) |
 
 `full_suite6.log` (191 passed) and `full_suite7.log` (1 failed, 191 passed) are both kept: they are different trees (the second has one more test and the flaky probe that failed once).
+| `full_suite9.log` | 214 passed in 574.03 s | at `cc3a560` (adds the 22 fault-window tests); BEFORE the path-component sweep correction and the preflight / composition / first-check additions: an intermediate result |
+| `full_suite10.log` | **221 passed in 554.88 s** | at `8b3bfd2` (path-component stray ownership, preflight, composition, first-check driver and their tests). Exact last lines: `221 passed in 554.88s (0:09:14)`; no leftover session, `criu` process, `dvh` link or test mount afterwards |
