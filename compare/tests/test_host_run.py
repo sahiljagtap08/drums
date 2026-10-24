@@ -560,3 +560,60 @@ def test_an_alternative_drums_base_root_must_be_a_read_only_mount_and_only_for_c
     assert "drums_base_root_read_only" in failing(hr.check_all(cfg, deps))
     cfg, deps = setup(tmp_path, incumbent="docker_kvm")
     assert "drums_base_root_read_only" not in {c["name"] for c in hr.check_all(cfg, deps)["checks"]}  # default "/" adds no check: behaviour unchanged
+
+
+def _tree(root, path, content="", mode=0o755, link=None):
+    p = os.path.join(root, path.lstrip("/"))
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    if link:
+        os.symlink(link, p)
+    else:
+        open(p, "w").write(content)
+        os.chmod(p, mode)
+
+
+def _real_rootcheck_for_tests():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rootcheck_t", os.path.join(os.path.dirname(__file__), "..", "..", "envd-linux", "envd_linux", "rootcheck.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_a_custom_base_root_that_cannot_run_the_session_is_refused_by_check_with_the_reasons_and_passes_when_the_layers_provide_everything(tmp_path):
+    img = tmp_path / "img"
+    img.mkdir()
+    for dname in ("bin", "sbin", "lib", "lib64"):
+        os.symlink("usr/" + dname, img / dname)
+    for f in ("/usr/lib64/ld-linux-x86-64.so.2", "/usr/bin/python3.10", "/usr/bin/dbus-daemon", "/usr/libexec/at-spi-bus-launcher"):
+        _tree(str(img), f)
+    cfg, deps = setup(tmp_path, incumbent="docker_kvm", cfg={"drums_base_root": str(img), "kit": "/opt/drums-osworld-real"})
+    deps["rootcheck"] = _real_rootcheck_for_tests()
+    r = hr.check_all(cfg, deps)
+    detail = [c for c in r["checks"] if c["name"] == "drums_base_root_userland"][0]["detail"]
+    assert not r["all_ok"] and "openbox" in detail and "kit's server" in detail and "kit's python" in detail
+    ov = tmp_path / "overlay"
+    _tree(str(ov), "/usr/bin/openbox")
+    _tree(str(ov), "/opt/drums-osworld-real/server/main.py", "x=1\n")
+    _tree(str(ov), "/opt/drums-osworld-real/venv/bin/python", link="/usr/bin/python3.12")
+    cfg["drums_template_overlay"] = str(ov)
+    assert "the kit's python" in [c for c in hr.check_all(cfg, deps)["checks"] if c["name"] == "drums_base_root_userland"][0]["detail"]  # python3.12 is still missing from the root
+    _tree(str(ov), "/usr/bin/python3.12")
+    r = hr.check_all(cfg, deps)
+    assert [c for c in r["checks"] if c["name"] == "drums_base_root_userland"][0]["ok"], r["checks"]
+    assert r["inputs"]["template_overlay_listing"]
+
+
+def test_changing_the_template_overlay_layer_invalidates_the_stamp(tmp_path):
+    cfg, deps = setup(tmp_path, incumbent="docker_kvm")
+    ov = tmp_path / "overlay"
+    _tree(str(ov), "/opt/k/x", "1")
+    cfg["drums_template_overlay"] = str(ov)
+    before = hr.compute_inputs(cfg, deps["sh"])["template_overlay_listing"]
+    _tree(str(ov), "/opt/k/y", "2")
+    assert hr.compute_inputs(cfg, deps["sh"])["template_overlay_listing"] != before
+
+
+def test_the_stage_copies_the_overlay_into_the_template_before_the_supervisor_and_rootcheck_run():
+    src = open(os.path.join(os.path.dirname(hr.__file__), "stages.py")).read()
+    assert src.index("drums_template_overlay") < src.index("sup = Supervisor(") and '"cp", "-a"' in src

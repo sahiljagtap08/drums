@@ -6,9 +6,12 @@ from drums_compare import matchprep as mp
 # actual VM target, as reported by the first real run
 VM = {"os_release": 'PRETTY_NAME="Ubuntu 22.04.3 LTS"\nVERSION_ID="22.04"\nVERSION="22.04.3 LTS (Jammy Jellyfish)"\n', "kernel": "6.5.0-15-generic", "desktop": "ubuntu:GNOME\nGNOME Shell 42.9",
       "browser": "Google Chrome 130.0.6723.58", "libreoffice": "LibreOffice 7.3.7.2 30(Build:2)", "guest_user_and_home": "user\n/home/user", "guest_nproc": "4", "guest_memtotal": "MemTotal: 3994372 kB",
-      "dpkg": ["python3=3.10.6-1~22.04", "gnome-shell=42.9-0ubuntu2", "mutter=42.9-0ubuntu1", "google-chrome-stable=130.0.6723.58-1", "libreoffice-core=1:7.3.7-0ubuntu0.22.04.10", "dbus=1.12.20-2ubuntu4.1",
-               "at-spi2-core=2.44.0-3", "python3-pyatspi=2.38.2-1", "xclip=0.13-2", "sudo=1.9.9-1ubuntu2.4", "bash=5.1-6ubuntu1"]}
-# actual Drums rootfs: 24.04, openbox, Chromium 141, LibreOffice 24.2, the host kernel
+      # The real image has 1932 packages. THIS LIST IS A SYNTHETIC STAND-IN except for what the independent review read from the real manifest: wmctrl 1.07-7build1 PRESENT; openbox and xclip ABSENT;
+      # no package named mutter, but gir1.2-mutter-10, libmutter-10-0 and mutter-common 42.9-0ubuntu4 PRESENT; gnome-shell 42.9-0ubuntu2; Chrome 130.0.6723.58-1; LibreOffice 1:7.3.7-0ubuntu0.22.04.4; Python 3.10.6-1~22.04.
+      "dpkg": ["python3=3.10.6-1~22.04", "gnome-shell=42.9-0ubuntu2", "gir1.2-mutter-10=42.9-0ubuntu4", "libmutter-10-0=42.9-0ubuntu4", "mutter-common=42.9-0ubuntu4", "wmctrl=1.07-7build1",
+               "google-chrome-stable=130.0.6723.58-1", "libreoffice-core=1:7.3.7-0ubuntu0.22.04.4", "dbus=1.12.20-2ubuntu4.1", "dbus-daemon=1.12.20-2ubuntu4.1", "at-spi2-core=2.44.0-3",
+               "python3-pyatspi=2.38.2-1", "sudo=1.9.9-1ubuntu2.4", "bash=5.1-6ubuntu1"]}
+# actual Drums rootfs: 24.04, openbox, Chromium 141, LibreOffice 24.2, the host kernel; its manifest tracks ONLY 10 packages (this stand-in lists 7 of them)
 DRUMS = {"os_release": {"NAME": "Ubuntu", "VERSION_ID": "24.04", "VERSION": "24.04.3 LTS (Noble Numbat)"}, "kernel": "7aws", "browsers": {"/opt/pw-browsers/chromium-1194/chrome-linux/chrome": "Chromium 141.0.7390.37"},
          "dpkg": {"libreoffice-core": "4:24.2.7-0ubuntu0.24.04.7", "openbox": "3.6.1-12build5", "at-spi2-core": "2.52.0-1build1", "dbus": "1.14.10-4ubuntu4.1", "xclip": "0.13-3", "python3": "3.12.3-0ubuntu2.1",
                   "soffice_version_string": "LibreOffice 24.2.7.2 420(Build:2)"}}
@@ -40,14 +43,17 @@ def test_an_aspect_is_equal_only_when_both_values_exist_and_match():
     assert mp.aspects({}, {})[0]["equal"] is False  # missing on both sides is not equal
 
 
-def test_package_inventory_counts_same_and_different_versions_and_uses_the_real_array_format():
-    rep = mp.compare(VM, DRUMS)
-    p = rep["packages"]
-    assert p["vm_count"] == 11 and p["common"] >= 4 and p["common_different_version"] >= 4 and p["common_same_version"] == 0
-    assert {x[0] for x in p["different_sample"]} >= {"python3", "dbus", "xclip"}
-    assert mp.parse_dpkg(["a=1", "b=2:3-4", "junk"]) == {"a": "1", "b": "2:3-4"}
+def test_with_only_tracked_drums_packages_the_package_comparison_is_labelled_partial_and_gives_no_fraction():
+    p = mp.compare(VM, DRUMS)["packages"]
+    assert p["complete_inventory"] is False and "NOT a full inventory comparison" in p["note"] and p["same_fraction_of_vm"] is None
+    assert p["vm_count"] == 14 and p["common"] >= 4 and p["common_same_version"] == 0 and p["common_different_version"] >= 4  # every common tracked package differs in version
+    assert {x[0] for x in p["different_sample"]} >= {"python3", "dbus", "libreoffice-core"} and mp.parse_dpkg(["a=1", "b=2:3-4", "junk"]) == {"a": "1", "b": "2:3-4"}
+
+
+def test_with_a_full_drums_list_the_comparison_is_complete_and_has_a_fraction():
     full = mp.compare(VM, DRUMS, ["python3=3.10.6-1~22.04", "bash=5.1-6ubuntu1", "extra=1"])["packages"]
-    assert full["common_same_version"] == 2 and full["only_in_drums"] == 1 and full["drums_count"] == 3 and abs(full["same_fraction_of_vm"] - 2 / 11) < 1e-9
+    assert full["complete_inventory"] is True and full["note"] is None and full["common_same_version"] == 2 and full["only_in_drums"] == 1
+    assert abs(full["same_fraction_of_vm"] - 2 / 14) < 1e-9
 
 
 def test_drums_inventory_emits_the_image_manifest_format_from_dpkg_query():
@@ -55,23 +61,42 @@ def test_drums_inventory_emits_the_image_manifest_format_from_dpkg_query():
     assert out == ["bash=5.2", "zlib1g=1:1.3"]
 
 
-def test_route_report_names_the_real_blockers_from_the_manifests_and_validates_nothing():
+SERVER = "import subprocess\ndef f():\n    subprocess.run(['wmctrl', '-l'])\n    subprocess.run(['xclip', '-o'])\n"
+
+
+def test_route_report_reads_the_launched_programs_from_the_code_and_attributes_nothing_it_did_not_derive():
+    r = mp.route_report(VM, DRUMS, session_source=None, server_source=SERVER)
+    launched = r["session_launched_programs"]
+    assert set(launched) == {"/usr/libexec/at-spi-bus-launcher", "dbus-daemon", "openbox"}  # exactly what start_real_desktop starts
+    assert launched["openbox"] == "ABSENT from the image" and launched["dbus-daemon"]["package"] == "dbus-daemon" and launched["/usr/libexec/at-spi-bus-launcher"]["package"] == "at-spi2-core"
+    assert "xclip" not in launched and "wmctrl" not in launched  # not launched by the session: no longer attributed to start_real_desktop
+    srv = r["pinned_server_programs"]
+    assert srv["wmctrl"] == {"package": "wmctrl", "version": "1.07-7build1"} and srv["xclip"] == "ABSENT from the image"  # wmctrl is PRESENT in the real guest; xclip is absent
+    gaps = " ".join(r["route_B_read_only_image_rootfs"]["gaps"])
+    assert "openbox, which the session starts after the pivot, is ABSENT" in gaps and "(per task) the pinned server runs xclip" in gaps
+    assert "wmctrl" not in gaps and "(per task) the pinned server runs wmctrl" not in gaps  # present, so no gap is claimed
+    assert "python3 3.10.6" in gaps and "python3.12" in gaps and "drums_template_overlay" in gaps
+
+
+def test_gnome_is_not_declared_available_or_unavailable_from_the_absence_of_a_mutter_package():
     r = mp.route_report(VM, DRUMS)
-    b, a = r["route_B_read_only_image_rootfs"], r["route_A_install_on_host"]
-    assert b["validated"] is False and a["validated"] is False
-    gaps = " ".join(b["gaps"])
-    assert "python3.12" in gaps and "3.10.6" in gaps  # the kit venv is built on python 3.12; the image has 3.10
-    assert "openbox is NOT in the image" in gaps and "wmctrl is NOT in the image" in gaps and "mutter" in gaps  # the image has no openbox but has mutter
-    assert "dbus is NOT in the image" not in gaps and "xclip is NOT in the image" not in gaps  # present in the manifest
-    assert any("CRIU" in x for x in b["incompatible_with"]) and any("kernel" in x for x in a["cannot_match"]) and any("kernel" in x for x in b["cannot_match"])
-    assert any("old .deb" in x or "UNVERIFIED" in x for x in a["needs"]) and any("superseded" in x for x in a["cannot_match"])
-    assert any("ROOT" in x for x in r["identity_decisions_needed"]) and any("network" in x for x in r["identity_decisions_needed"])
-    assert r["inventory_basis"].startswith("image dpkg array; Drums side: only the packages composition.py tracks")
+    assert r["image_package_facts"]["mutter"] is None and r["image_package_facts"]["gir1.2-mutter-10"] == "42.9-0ubuntu4" and r["image_package_facts"]["mutter-common"] == "42.9-0ubuntu4"
+    assert "gnome-shell 42.9-0ubuntu2 is installed" in r["gnome"] and "UNVALIDATED" in r["gnome"] and "not concluded from package names" in r["gnome"]
+    assert "mutter could replace openbox" not in json.dumps(r) and "no panel or hotkeys" not in json.dumps(r)
 
 
-def test_a_python_312_image_would_not_raise_the_kit_gap():
-    img = dict(VM, dpkg=[x for x in VM["dpkg"] if not x.startswith("python3=")] + ["python3=3.12.3-0ubuntu2"])
-    assert not any("python3.12" in g for g in mp.route_report(img, DRUMS)["route_B_read_only_image_rootfs"]["gaps"])
+def test_validated_nothing_and_identity_and_privileges_are_not_widened_or_declared_matched():
+    r = mp.route_report(VM, DRUMS)
+    assert r["route_A_install_on_host"]["validated"] is False and r["route_B_read_only_image_rootfs"]["validated"] is False
+    assert any("ROOT" in x and "does NOT declare identity or GNOME matched" in x for x in r["identity_decisions_needed"])
+    assert r["inventory_basis"].endswith("this is not a full inventory comparison") and "ONLY the packages composition.py tracks" in r["inventory_basis"]
+    assert any("CRIU" in x for x in r["route_B_read_only_image_rootfs"]["incompatible_with"]) and any("superseded" in x for x in r["route_A_install_on_host"]["cannot_match"])
+
+
+def test_a_python_312_image_with_every_launched_program_reports_no_python_or_program_gap():
+    img = dict(VM, dpkg=[x for x in VM["dpkg"] if not x.startswith("python3=")] + ["python3=3.12.3-0ubuntu2", "openbox=3.6.1-10"])
+    gaps = " ".join(mp.route_report(img, DRUMS)["route_B_read_only_image_rootfs"]["gaps"])
+    assert "python3.12" not in gaps and "ABSENT" not in gaps and "drums_template_overlay" in gaps  # the kit-visibility gap remains: it is about the HOST path, not the python version
 
 
 def test_the_cli_prints_the_full_report(tmp_path, capsys):
@@ -79,4 +104,4 @@ def test_the_cli_prints_the_full_report(tmp_path, capsys):
     (tmp_path / "d.json").write_text(json.dumps(DRUMS))
     mp.main(["--image", str(tmp_path / "i.json"), "--drums", str(tmp_path / "d.json")])
     out = json.loads(capsys.readouterr().out)
-    assert out["verdict"] == "NOT_A_COMPARISON" and "routes" in out and out["structural_differences"] == ["kernel"]
+    assert out["verdict"] == "NOT_A_COMPARISON" and "routes" in out and out["structural_differences"] == ["kernel"] and out["packages"]["complete_inventory"] is False

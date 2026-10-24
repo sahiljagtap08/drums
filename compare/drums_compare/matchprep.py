@@ -67,67 +67,87 @@ def aspects(image, drums):
     return out
 
 
-def packages(image_dpkg, drums_dpkg):
+def packages(image_dpkg, drums_dpkg, complete=False):
     a, b = parse_dpkg(image_dpkg), parse_dpkg(drums_dpkg)
     common = set(a) & set(b)
     same = sorted(p for p in common if a[p] == b[p])
     diff = sorted(p for p in common if a[p] != b[p])
-    return {"vm_count": len(a), "drums_count": len(b), "common": len(common), "common_same_version": len(same), "common_different_version": len(diff),
+    return {"complete_inventory": complete, "note": None if complete else f"PARTIAL: the Drums side lists only {len(b)} tracked packages, so this is NOT a full inventory comparison (the VM side has {len(a)})",
+            "vm_count": len(a), "drums_count": len(b), "common": len(common), "common_same_version": len(same), "common_different_version": len(diff),
             "only_in_vm": len(set(a) - set(b)), "only_in_drums": len(set(b) - set(a)),
-            "different_sample": [(p, a[p], b[p]) for p in diff[:25]], "same_fraction_of_vm": (len(same) / len(a)) if a else None}
+            "different_sample": [(p, a[p], b[p]) for p in diff[:25]], "same_fraction_of_vm": ((len(same) / len(a)) if a else None) if complete else None}
 
 
-def route_report(image, drums, drums_dpkg=None):
-    """What each route needs, derived from the manifests and from the code (session.py / session_init.py / realkit.py read for this). Every line says what it rests on.
+# program (as the code starts it) -> the Debian packages that provide it; used only to read PRESENCE out of an image's dpkg array
+PROGRAM_PACKAGES = {"dbus-daemon": ("dbus-daemon", "dbus"), "/usr/libexec/at-spi-bus-launcher": ("at-spi2-core",), "openbox": ("openbox",), "wmctrl": ("wmctrl",), "xclip": ("xclip",),
+                    "xdotool": ("xdotool",), "scrot": ("scrot",), "socat": ("socat",)}
 
-    ROUTE A: install the VM's userland on the Drums HOST (Ubuntu 22.04, GNOME 42, Chrome 130, LibreOffice 7.3.7). ROUTE B: use the VM image's OWN root filesystem, mounted READ-ONLY and
-    extracted, as the base layer of the Drums overlay (Drums already overlays the whole root with `lowerdir=<template>:/`; B would replace `/` with the image root)."""
+
+def _present(idpkg, program):
+    pk = PROGRAM_PACKAGES.get(program, (program,))
+    return next(((p, idpkg[p]) for p in pk if p in idpkg), None)
+
+
+def route_report(image, drums, drums_dpkg=None, session_source=None, server_source=None):
+    """What each route needs, derived from the manifests and from the code. The programs a session STARTS are read from `session_init.start_real_desktop` (rootcheck.desktop_programs), and the
+    programs the pinned server runs per task from its source when given; presence is read from the image's dpkg array. Nothing is guessed from a package that is merely absent: for instance
+    the image has no package named `mutter`, but it has gnome-shell and the mutter libraries, and whether gnome-shell can run in a session is NOT concluded here.
+
+    ROUTE A: install the VM's userland on the Drums HOST. ROUTE B: use the image's OWN root filesystem, mounted READ-ONLY, as the base layer of the overlay."""
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "envd-linux"))
+    from envd_linux import rootcheck
     idpkg = parse_dpkg(image.get("dpkg") or [])
-    need = {}
-    for name in ("python3", "openbox", "mutter", "wmctrl", "xclip", "dbus-x11", "dbus", "at-spi2-core", "python3-pyatspi", "gnome-terminal", "gnome-shell", "google-chrome-stable",
-                 "libreoffice-core", "libreoffice-writer", "libreoffice-impress", "xvfb", "scrot", "socat", "sudo"):
-        need[name] = idpkg.get(name)
-    py = _ver(need.get("python3") or "")
-    gaps_b = []
+    launched = rootcheck.desktop_programs(session_source)
+    launched_status = {p: (lambda h: {"package": h[0], "version": h[1]} if h else "ABSENT from the image")(_present(idpkg, p)) for p in launched}
+    server_status = None
+    if server_source:
+        server_status = {p: (lambda h: {"package": h[0], "version": h[1]} if h else "ABSENT from the image")(_present(idpkg, p)) for p in rootcheck.server_programs(server_source)}
+    facts = {n: idpkg.get(n) for n in ("python3", "gnome-shell", "gir1.2-mutter-10", "libmutter-10-0", "mutter-common", "mutter", "google-chrome-stable", "libreoffice-core", "sudo")}
+    gaps = []
+    py = _ver(facts.get("python3") or "")
     if py and not py.startswith("3.12"):
-        gaps_b.append(f"the kit venv is built on /usr/bin/python3.12 (`realkit.build`, NEEDED_FILES) but the image has python3 {need['python3']}: the kit cannot run inside the image root; it would need to be rebuilt on the image's python, or the pinned server files run on the image's own python")
-    for pkg in ("openbox", "wmctrl", "xclip", "dbus", "at-spi2-core", "python3-pyatspi"):
-        if not need.get(pkg):
-            gaps_b.append(f"{pkg} is NOT in the image: session_init starts it inside the session root (`start_real_desktop`), so it would have to be added (a recorded software addition) or replaced")
-    if need.get("mutter") and not need.get("openbox"):
-        gaps_b.append("the image has mutter (GNOME's window manager) but no openbox: a session could run `mutter` instead of openbox (closer to the VM, no panel or hotkeys) - unvalidated")
-    ver = lambda s: _ver(s or "")
-    route_a_pins = {"google-chrome-stable": need.get("google-chrome-stable") or image.get("browser"), "libreoffice": image.get("libreoffice"), "gnome-shell": image.get("desktop")}
+        gaps.append(f"the kit venv's python is a symlink to the HOST's /usr/bin/python3.12 (`realkit.build`) and the image has python3 {facts['python3']}: the kit cannot run in the image root as built (interpreter and library compatibility differ); a kit/runtime that is visible and validated inside the root is required, and `Supervisor` refuses before any mount without it")
+    gaps.append("the kit directory lives on the HOST (`/opt/drums-osworld-real`); after the pivot it is gone unless explicitly placed in the template layer (`drums_template_overlay`), which `rootcheck` verifies before any mount")
+    for p, st in launched_status.items():
+        if st == "ABSENT from the image":
+            gaps.append(f"{p}, which the session starts after the pivot, is ABSENT from the image (a recorded addition would be needed, or the session code changed)")
+    for p, st in (server_status or {}).items():
+        if st == "ABSENT from the image":
+            gaps.append(f"(per task) the pinned server runs {p} and the image lacks it")
+    comp = "full dpkg list supplied" if drums_dpkg else "ONLY the packages composition.py tracks (a full list needs `drums_inventory`): this is not a full inventory comparison"
     return {
-        "inventory_basis": "image dpkg array; Drums side: " + ("full dpkg list supplied" if drums_dpkg else "only the packages composition.py tracks (a full list needs `drums_inventory`)"),
-        "image_package_facts": need,
+        "inventory_basis": "image dpkg array; Drums side: " + comp,
+        "session_launched_programs": launched_status, "pinned_server_programs": server_status or "not derived (pass the pinned server's main.py)",
+        "image_package_facts": facts,
+        "gnome": ("gnome-shell " + facts["gnome-shell"] + " is installed in the image, with the mutter libraries" if facts.get("gnome-shell") else "gnome-shell not found in the image's dpkg list") +
+                 "; whether it can run inside a Drums session (no logind, no system D-Bus) is UNVALIDATED and is not concluded from package names",
         "route_A_install_on_host": {
-            "needs": ["a 22.04 host (the AMI would change from 24.04: the kit, CRIU, cgroup and nested-virtualization findings so far are for 24.04)", "GNOME 42 and a gnome-shell session, or openbox kept (then desktop stays different)",
-                      f"google-chrome-stable at the VM's exact version ({route_a_pins['google-chrome-stable']!r}): Google's apt repository serves the CURRENT stable, so an old .deb must be fetchable from a pool URL (UNVERIFIED availability)",
-                      "LibreOffice 7.3.7 from the jammy archive (the upstream version can match; the Ubuntu patch revision may not)", "a `user` account and /home/user on the host (an identity decision, below)"],
+            "needs": ["a 22.04 host (the kit, CRIU, cgroup and nested-virtualization findings so far are for 24.04)", f"google-chrome-stable at the VM's exact version ({facts.get('google-chrome-stable') or image.get('browser')!r}): Google's apt repository serves the CURRENT stable, so an old .deb must be fetchable from a pool URL (UNVERIFIED availability)",
+                      "LibreOffice 7.3.7 from the jammy archive (the upstream version can match; the Ubuntu patch revision may not)", "a `user` account and /home/user on the host (an identity decision)"],
             "cannot_match": ["kernel (the host's own; structural)", "per-package versions that Ubuntu has since superseded (old versions may no longer be installable): exact package equality is NOT achievable by this route"],
             "validated": False},
         "route_B_read_only_image_rootfs": {
-            "needs": ["the qcow2 root filesystem mounted READ-ONLY on the host (qemu-nbd or libguestfs; the nbd module; `ro,noload`) - UNVERIFIED on the AWS kernel", "`--base-root PATH` in session_init and `base_root` in Supervisor, replacing the hard-coded `/` in `lowerdir=<template>:/` (two places: session_init.py and the restore path in session.py)",
-                      "the pinned server files plus a python that runs them inside the image root (see gaps)", "Xvfb stays a HOST process (started outside the session), so it needs nothing from the image"],
-            "gaps": gaps_b,
-            "matches_by_construction": ["every package and version (the same bytes)", "Chrome 130 and LibreOffice 7.3.7 with no download (the old-Chrome availability problem disappears)", "/home/user and its contents"],
-            "cannot_match": ["kernel (the host's; structural)", "systemd as PID 1, logind and the system D-Bus: a Drums session has its own init, so GNOME Shell as a session is NOT expected to run (window manager is openbox or mutter)"],
+            "needs": ["the qcow2 root filesystem mounted READ-ONLY (mount_image_rootfs.sh; nbd) - UNVERIFIED on the AWS kernel", "`--base-root` plumbing (built, unit-tested only)", "a kit/runtime placed in the template layer that runs inside the image root (verified by rootcheck before any mount)"],
+            "gaps": gaps,
+            "matches_by_construction": ["every package and version in the image (the same bytes)", "Chrome and LibreOffice at the image's versions with no download", "/home/user and its contents"],
+            "cannot_match": ["kernel (the host's; structural)", "systemd as PID 1 and logind: a session has its own init"],
             "incompatible_with": ["CRIU checkpoint/restore (the restore path assumes `/` as a lower layer): cold-reset stages only"],
             "validated": False},
         "identity_decisions_needed": [
-            "sessions run as ROOT with HOME set (as today); the VM user is `user` with sudo. Changing the uid/ownership would be a privilege and ownership change and is NOT made silently",
-            "network stays Drums' per-session veth; the VM's is QEMU user-mode/NAT: recorded as different",
+            "sessions run as ROOT with HOME set; the VM user is `user` with sudo. Changing the uid or ownership would be a privilege and ownership change and is NOT made silently; the home/base-root plumbing does NOT declare identity or GNOME matched",
+            "network stays Drums' per-session veth; the VM's is QEMU user-mode: recorded as different",
         ],
     }
 
 
-def compare(image, drums, drums_dpkg_lines=None):
+def compare(image, drums, drums_dpkg_lines=None, session_source=None, server_source=None):
     asp = aspects(image, drums)
     ddp = drums_dpkg_lines if drums_dpkg_lines is not None else [f"{k}={v}" for k, v in (drums.get("dpkg") or {}).items() if v and k != "soffice_version_string"]
-    pk = packages(image.get("dpkg") or [], ddp)
+    pk = packages(image.get("dpkg") or [], ddp, complete=drums_dpkg_lines is not None)
     return {"aspects": asp, "all_aspects_equal": all(a["equal"] for a in asp), "differences": [a["aspect"] for a in asp if not a["equal"]],
-            "structural_differences": [a["aspect"] for a in asp if not a["equal"] and a["kind"] == "structural"], "packages": pk, "routes": route_report(image, drums, drums_dpkg_lines),
+            "structural_differences": [a["aspect"] for a in asp if not a["equal"] and a["kind"] == "structural"], "packages": pk, "routes": route_report(image, drums, drums_dpkg_lines, session_source, server_source),
             "verdict": "NOT_A_COMPARISON" if any(not a["equal"] for a in asp) else "aspects equal (packages and behaviour still need measured evidence)"}
 
 
@@ -136,9 +156,10 @@ def main(argv=None):
     ap.add_argument("--image", required=True)
     ap.add_argument("--drums", required=True)
     ap.add_argument("--drums-dpkg", help="a file with one package=version per line")
+    ap.add_argument("--server-main", help="the pinned OSWorld server's main.py (to derive the programs it runs per task)")
     a = ap.parse_args(argv)
     lines = open(a.drums_dpkg).read().splitlines() if a.drums_dpkg else None
-    print(json.dumps(compare(json.load(open(a.image)), json.load(open(a.drums)), lines), indent=1))
+    print(json.dumps(compare(json.load(open(a.image)), json.load(open(a.drums)), lines, None, open(a.server_main).read() if a.server_main else None), indent=1))
 
 
 if __name__ == "__main__":

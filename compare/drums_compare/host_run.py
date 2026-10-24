@@ -99,6 +99,14 @@ def compute_inputs(cfg, runner=sh):
         d["actions:" + t["id"]] = hashlib.sha256(canon(t.get("actions")).encode()).hexdigest()
     for e in cfg.get("equivalence", {}).get("accepted", []):
         d["equivalence:" + str(e.get("aspect"))] = file_sha256(e["evidence"]) if e.get("evidence") and os.path.exists(e["evidence"]) else None
+    ov = cfg.get("drums_template_overlay")
+    if ov and os.path.isdir(ov):  # the explicitly validated kit/runtime layer: bind its LISTING (paths, sizes, link targets) so a changed layer invalidates the stamp
+        ent = []
+        for dp, dn, fn in os.walk(ov):
+            for n in sorted(dn + fn):
+                q = os.path.join(dp, n)
+                ent.append((os.path.relpath(q, ov), os.readlink(q) if os.path.islink(q) else (os.path.getsize(q) if os.path.isfile(q) else "dir")))
+        d["template_overlay_listing"] = hashlib.sha256(canon(sorted(ent, key=str)).encode()).hexdigest()
     rc, head = runner(["git", "-C", cfg.get("osworld_src", ""), "rev-parse", "HEAD"]) if cfg.get("osworld_src") else (1, "")
     d["osworld_head"] = head.strip() if rc == 0 else None
     d.update(source_identity(runner))
@@ -229,6 +237,11 @@ def _real_preflight(cfg):
     return preflight.run(cfg.get("criu_home"), cfg.get("disk_path", "/"), probe=True)
 
 
+def _real_rootcheck():
+    from envd_linux import rootcheck
+    return rootcheck
+
+
 def _real_kit_ok():
     from envd_linux import realkit
     return realkit.available(realkit.DEFAULT_KIT) and not realkit.missing()
@@ -322,6 +335,17 @@ def check_all(cfg, deps=None, options=None):
         rc, opts = d["sh"](["findmnt", "-n", "-o", "OPTIONS", "--target", base])
         out.append(chk("drums_base_root_read_only", rc == 0 and "ro" in opts.split(",") and INCUMBENTS[inc]["reuse"] == "none",
                        f"base root {base} mount options: {opts.strip() or 'unreadable'}; must contain ro, and only cold-reset stages may use it (CRIU assumes '/')"))
+        # BEFORE any session mount: would the programs the session starts, and the kit with its interpreter, exist INSIDE the new root? (the host's kit and python 3.12 vanish at the pivot)
+        try:
+            rcm = d["rootcheck"] if "rootcheck" in d else _real_rootcheck()
+            kit = cfg.get("kit", "/opt/drums-osworld-real")
+            main_py = os.path.join(kit, "server", "main.py")
+            found = rcm.check_userland(([cfg["drums_template_overlay"]] if cfg.get("drums_template_overlay") else []) + [base], kit=kit,
+                                       server_main_source=open(main_py).read() if os.path.exists(main_py) else None)
+            out.append(chk("drums_base_root_userland", not found["problems"], ("the new root has the session's programs and a runnable kit" + (f"; per-task warnings: {found['warnings']}" if found["warnings"] else "")) if not found["problems"]
+                           else "the session could not start in this root: " + "; ".join(found["problems"])))
+        except Exception as e:
+            out.append(chk("drums_base_root_userland", False, f"{type(e).__name__}: {str(e)[:200]}"))
     # Drums
     try:
         pf = d["preflight"](cfg) if "preflight" in d else _real_preflight(cfg)

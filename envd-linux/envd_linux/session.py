@@ -89,6 +89,11 @@ class Supervisor:
                 raise ValueError(f"base_root {base_root!r} is not a directory")
             if os.path.commonpath([os.path.abspath(state_dir), base_root]) in (base_root, os.path.abspath(state_dir)):
                 raise ValueError("base_root and the state directory must not contain one another (overlay layers cannot nest)")
+            if osworld_real_kit:  # BEFORE any mount: would the programs the session starts exist inside the new root? (the host's kit and python 3.12 vanish at the pivot)
+                from . import rootcheck
+                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit)
+                if found["problems"]:
+                    raise ValueError("the new base root cannot run the session: " + "; ".join(found["problems"]))
         self.home, self.base_root = home, base_root
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None

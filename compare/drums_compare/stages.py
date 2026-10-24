@@ -43,6 +43,8 @@ def build_drums(cfg, work):
         build_home_template(home_tpl)  # a Chromium first-run profile built from the host's browser path
     # with another base root (a read-only image root) the host's browser path need not exist there, and the home comes from that tree: only the Desktop directory is laid down
     os.makedirs(os.path.join(home_tpl, "Desktop"), exist_ok=True)
+    if cfg.get("drums_template_overlay"):  # the owner-prepared, rootcheck-verified kit/runtime tree that must be visible inside a custom base root
+        subprocess.run(["cp", "-a", cfg["drums_template_overlay"].rstrip("/") + "/.", tpl + "/"], check=True)
     limits = lim.Limits(cpus=float(cfg.get("guest_cpus", 2)), memory_bytes=int(cfg.get("guest_memory_mib", 4096)) * MIB)
     sup = Supervisor(os.path.join(work, "state"), tpl, root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
                      init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120, criu_friendly=(cfg.get("incumbent") == "virtualbox"),
