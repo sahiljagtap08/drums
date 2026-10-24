@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 13 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 14 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -508,3 +508,72 @@ is a READINESS check, not a separate result.
 - Incumbents' VMs can use KSM too (each QEMU guest is a mergeable process), so nothing here is a claim against an incumbent.
 - The 0.25 vCPU threshold was fixed before measuring and is failed by a wide margin; scan settings were not re-tuned.
 - Merging pays only while sessions are being added and settled; the saving is a steady-state number after counters settle.
+
+
+## 14. PROTOTYPE pre-registration: mechanism C (CRIU checkpoint and restore of a warm session)
+
+**Status: PRE-REGISTERED, thresholds fixed before any measurement. PROTOTYPE. Nothing here is built yet. `drums_level` stays L0.**
+Committed before the probe is run; results will be section 15.
+
+### Why this route, and what it is not
+
+Memory sharing failed three ways: F saved 6.2% (too small), B was disqualified on isolation, observation semantics and crash domain, K saved 7%
+(fails CPU, carries a timing channel) or 41% only with address randomisation off (fails CPU, security regression). On a fixed-cost host the other half of
+results per dollar is rollout throughput, which is time-to-ready per rollout. The idea: checkpoint a WARM session once (browser launched, guest server up,
+a known task page loaded) and restore copies of it, instead of starting every session cold.
+
+**Design intent, not a claim.** A restored session keeps its own processes, so the intent is that the isolation boundary and the screenshot semantics are the
+same as a cold session. That is only true if a measured restore-correctness audit shows no shared fds, sockets, X state or file locks between restored siblings. Until
+that audit passes it is an intent. A fast restore is also prior-art territory (VM snapshot resume); the only claim that could ever count is a
+measured increment over the tuned incumbent's snapshot-revert latency in the matched runner, which this probe cannot measure (no KVM here).
+
+### Considered and not chosen now
+
+- **userfaultfd lazy restore** (page in the checkpoint image on demand): an optimisation on top of CRIU that only matters if the base restore works. Revisit only if section 15 shows
+  restore time dominated by reading memory.
+- **A custom shared-browser build**: weeks of work and it reintroduces shared-state risk (the lesson of B). Deprioritised.
+
+### Arms
+
+| Arm | What starts | Time-to-agent-ready ends when |
+|---|---|---|
+| COLD | `Supervisor.create` (namespaces, overlay root, Xvfb, real guest server), then launch Chromium and load the known task page | the guest server returns a screenshot that shows the browser with the page loaded |
+| RESTORE (full) | `criu restore` of a checkpoint taken from a COLD session in that same ready state | the same condition |
+| RESTORE-SERVER-ONLY (fallback) | checkpoint WITHOUT the browser (desktop and guest server warm), browser cold-started after restore | the same condition |
+
+**RESTORE-SERVER-ONLY is PARTIAL by definition**: if Chromium will not checkpoint and only this arm works, it is reported as a partial result with the limited
+scope F's lesson taught (a fork or restore of the server alone leaves the dominant cost, the browser, cold). It is measured separately and is never described as the mechanism.
+
+### Probe ladder (each rung is recorded as pass or fail with the CRIU error; a failed rung is a result)
+
+1. CRIU runs on this kernel (`criu check`), binary and libraries held privately (not installed system-wide).
+2. Dump and restore a trivial process tree in its own PID namespace.
+3. Dump and restore a session with only the guest server (the real OSWorld server) and Xvfb.
+4. Add Chromium. The known hard risks, probed rather than assumed: Chromium's sandbox and seccomp filters under CRIU, the X connection state of restored X clients, the guest server's
+   TCP connections (listening and established), shared-memory and GPU state (`/dev/shm`, no GPU here).
+5. Restore into a fresh network namespace (same session address) and mount namespace (same overlay root), since a session is more than its processes.
+
+### Thresholds (fixed now), in order
+
+**CORRECTNESS (all must hold, or the arm fails regardless of speed):**
+- C1: the same public OSWorld task (`e0df059f`, the one used in `test_osworld_real_server`) scores 0.0 then 1.0 through the real evaluator from a restored session.
+- C2: the restored session's screenshot shows the browser: a Chromium window is present in the X window tree, its title is the loaded page's, and the screenshot differs from a blank-desktop screenshot in more than 10% of pixels.
+- C3 (explicit audit, two sessions restored from ONE checkpoint, running at the same time): no shared host PIDs; no shared open pipe, socket or eventfd inodes; no shared open
+  regular files other than read-only files in the shared template lower layer (listed, each judged); no shared entries in `/proc/locks`; distinct Xvfb displays and X socket
+  inodes; distinct network namespaces and addresses; the guest-server TCP state of one is not visible to the other. Any shared writable object fails C3.
+
+**LATENCY:** 20 or more starts per arm, interleaved. Time-to-agent-ready of RESTORE (full) p50 <= 0.50 x COLD p50 (target at least 2x), and p95 not worse than COLD p95.
+
+**MEMORY:** host memory per additional session, same slope method as sections 9 to 13, restored <= 1.05 x cold (with the browser in both).
+
+**Host-level effects** (anything CRIU writes outside the session: sysctls such as `kernel.ns_last_pid` in the host namespace, mounts, image directories) are recorded in
+the sweep ledger before they are made and restored on close, like the KSM knobs. The CRIU binary and its libraries stay in a private directory.
+
+### Expected outcome, stated in advance so it can lose
+
+- Chromium checkpoints and restores cleanly in this sandbox: about 30%. The likely failures are its seccomp/sandbox setup, `--no-sandbox` still leaves many helper processes with
+  unix-socket pairs and shared memory that CRIU handles unevenly, and X client connections.
+- If it does restore: P(C1, C2 and C3 all pass) about 50% (the audit is the likely casualty). P(latency >= 2x | correct) about 25%: a cold session start here is about 2.4 s plus
+  browser start, and restoring a multi-process browser's memory image is not free.
+- RESTORE-SERVER-ONLY: expected latency ratio about 1.0 (a cold guest server is already about 2 s, and restore overhead is comparable), so it is expected to LOSE on latency even when correct.
+- Most likely overall result: the probe stops at a failed rung in the ladder, which is documented as the result.
