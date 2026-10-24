@@ -5,8 +5,7 @@
 #   STAGE=docker DRUMS_REF=<commit> DOCKER_DIGEST=sha256:<64 hex> bash deploy/aws_host/bootstrap.sh     # small stage: stock Docker/KVM, cold reset
 #   STAGE=vbox   DRUMS_REF=<commit> bash deploy/aws_host/bootstrap.sh                                  # original goal: stock VirtualBox, live snapshots (bare metal)
 #
-# STAGE and DRUMS_REF have no defaults on purpose: the host runs an exact, recorded commit and one declared stage. Optional: CRIU_DEB_URLS="url1 url2" (vbox stage only: exact .deb files
-# for a private CRIU; otherwise the distribution's `criu` is extracted privately and its REAL version is recorded; restore on this kernel is UNTESTED until `host_run gates` passes).
+# STAGE and DRUMS_REF have no defaults on purpose: the host runs an exact, recorded commit and one declared stage. Optional: none. For the vbox stage the PRIVATE CRIU is downloaded (not installed) by install_criu_private.sh under its REAL version name; restore on this kernel is UNTESTED until `host_run gates` passes).
 #
 # TWO PYTHON ENVIRONMENTS, DO NOT CONFUSE THEM: $SRC/.venv-host runs host_run and the OSWorld `DesktopEnv` (it has librosa so no module is stubbed); /opt/drums-osworld-real/venv is the
 # guest server's own environment inside Drums sessions (built by envd_linux.realkit; it needs no librosa). host_run itself must run as ROOT (sudo): Drums needs namespaces and
@@ -90,13 +89,8 @@ chromium() {
 kit() {  # builds /opt/drums-osworld-real (the GUEST SERVER's own venv, with --system-site-packages); it does not and need not contain librosa
   (cd "$SRC/envd-linux" && PYTHONPATH=. python3 -m envd_linux.realkit "$OSW" --kit /opt/drums-osworld-real)
 }
-criu() {
-  cd "$CRIU_HOME" && mkdir -p dl && cd dl
-  if [ -n "${CRIU_DEB_URLS:-}" ]; then for u in $CRIU_DEB_URLS; do curl -fsSLO "$u"; done; else apt-get download criu; fi
-  for d in *.deb; do dpkg-deb -x "$d" "$CRIU_HOME/x"; done
-  mkdir -p "$CRIU_HOME/x-4.2/usr/sbin" && cp "$CRIU_HOME/x/usr/sbin/criu" "$CRIU_HOME/x-4.2/usr/sbin/criu"
-  "$CRIU_HOME/x-4.2/usr/sbin/criu" --version | tee "$STATE/criu.version"
-  echo "NOTE: the directory is named x-4.2 because Drums looks for that path; the REAL version is in $STATE/criu.version and may not be 4.2" | tee -a "$STATE/criu.version"
+criu() {  # a PRIVATE CRIU named after its REAL version, with the libraries this host lacks: see install_criu_private.sh (nothing is installed system-wide)
+  bash "$SRC/deploy/aws_host/install_criu_private.sh" "$CRIU_HOME" | tee "$STATE/criu.version"
 }
 manifest() {
   (cd "$SRC/envd-linux" && PYTHONPATH=. python3 -m envd_linux.composition --out "$STATE/drums_composition_manifest.json" --kit /opt/drums-osworld-real --osworld-src "$OSW")

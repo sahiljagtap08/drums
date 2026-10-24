@@ -30,14 +30,23 @@ class CriuError(RuntimeError):
 class Criu:
     """A private CRIU install: `home` holds `x-<version>/usr/sbin/criu` and `libs/{bin,usr/lib/x86_64-linux-gnu,lib/x86_64-linux-gnu}`."""
 
-    def __init__(self, home=None, version="4.2"):
+    def __init__(self, home=None, version=None):
         home = home or os.environ.get("DRUMS_CRIU_HOME")
         if not home:
             raise CriuError("set DRUMS_CRIU_HOME to the private CRIU directory")
+        version = version or os.environ.get("DRUMS_CRIU_VERSION") or self.detect_version(home)
         self.home, self.binary = home, os.path.join(home, f"x-{version}", "usr", "sbin", "criu")
         libs = os.path.join(home, "libs")
         self.env = dict(os.environ, PATH=f"{libs}/bin:" + os.environ["PATH"],
                         LD_LIBRARY_PATH=f"{libs}/usr/lib/x86_64-linux-gnu:{libs}/lib/x86_64-linux-gnu")
+
+    @staticmethod
+    def detect_version(home):
+        """The version directory name under `home`: exactly one `x-<version>` directory is used; none keeps the historical "4.2"; several refuse (set DRUMS_CRIU_VERSION to choose)."""
+        found = sorted(d[2:] for d in os.listdir(home) if d.startswith("x-") and os.path.isdir(os.path.join(home, d))) if os.path.isdir(home) else []
+        if len(found) > 1:
+            raise CriuError(f"several CRIU versions under {home}: {found}; set DRUMS_CRIU_VERSION")
+        return found[0] if found else "4.2"
 
     def run(self, *args):
         return subprocess.run([self.binary, *args], capture_output=True, text=True, env=self.env)

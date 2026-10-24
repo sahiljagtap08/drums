@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -21,6 +22,11 @@ from . import host_run as hr
 
 LABEL = "ARCHITECTURAL_NOT_FAIR_COMPARISON"
 PORT = 47653
+TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")  # the holder's token is os.urandom(8).hex()
+# Pre-registered BEFORE the first live run (this commit): a restored sibling's desktop must differ from the pre-dump screenshot in at most 5% of the document region, and a desktop with fewer than
+# 50 distinct colours in that region is BLANK and fails, before or after.
+MAX_CHANGED_FRACTION = 0.05
+MIN_DISTINCT_COLORS = 50
 REQUIRED = {"drums_desktop": "gnome", "drums_user": "user", "drums_uid": 1000, "drums_gid": 1000, "drums_home": "/home/user", "drums_system_bus": True, "drums_criu": True}
 
 
@@ -41,7 +47,8 @@ class GuestHTTP:
 
     def run(self, script):
         body = json.loads(self.http(self.url("/execute"), {"command": script, "shell": True}))
-        if body.get("status") != "success" or not isinstance(body.get("returncode"), int):
+        rc = body.get("returncode")
+        if body.get("status") != "success" or isinstance(rc, bool) or not isinstance(rc, int):
             raise RuntimeError(f"/execute fault: {str(body)[:300]}")
         return {"stdout": body.get("output") or "", "stderr": body.get("error") or "", "returncode": body["returncode"]}
 
@@ -74,48 +81,89 @@ def first_error_line(tails):
     return None
 
 
+def need_ok(r, what):
+    """A probe command must have RUN and succeeded; a non-zero return code is a failure of the probe, not data."""
+    if r.get("returncode") != 0:
+        raise RuntimeError(f"{what} failed (rc {r.get('returncode')}): {str(r.get('stderr'))[:200]}")
+    return r
+
+
 def setup_state(g, token_port=PORT):
-    """State a restore must bring back: a token held in memory behind a listening socket, a file marker and an open Writer."""
+    """State a restore must bring back: a token held in memory behind a listening socket, a file marker and an open Writer. Every launch and write must succeed, the token must be the holder's 16-hex
+    random value, and the marker is read back."""
     import uuid
     marker = uuid.uuid4().hex[:8]
-    g.step("import subprocess,sys; subprocess.Popen([sys.executable,'-c',%r], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)" % (hr.HOLDER % token_port))
-    g.step("import subprocess; subprocess.Popen(['libreoffice','--writer','--norestore','--nologo'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)")
-    g.step("open('/tmp/probe_marker','w').write(%r)" % marker)
+    need_ok(g.step("import subprocess,sys; subprocess.Popen([sys.executable,'-c',%r], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)" % (hr.HOLDER % token_port)), "holder launch")
+    need_ok(g.step("import subprocess; subprocess.Popen(['libreoffice','--writer','--norestore','--nologo'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)"), "Writer launch")
+    need_ok(g.step("open('/tmp/probe_marker','w').write(%r)" % marker), "marker write")
+    if need_ok(g.run("cat /tmp/probe_marker"), "marker read-back")["stdout"].strip() != marker:
+        raise RuntimeError("the marker file did not read back")
     writer = []
     for _ in range(60):
-        writer = hr.live_pids(lambda s: g.run(s)["stdout"], "soffice.bin")
+        writer = hr.live_pids(lambda s: need_ok(g.run(s), "Writer scan")["stdout"], "soffice.bin")
         if writer:
             break
         time.sleep(1)
     time.sleep(1)
-    return {"marker": marker, "token": ask_token(g, token_port), "writer_pids": writer, "gnome_shell_pids": hr.live_pids(lambda s: g.run(s)["stdout"], "gnome-shell")}
+    tok, err = ask_token(g, token_port)
+    if tok is None:
+        raise RuntimeError(f"the token holder did not answer with a valid token: {err}")
+    return {"marker": marker, "token": tok, "writer_pids": writer, "gnome_shell_pids": hr.live_pids(lambda s: need_ok(g.run(s), "GNOME scan")["stdout"], "gnome-shell")}
 
 
 def ask_token(g, port=PORT):
+    """(token, None) only for a run with return code 0 whose output is EXACTLY 16 lowercase hex characters; otherwise (None, why). An error text is never a token value."""
     try:
-        return g.run("python3 -c %r 2>/dev/null" % (hr.ASK % port))["stdout"].strip()
+        r = g.run("python3 -c %r" % (hr.ASK % port))
     except Exception as e:
-        return f"ERROR {type(e).__name__}"
+        return None, f"{type(e).__name__}: {str(e)[:150]}"
+    out = (r.get("stdout") or "").strip()
+    if r.get("returncode") != 0:
+        return None, f"rc {r.get('returncode')}: {str(r.get('stderr'))[:150]}"
+    if not TOKEN_RE.match(out):
+        return None, f"not a 16-hex token: {out[:40]!r}"
+    return out, None
 
 
-def compare_sibling(g, before, state, shot_before, token_port=PORT):
-    """What a restored sibling must show, from the live session. Raw values are kept next to each verdict."""
+class PilImages:
+    """Screen comparison with PIL (the host venv has it). `fraction` is the share of the document region whose pixels changed; `colors` the number of distinct colours in it (a blank desktop has few)."""
+
+    @staticmethod
+    def fraction(a, b):
+        region = hr.GUI_THRESHOLDS["region"]
+        return hr.changed_pixels(a, b) / max(1, (region[2] - region[0]) * (region[3] - region[1]))
+
+    @staticmethod
+    def colors(png):
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(png)).convert("RGB").crop(hr.GUI_THRESHOLDS["region"])
+        return len(im.getcolors(maxcolors=1 << 24) or [])
+
+
+def compare_sibling(g, before, state, shot_before, token_port=PORT, images=None):
+    """What a restored sibling must show, from the live session. Raw values are kept next to each verdict, and EVERY verdict is part of `pass`: the token (valid 16-hex and equal), the marker, the Writer
+    (live AND the same PIDs as before the dump), GNOME Shell live, unchanged versions, a pixel change within MAX_CHANGED_FRACTION, and a desktop that is not blank. An unmeasurable screen fails."""
+    images = images or PilImages
     live = lambda s: g.run(s)["stdout"]
-    after = {"token": ask_token(g, token_port), "marker": g.run("cat /tmp/probe_marker 2>/dev/null")["stdout"].strip(), "writer_pids": hr.live_pids(live, "soffice.bin"),
+    tok, tok_err = ask_token(g, token_port)
+    after = {"token": tok, "token_error": tok_err, "marker": g.run("cat /tmp/probe_marker 2>/dev/null")["stdout"].strip(), "writer_pids": hr.live_pids(live, "soffice.bin"),
              "gnome_shell_pids": hr.live_pids(live, "gnome-shell")}
     cap = fg.capture_parity(g.run)
     diff = sorted(k for k in fg.PARITY_PROBES if k not in ("date_utc", "date_local", "system_bus_socket", "mnt_ns", "pid_ns") and (cap[k]["rc"], cap[k]["out"]) != (before[k]["rc"], before[k]["out"]))
     shot = g.screenshot()
-    region = hr.GUI_THRESHOLDS["region"]
-    px = max(1, (region[2] - region[0]) * (region[3] - region[1]))
     try:
-        frac, why = hr.changed_pixels(shot_before, shot) / px, None
-    except ImportError:  # no PIL on this machine: identical bytes still prove "unchanged"; a difference is then unmeasured, never 0
-        frac, why = (0.0 if shot == shot_before else None), "PIL is not installed: the changed-pixel fraction is unavailable"
-    res = {"same_token": bool(state["token"]) and after["token"] == state["token"], "marker_restored": after["marker"] == state["marker"], "writer_live_after": bool(after["writer_pids"]),
-           "writer_same_pids": after["writer_pids"] == state["writer_pids"], "gnome_shell_live_after": bool(after["gnome_shell_pids"]), "parity_fields_changed": diff,
-           "screenshot_changed_pixel_fraction": frac, "screenshot_diff_note": why, "screenshot_sha256": hashlib.sha256(shot).hexdigest(), "raw_after": after, "capture": cap}
-    res["pass"] = res["same_token"] and res["marker_restored"] and res["writer_live_after"] and res["gnome_shell_live_after"] and not diff
+        frac, colors_before, colors_after, why = images.fraction(shot_before, shot), images.colors(shot_before), images.colors(shot), None
+    except Exception as e:  # PIL missing or an undecodable screenshot: unmeasured, and an unmeasured screen cannot pass
+        frac, colors_before, colors_after, why = None, None, None, f"{type(e).__name__}: {str(e)[:120]}"
+    res = {"same_token": tok is not None and tok == state["token"] and TOKEN_RE.match(state["token"] or "") is not None, "marker_restored": after["marker"] == state["marker"],
+           "writer_live_after": bool(after["writer_pids"]), "writer_same_pids": bool(state["writer_pids"]) and after["writer_pids"] == state["writer_pids"],
+           "gnome_shell_live_after": bool(after["gnome_shell_pids"]), "parity_fields_changed": diff, "screenshot_changed_pixel_fraction": frac, "screenshot_diff_note": why,
+           "distinct_colors_before": colors_before, "distinct_colors_after": colors_after, "max_changed_fraction": MAX_CHANGED_FRACTION, "min_distinct_colors": MIN_DISTINCT_COLORS,
+           "screenshot_sha256": hashlib.sha256(shot).hexdigest(), "raw_after": after, "capture": cap}
+    res["screen_ok"] = (frac is not None and frac <= MAX_CHANGED_FRACTION and colors_after is not None and colors_after >= MIN_DISTINCT_COLORS and colors_before is not None
+                        and colors_before >= MIN_DISTINCT_COLORS)
+    res["pass"] = (res["same_token"] and res["marker_restored"] and res["writer_live_after"] and res["writer_same_pids"] and res["gnome_shell_live_after"] and not diff and res["screen_ok"])
     return res, shot
 
 
@@ -164,7 +212,7 @@ def run_probe(cfg, out, deps=None):
             clock.add("restore", max(0.0, time.monotonic() - tr - rs))  # the reseed is inside the restore wall: split so that nothing is counted twice
             clock.add("reseed", rs)
             guests[slot] = make(slot, (lambda s=slot: (sup.destroy(s), sup.create(s, from_checkpoint=ck))))
-            cmp_, shot = compare_sibling(guests[slot], before, state, shot_before)
+            cmp_, shot = compare_sibling(guests[slot], before, state, shot_before, images=d.get("images"))
             open(os.path.join(out, f"screenshot_sibling{slot}.png"), "wb").write(shot)
             cmp_["restore_wall_s"] = time.monotonic() - t1
             cmp_["criu_restore_s"], cmp_["reseed_s"], cmp_["restore_total_s"] = inf.get("criu_restore_s"), inf.get("reseed_s"), inf.get("restore_total_s")
@@ -174,11 +222,17 @@ def run_probe(cfg, out, deps=None):
         res["bus_clone_note"] = "a CRIU clone carries the SAME dbus-daemon state, so both siblings report the same bus ID (declared, not a fault); the sockets and mount namespaces must differ"
         with clock.phase("two_session_gate"):
             res["canaries"] = fg.two_session_gate(guests[1], guests[2])  # B's reset is a fresh restore
+        recap = fg.capture_parity(guests[2].run)  # the reset sibling is a NEW session: recapture its bus and namespaces
+        res["after_reset_capture"] = {k: recap[k] for k in fg.BUS_REQUIRED + ("pid_ns",)}
+        res["bus_problems_after_reset"] = fg.bus_problems([res["siblings"]["1"]["capture"], recap], allow_same_id=True)
+        pre = res["siblings"]["2"]["capture"]
+        if recap["mnt_ns"]["out"] == pre["mnt_ns"]["out"] or recap["pid_ns"]["out"] == pre["pid_ns"]["out"]:
+            res["bus_problems_after_reset"].append("the reset sibling kept its old mount or PID namespace: it was not a fresh restore")
         res["state_bytes"] = {"checkpoint_images": res["checkpoint"]["meta"].get("image_bytes"), "checkpoint_layer_upper": res["checkpoint"]["layer_upper_bytes"],
                               **{f"sibling{s}_stage_upper": fg.state_bytes_report(sup, s, criu_friendly=True) for s in (1, 2)}}
         if d.get("task_eval"):
             res["task_eval"] = d["task_eval"](guests)
-        res["all_ok"] = all(v["pass"] for v in res["siblings"].values()) and not res["bus_problems"] and res["canaries"].get("pass", False)
+        res["all_ok"] = (all(v["pass"] for v in res["siblings"].values()) and not res["bus_problems"] and not res["bus_problems_after_reset"] and res["canaries"].get("pass", False))
     except Exception as e:
         res["error"] = f"{type(e).__name__}: {str(e)[:500]}"
         tails = criu_log_tails(ck if ck is not None else d.get("ck_for_logs") or _ck_from_disk(work))
@@ -244,6 +298,11 @@ def preflight(cfg, scope="config", deps=None):
             chk("host_dirs", False, f"{base} / {ov} must exist")
         crit = (d.get("criu_check") or _criu_check)()
         chk("host_criu_runnable", crit[0], crit[1])
+        try:
+            (d.get("pil_check") or (lambda: __import__("PIL")))()
+            chk("host_pil", True, "PIL is importable (screens are measured)")
+        except ImportError:
+            chk("host_pil", False, "PIL is missing: the screenshot comparison cannot be measured, so no restore could pass")
     return {"scope": scope, "checks": checks, "all_ok": all(c["ok"] for c in checks), "receipt": receipt,
             "scope_note": "OFFLINE config checks only" if scope == "config" else "host checks: image receipt (hash COMPUTED over the served qcow2), merged-root rootcheck with the stage-2 audit, CRIU binary",
             "command": "python -m drums_compare.criu_probe run --config CONFIG.json --out OUTDIR  (authorized host only, after `preflight --scope host` is ALL OK)"}

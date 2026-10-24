@@ -29,7 +29,11 @@ class World:
     """A fake host: per-slot guest state; checkpoint snapshots slot 0; restore copies the snapshot (or loses parts of it when asked)."""
 
     def __init__(self, lose=None, dump_fails=False):
-        self.slots, self.snap, self.lose, self.dump_fails, self.destroyed = {}, None, lose or [], dump_fails, []
+        self.slots, self.snap, self.lose, self.dump_fails, self.destroyed, self.n, self.keep_ns = {}, None, lose or [], dump_fails, [], 0, False
+
+    def fresh(self):
+        self.n += 1
+        return (f"mnt:[{1000 + (0 if self.keep_ns else self.n)}]", f"pid:[{2000 + (0 if self.keep_ns else self.n)}]")
 
 
 class FakeCk:
@@ -50,14 +54,16 @@ class FakeSup:
 
     def create(self, slot, from_checkpoint=None):
         if from_checkpoint is None:
-            self.w.slots[slot] = {"token": "tok1234567890123", "marker": None, "writer": [41], "gnome": [30], "canary": False, "ns": f"mnt:[{100 + slot}]", "dev": 60 + slot * 10, "x": 0}
+            ns, pns = self.w.fresh()
+            self.w.slots[slot] = {"token": "0123456789abcdef", "marker": None, "writer": [41], "gnome": [30], "canary": False, "ns": ns, "pns": pns, "dev": 60 + slot * 10, "x": 0}
         else:
             if self.w.dump_fails:
                 raise RuntimeError("restore refused")
             st = dict(self.w.snap)
             for k in self.w.lose:
                 st[k] = {"marker": None, "token": "", "writer": [], "gnome": []}[k]
-            st.update(ns=f"mnt:[{100 + slot}]", dev=60 + slot * 10, canary=False)
+            ns, pns = self.w.fresh()
+            st.update(ns=ns, pns=pns, dev=60 + slot * 10, canary=False)
             self.w.slots[slot] = st
         return {"ip": f"10.0.0.{slot}", "criu_restore_s": 0.5, "reseed_s": 0.2, "restore_total_s": 0.9}
 
@@ -94,14 +100,21 @@ class FakeGuest:
 
     def step(self, code):
         s = self.st()
+        ok = {"stdout": "", "stderr": "", "returncode": 0}
+        if self.fail_step and self.fail_step in code:
+            return {"stdout": "", "stderr": "boom", "returncode": 1}
         if "gate_holder" in code or ("socket" in code and "sendall" in code):
-            return
+            return ok
         if "probe_marker" in code:
             s["marker"] = code.split("write('")[1].split("'")[0]
         elif "canary_" in code and "Popen" in code:
             s["canary"] = True
         elif "canary_" in code and "write(" in code:
             s["cfile"] = True
+        return ok
+
+    fail_step = None
+    token_error = False
 
     def run(self, script):
         s, out, rc = self.st(), "", 0
@@ -111,6 +124,8 @@ class FakeGuest:
             s.pop("cfile", None)
         elif "create_connection" in script:
             out = s["token"]
+            if self.token_error:
+                return {"stdout": "ERROR RuntimeError", "stderr": "boom", "returncode": 1}
         elif "cat /tmp/probe_marker" in script:
             out = s["marker"] or ""
         elif "/proc/[0-9]*" in script and "soffice.bin" in script:
@@ -125,6 +140,8 @@ class FakeGuest:
             out = f"{s['dev']} 7"
         elif "readlink /proc/1/ns/mnt" in script:
             out = s["ns"]
+        elif "readlink /proc/1/ns/pid" in script:
+            out = s["pns"]
         elif "GetId" in script:
             out = f'method return\n   string "{ID}"'
         elif "ListActivatableNames" in script:
@@ -142,12 +159,26 @@ class FakeGuest:
         return self.resetter()
 
 
-def deps_for(tmp_path, world, shot_after=None):
+class Imgs:
+    """Fake screen metrics: identical bytes -> 0 change, different -> 1.0; colours settable (a blank desktop has few)."""
+    def __init__(self, colors=100, raises=False):
+        self.c, self.raises = colors, raises
+
+    def fraction(self, a, b):
+        if self.raises:
+            raise ImportError("No module named 'PIL'")
+        return 0.0 if a == b else 1.0
+
+    def colors(self, png):
+        return self.c
+
+
+def deps_for(tmp_path, world, shot_after=None, images=None):
     sup = FakeSup(world, str(tmp_path / "w"))
 
     def make(slot, resetter=None):
         return FakeGuest(world, slot, resetter, shot=shot_after if slot else None)
-    return {"build_drums": lambda cfg, work: (sup, object(), 0.5), "guest": make}, sup
+    return {"build_drums": lambda cfg, work: (sup, object(), 0.5), "guest": make, "images": images or Imgs()}, sup
 
 
 @pytest.fixture(autouse=True)
@@ -170,8 +201,9 @@ def test_the_probe_runs_the_whole_sequence_with_a_world_that_preserves_everythin
     assert res["criu_compatibility_claim"].startswith("NONE until") and res["label"] == "ARCHITECTURAL_NOT_FAIR_COMPARISON" and res["training_economics_claim"] is False
     for s in ("1", "2"):
         v = res["siblings"][s]
-        assert v["pass"] and v["same_token"] and v["marker_restored"] and v["writer_same_pids"] and v["gnome_shell_live_after"] and v["screenshot_changed_pixel_fraction"] == 0
-    assert res["bus_problems"] == [] and "SAME dbus-daemon state" in res["bus_clone_note"] and res["canaries"]["pass"]
+        assert v["pass"] and v["same_token"] and v["marker_restored"] and v["writer_same_pids"] and v["gnome_shell_live_after"] and v["screenshot_changed_pixel_fraction"] == 0 and v["screen_ok"]
+    assert res["bus_problems"] == [] and res["bus_problems_after_reset"] == [] and "SAME dbus-daemon state" in res["bus_clone_note"] and res["canaries"]["pass"]
+    assert res["after_reset_capture"]["mnt_ns"]["out"] and res["after_reset_capture"]["pid_ns"]["out"]
     c = res["clocks"]
     assert all(c[k] is not None for k in ("cold_setup", "parity_capture", "state_setup", "checkpoint_save", "restore", "reseed", "two_session_gate"))
     assert res["checkpoint"]["layer_upper_bytes"] == 77 and res["state_bytes"]["checkpoint_images"] == 1234
@@ -187,14 +219,97 @@ def test_a_restore_that_loses_state_fails_the_named_check(tmp_path, lose, field)
     assert rc == 1 and not res["all_ok"] and not res["siblings"]["1"][field] and not res["siblings"]["1"]["pass"]
 
 
-def test_a_changed_screen_is_measured_when_pil_exists_and_is_unmeasured_not_zero_when_it_does_not(tmp_path):
+def test_a_changed_blank_or_unmeasurable_screen_fails_the_sibling_even_when_everything_else_is_back(tmp_path):
     rc, res, sup = run(tmp_path, World(), shot_after=(250, 250, 250))
-    f = res["siblings"]["1"]["screenshot_changed_pixel_fraction"]
-    try:
-        import PIL  # noqa: F401
-        assert f > 0.9
-    except ImportError:
-        assert f is None and "PIL is not installed" in res["siblings"]["1"]["screenshot_diff_note"]
+    v = res["siblings"]["1"]
+    assert rc == 1 and v["same_token"] and v["marker_restored"] and v["writer_same_pids"] and v["screenshot_changed_pixel_fraction"] == 1.0 and not v["screen_ok"] and not v["pass"]  # a changed desktop
+    d, sup2 = deps_for(tmp_path / "b", World(), images=Imgs(colors=3))
+    (tmp_path / "b").mkdir()
+    out = tmp_path / "b" / "o"
+    out.mkdir()
+    cp.run_probe(dict(GOOD, work_dir=str(tmp_path / "b" / "w")), str(out), d)
+    blank = json.load(open(out / "criu_probe.json"))
+    assert not blank["all_ok"] and not blank["siblings"]["1"]["pass"] and not blank["siblings"]["1"]["screen_ok"] and blank["siblings"]["1"]["distinct_colors_after"] == 3  # a blank desktop never passes
+    d, sup3 = deps_for(tmp_path / "c", World(), images=Imgs(raises=True))
+    (tmp_path / "c").mkdir()
+    out = tmp_path / "c" / "o"
+    out.mkdir()
+    cp.run_probe(dict(GOOD, work_dir=str(tmp_path / "c" / "w")), str(out), d)
+    un = json.load(open(out / "criu_probe.json"))
+    v = un["siblings"]["1"]
+    assert not un["all_ok"] and v["screenshot_changed_pixel_fraction"] is None and "ImportError" in v["screenshot_diff_note"] and not v["screen_ok"] and not v["pass"]  # unmeasured is not a pass
+
+
+def test_a_restore_that_changes_the_writer_pids_fails_even_if_a_writer_is_live(tmp_path):
+    w = World()
+    d, sup = deps_for(tmp_path, w)
+    orig = sup.create
+
+    def create(slot, from_checkpoint=None):
+        r = orig(slot, from_checkpoint)
+        if from_checkpoint is not None:
+            w.slots[slot]["writer"] = [99]  # a Writer is live but it is not the one that was dumped
+        return r
+    sup.create = create
+    out = tmp_path / "o"
+    out.mkdir()
+    cp.run_probe(dict(GOOD, work_dir=str(tmp_path / "w")), str(out), d)
+    v = json.load(open(out / "criu_probe.json"))["siblings"]["1"]
+    assert v["writer_live_after"] and not v["writer_same_pids"] and not v["pass"]
+
+
+def test_the_token_must_be_a_valid_random_value_with_return_code_zero_and_an_error_text_never_matches_itself(tmp_path):
+    w = World()
+    sup = FakeSup(w, str(tmp_path))
+    sup.create(0)
+    g = FakeGuest(w, 0)
+    assert cp.ask_token(g) == ("0123456789abcdef", None)
+    g.token_error = True
+    tok, why = cp.ask_token(g)
+    assert tok is None and "rc 1" in why  # 'ERROR RuntimeError' is not a token
+    g.token_error = False
+    w.slots[0]["token"] = "ERROR RuntimeError"
+    assert cp.ask_token(g)[0] is None and "not a 16-hex" in cp.ask_token(g)[1]
+    w.slots[0]["token"] = "0123456789ABCDEF"
+    assert cp.ask_token(g)[0] is None  # uppercase / wrong alphabet
+    w.slots[0]["token"] = ""
+    assert cp.ask_token(g)[0] is None
+    # an error before AND after the restore must not make "same token" true
+    st = {"token": "ERROR RuntimeError", "marker": "m", "writer_pids": [41], "gnome_shell_pids": [30]}
+    sup.create(1)
+    g1 = FakeGuest(w, 1)
+    g1.token_error = True
+    before = fg.capture_parity(g1.run)
+    res, _ = cp.compare_sibling(g1, before, st, png((1, 2, 3)), images=Imgs())
+    assert res["same_token"] is False and res["raw_after"]["token"] is None and res["raw_after"]["token_error"]
+
+
+def test_setup_state_requires_every_launch_write_and_marker_to_succeed(tmp_path):
+    w = World()
+    sup = FakeSup(w, str(tmp_path))
+    sup.create(0)
+    for bad in ("probe_marker", "libreoffice", "gate_holder"):
+        g = FakeGuest(w, 0)
+        g.fail_step = bad
+        with pytest.raises(RuntimeError, match="failed"):
+            cp.setup_state(g)
+    ok = cp.setup_state(FakeGuest(w, 0))
+    assert TOKEN_OK(ok["token"]) and ok["marker"] and ok["writer_pids"] == [41]
+
+
+def TOKEN_OK(t):
+    return cp.TOKEN_RE.match(t) is not None
+
+
+def test_a_reset_sibling_that_kept_its_old_namespaces_or_buses_fails(tmp_path):
+    w = World()
+    w.keep_ns = False
+    rc, res, sup = run(tmp_path, w)
+    assert rc == 0 and res["bus_problems_after_reset"] == []
+    w2 = World()
+    w2.keep_ns = True  # every restore reports the same namespace ids: sibling buses and a "fresh" restore are indistinguishable
+    rc, res, sup = run(tmp_path / "x" if (tmp_path / "x").mkdir() is None else tmp_path, w2)
+    assert rc == 1 and not res["all_ok"] and (res["bus_problems"] or res["bus_problems_after_reset"])
 
 
 def test_a_failed_dump_keeps_the_raw_criu_error_and_names_the_blocker(tmp_path):
@@ -237,11 +352,15 @@ def test_preflight_scopes_enforce_exact_values_and_the_host_scope_needs_a_verifi
         open(dst, "w").write(open(os.path.join(S.PKG_DIR, "envd_linux", m)).read())
     cfg = dict(GOOD, drums_base_root=r, drums_template_overlay=t)
     good_receipt = {"verified": True, "problems": [], "computed_sha256": SHA, "image_path": "/i.qcow2", "nbd_device": "/dev/nbd0", "base_root": r}
-    deps = {"verify": lambda base, sha: good_receipt, "criu_check": lambda: (True, "ok")}
+    deps = {"verify": lambda base, sha: good_receipt, "criu_check": lambda: (True, "ok"), "pil_check": lambda: None}
     h = cp.preflight(cfg, "host", deps)
     assert h["all_ok"], [c for c in h["checks"] if not c["ok"]] and h["receipt"] == good_receipt
     assert not cp.preflight(cfg, "host", dict(deps, verify=lambda b, s: {"verified": False, "problems": ["the served image's sha256 is not the pinned"]}))["all_ok"]
     assert not cp.preflight(cfg, "host", dict(deps, criu_check=lambda: (False, "criu check failed")))["all_ok"]
+    def nopil():
+        raise ImportError("PIL")
+    assert not cp.preflight(cfg, "host", dict(deps, pil_check=nopil))["all_ok"]  # unmeasurable screens could never pass
+    assert any(c["name"] == "host_pil" for c in h["checks"])
     os.remove(os.path.join(t, S.PKG_DIR.lstrip("/"), "envd_linux", "session_init.py"))
     bad = cp.preflight(cfg, "host", deps)
     assert not bad["all_ok"] and any("stage-2" in c["detail"] for c in bad["checks"] if not c["ok"])
@@ -254,6 +373,13 @@ def test_run_refuses_without_a_host_scope_pass_and_the_receipt_reaches_the_super
     assert cp.main(["run", "--config", str(p), "--out", str(tmp_path / "o")]) == 1 and "HOST-scope preflight failed" in capsys.readouterr().out
     from drums_compare import stages
     assert stages.image_kw({}) == {} and stages.image_kw({"image_sha256": SHA, "image_receipt": {"verified": True}}) == {"image_sha256": SHA, "image_receipt": {"verified": True}}
+
+
+def test_the_guest_client_rejects_a_boolean_return_code_like_guestexec():
+    for bad in (True, False, "0", None):
+        g = cp.GuestHTTP(lambda: "x", http=lambda *a, bad=bad, **k: json.dumps({"status": "success", "output": "", "returncode": bad}).encode())
+        with pytest.raises(RuntimeError, match="/execute fault"):
+            g.run("x")
 
 
 def test_the_guest_client_uses_the_current_address_and_raises_on_a_fault():
