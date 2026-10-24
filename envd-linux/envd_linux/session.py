@@ -9,6 +9,7 @@ overlay of the whole root filesystem, a window manager."""
 
 import json
 import os
+import re
 import uuid
 import shutil
 import signal
@@ -85,10 +86,15 @@ class Supervisor:
                 raise ValueError("base_root other than / needs root_mode='full'")
             if criu_friendly or restore_from is not None:
                 raise ValueError("base_root other than / is incompatible with CRIU: the restore path assumes '/' as a lower layer")
+            for name, val in (("base_root", base_root), ("home", home), ("state_dir", state_dir), ("lower_home", lower_home or "/")):  # these reach overlayfs mount OPTIONS, where : , \\ and newlines are separators
+                if not (isinstance(val, str) and re.fullmatch(r"[A-Za-z0-9_./-]+", val)):
+                    raise ValueError(f"{name} {val!r} may use only letters, digits and _ . / - when base_root is not / (overlay options would otherwise be injectable)")
             if not os.path.isdir(base_root):
                 raise ValueError(f"base_root {base_root!r} is not a directory")
             if os.path.commonpath([os.path.abspath(state_dir), base_root]) in (base_root, os.path.abspath(state_dir)):
                 raise ValueError("base_root and the state directory must not contain one another (overlay layers cannot nest)")
+            if not osworld_real_kit:
+                raise ValueError("base_root other than / needs osworld_real_kit so that the python the session will run can be resolved and version-checked inside the new root before any mount")
             if osworld_real_kit:  # BEFORE any mount: would the programs the session starts exist inside the new root? (the host's kit and python 3.12 vanish at the pivot)
                 from . import rootcheck
                 found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit)

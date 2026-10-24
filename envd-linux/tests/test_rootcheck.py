@@ -1,5 +1,6 @@
 """The pre-mount userland check for a custom base root, on synthetic trees. No mounts."""
 import os
+import shutil
 
 import pytest
 
@@ -34,12 +35,15 @@ def image_root(tmp_path, with_py312=False, programs=("dbus-daemon", "wmctrl"), u
     return r
 
 
-def kit_layer(tmp_path, python_target="/usr/bin/python3.12", with_server=True):
+def kit_layer(tmp_path, python_target="/usr/bin/python3.12", with_server=True, venv_version="3.12.3"):
     t = str(tmp_path / "tpl")
     os.makedirs(t, exist_ok=True)
     if with_server:
         mk(t, "/opt/drums-osworld-real/server/main.py", "x = 1\n")
     mk(t, "/opt/drums-osworld-real/venv/bin/python", link=python_target)
+    if venv_version:
+        mk(t, "/opt/drums-osworld-real/venv/pyvenv.cfg", f"home = /usr/bin\nversion = {venv_version}\n")
+        os.makedirs(os.path.join(t, f"opt/drums-osworld-real/venv/lib/python{'.'.join(venv_version.split('.')[:2])}/site-packages"), exist_ok=True)
     return t
 
 
@@ -121,3 +125,30 @@ def test_the_supervisor_refuses_before_any_mount_when_the_new_root_cannot_run_th
     t = kit_layer(tmp_path, python_target="/usr/bin/python3.12")
     with pytest.raises(ValueError, match="kit's python"):
         S.Supervisor(str(tmp_path / "state2"), t, root_mode="full", base_root=r, osworld_real_kit=KIT, sweep_on_start=False)
+
+
+def test_a_312_kit_is_refused_in_a_310_guest_and_a_matching_kit_passes_with_no_mixing(tmp_path):
+    r = image_root(tmp_path, programs=("dbus-daemon", "wmctrl", "openbox"))
+    # the kit's interpreter link points at the root's own python3.10 but the venv was built for 3.12: its 3.12 site-packages must not be loaded by a 3.10 interpreter
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.12.3")
+    out = rc.check_userland([t, r], kit=KIT)
+    assert any("built for python 3.12" in p and "(3.10)" in p and "never mixed" in p for p in out["problems"]), out
+    t2 = str(tmp_path / "tpl2")
+    os.makedirs(t2)
+    mk(t2, "/opt/drums-osworld-real/server/main.py", "x = 1\n")
+    mk(t2, "/opt/drums-osworld-real/venv/bin/python", link="/usr/bin/python3.10")
+    mk(t2, "/opt/drums-osworld-real/venv/pyvenv.cfg", "version = 3.10.12\n")
+    os.makedirs(os.path.join(t2, "opt/drums-osworld-real/venv/lib/python3.10/site-packages"))
+    assert rc.check_userland([t2, r], kit=KIT)["problems"] == []
+    shutil.rmtree(os.path.join(t2, "opt/drums-osworld-real/venv/lib"))
+    assert any("site-packages" in p for p in rc.check_userland([t2, r], kit=KIT)["problems"])
+    os.remove(os.path.join(t2, "opt/drums-osworld-real/venv/pyvenv.cfg"))
+    assert any("pyvenv.cfg" in p for p in rc.check_userland([t2, r], kit=KIT)["problems"])
+
+
+def test_a_refused_construction_creates_no_state_directory(tmp_path):
+    r = image_root(tmp_path, programs=("dbus-daemon", "wmctrl", "openbox"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.12.3")
+    with pytest.raises(ValueError, match="built for python 3.12"):
+        S.Supervisor(str(tmp_path / "state3"), t, root_mode="full", base_root=r, osworld_real_kit=KIT, sweep_on_start=False)
+    assert not os.path.exists(tmp_path / "state3")

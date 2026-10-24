@@ -6,6 +6,7 @@ synthetic trees only. The required programs are read from `session_init.start_re
 
 import ast
 import os
+import re
 
 PATH_DIRS = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
 LOADER = "/lib64/ld-linux-x86-64.so.2"
@@ -84,6 +85,33 @@ def find_program(name, layers):
     return None
 
 
+def _minor(text):
+    m = re.search(r"(\d+)\.(\d+)", text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _python_minor_problems(kit, layers, interp):
+    """The kit's venv was built for ONE python minor (pyvenv.cfg `version`, lib/pythonX.Y); the interpreter it resolves to in the new root must be that minor, or 3.12 site-packages would be
+    loaded by a 3.10 guest. Nothing is converted or mixed: a mismatch is a refusal (rebuild the kit for the root's python in the template layer)."""
+    out, got = [], _minor(os.path.basename(interp).replace("python", ""))
+    cfg = resolve(f"{kit}/venv/pyvenv.cfg", layers)
+    if cfg is None:
+        return [f"the kit's {kit}/venv/pyvenv.cfg is not visible in the new root, so its python version cannot be checked"]
+    want = None
+    for line in open(os.path.join(cfg[0], cfg[1].lstrip("/")), errors="replace"):
+        k, _, v = line.partition("=")
+        if k.strip() in ("version", "version_info"):
+            want = _minor(v)
+    if want is None or got is None:
+        return [f"cannot read the python minor version (kit venv {want}, interpreter {interp}): refusing rather than guessing"]
+    if want != got:
+        out.append(f"the kit's venv was built for python {want[0]}.{want[1]} but its interpreter in the new root is {interp} ({got[0]}.{got[1]}): host site-packages are never mixed into a different python; rebuild the kit for the root's python in the template layer")
+    lib = resolve(f"{kit}/venv/lib/python{want[0]}.{want[1]}", layers)
+    if lib is None:
+        out.append(f"the kit's {kit}/venv/lib/python{want[0]}.{want[1]} (site-packages) is not visible in the new root")
+    return out
+
+
 def check_userland(layers, kit=None, programs=None, server_main_source=None):
     """{"problems": [...], "warnings": [...]}. Problems are things the session needs at start-up and would not find; warnings are per-task needs."""
     layers = [L for L in layers if L and os.path.isdir(L)]
@@ -104,6 +132,8 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None):
             problems.append(f"the kit's python ({py}) does not resolve in the new root (a missing file or a symlink to an interpreter the new root does not have, such as the host's /usr/bin/python3.12)")
         elif not os.access(os.path.join(r[0], r[1].lstrip("/")), os.X_OK):
             problems.append(f"the kit's python resolves to {r[1]} but it is not executable")
+        else:
+            problems += _python_minor_problems(kit, layers, r[1])
     if server_main_source:
         for prog in server_programs(server_main_source):
             if find_program(prog, layers) is None:

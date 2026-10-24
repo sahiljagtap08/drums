@@ -56,3 +56,20 @@ The cold-reset gates in `host_run gates` (0 before, 1 after the correct action, 
 ## 7. Cheapest honest next live step (owner-approved spend only)
 
 On one small host: run `mount_image_rootfs.sh`, then `matchprep` with the real image manifest and the host's full inventory; then one Drums session with `drums_base_root` set, the rename task through the existing cold gates, and the matchprep verdict. If the server or desktop software gap in section 6 appears, record it and stop; do not paper over it.
+
+## 8. Finite execution plan (answers "can we run the comparison now?")
+
+**No comparison is runnable today.** The mount script, the base-root plumbing and the Python-minor refusal are unit-tested with fakes and synthetic trees only: **no real image, device or mount has ever been exercised.** The 10/10 scripted rename run stays a harness/validity result; it is not a comparison and not training evidence.
+
+**Decision (choice 1 first, choice 2 only after it):**
+
+1. *Matched cold-reset on the small host* (stock Docker/KVM provider vs Drums, same task e0df059f). Worst case is the already-verified ≈0.53 USD (m7i.xlarge, one attempt, ≤2 h provision-to-terminate, 90+30 min), inside the original 100 credits + 10 tax. A small host has no `/dev/kvm`, so the stock arm would run without KVM; the run stays `NOT_A_COMPARISON` for timing unless the provider's own KVM check passes. It tests cold reset only and says nothing about live snapshots.
+2. *Original live-snapshot route* needs VirtualBox/VMware on bare metal (quota 96 allows one 96-vCPU metal instance; it is not a capacity guarantee). Run it only after (1) has produced a valid, labelled result. Worst case = hourly price READ from the Pricing API at launch time x the stage ceiling (3 h); that product is written into the stage file before launch, not assumed here.
+
+**"Boot the official VM as the host and run Drums root-full inside it"** is possible only as a guest under KVM on metal (an AMI import needs new IAM/S3 resources, which this plan does not create). It would make GNOME, user `user` and the 6.5 kernel of the VM native, but session_init hard-codes `openbox` and starts the desktop under a per-session Xvfb, so a GNOME shell in each session is NOT done. Minimum change that would make the task scope fair, unbuilt: run the pinned server under the image's own session programs (needs a nested-GNOME-or-equivalent decision after the identity check below); until then the desktop differs and the report must say so. A mutter library or package is never a substitute for GNOME and is never described as equivalent.
+
+**Finite real validation, before any timing (small host, one attempt):**
+- Inputs: the pinned image mounted read-only by `mount_image_rootfs.sh`; a kit rebuilt for the image's Python 3.10 inside the owner-prepared `drums_template_overlay`; `rootcheck` clean (programs, loader, kit python, pyvenv minor, site-packages).
+- Checks, in order, each a hard stop on failure: (1) mount verified read-only (script's own checks); (2) Supervisor constructs; (3) one session boots to a screenshot; (4) identity: `gnome-shell --version` binary present in the image (42.9 expected) AND the live session's actual window manager/shell name recorded from the running session. If the running desktop is not GNOME, record `desktop: not matched` and stop timing claims.
+- Stop conditions: any failed check, ≥90 min elapsed, ≥0.80 USD accrued, or two consecutive boot failures. Raw failures are kept; a failed validation is published.
+- Unvalidated until then: the new mount fix against a real nbd device, overlay behaviour on an ext4 `noload` image root, and the kit under 3.10.

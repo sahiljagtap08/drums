@@ -56,3 +56,22 @@ def test_the_session_command_line_passes_the_home_and_the_base_root_to_the_init(
     assert 'info = {"epoch": self._epochs[slot], "display": n, "init_pid": kids[0], "home": self.home' in src
     assert 'if self.base_root == "/":' in src and "os.makedirs(self.home, exist_ok=True)" in src
     assert '"--base-root"' in open(SI.__file__).read() and "compose_lower(a.lower, a.base_root)" in open(SI.__file__).read()
+
+
+def test_paths_that_reach_overlay_options_are_restricted_and_a_kit_is_required_for_another_base_root(tmp_path):
+    img = tmp_path / "image-root"
+    img.mkdir()
+    ok = dict(root_mode="full", base_root=str(img))
+    with pytest.raises(ValueError, match="needs osworld_real_kit"):
+        sup(tmp_path, **ok)
+    for bad in ("/tmp/a:b", "/tmp/a,b", "/tmp/a\nb", "/tmp/a b", "/tmp/a\\b", "/tmp/a\x00b"):
+        with pytest.raises(ValueError, match="base_root .* may use only"):
+            sup(tmp_path, root_mode="full", base_root=bad, osworld_real_kit="/opt/k")
+    with pytest.raises(ValueError, match="home .* may use only"):
+        sup(tmp_path, home="/home/a:b", osworld_real_kit="/opt/k", **ok)
+    with pytest.raises(ValueError, match="state_dir .* may use only"):
+        S.Supervisor(str(tmp_path / "st,ate"), str(tmp_path / "tpl"), osworld_real_kit="/opt/k", sweep_on_start=False, **ok)
+    with pytest.raises(ValueError, match="lower_home .* may use only"):
+        S.Supervisor(str(tmp_path / "state"), str(tmp_path / "t:pl"), osworld_real_kit="/opt/k", sweep_on_start=False, **ok)
+    assert not os.path.exists(tmp_path / "state") and not os.path.exists(tmp_path / "st,ate")
+    assert sup(tmp_path, home="/home/a:b").home == "/home/a:b"  # the default base root "/" keeps the old behaviour untouched
