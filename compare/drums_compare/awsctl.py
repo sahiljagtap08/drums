@@ -11,7 +11,10 @@ CONTROLS (each a design property with a stated failure mode in docs/aws-incumben
   * Exactly the approved ACCOUNT (463186160490) and never root: every command checks the caller identity's account number, not only that it is non-root.
   * ONE benchmark host at most, across run ids: launch refuses if ANY non-terminated instance exists in the region (unless the approval lists it as a known other instance)
     or any leftover volume or address tagged drums-bench=true exists. A new run id cannot bypass it.
-  * An independent WATCHER must be armed first: `watch` waits while nothing is owned (it does not exit), writes a heartbeat receipt, expires if no launch happens within
+  * DEADLINE MODE (explicit in the approval): "managed" = an AWS-managed one-time EventBridge Scheduler schedule (universal target ec2:terminateInstances, auto-deleted) created and
+    READ BACK immediately after the instance exists, with the host's own `shutdown -h +N` as the stop that starts at boot, so there is never a window without a stop; if the schedule cannot
+    be created or does not read back exactly, the instance is terminated at once. "watcher" = the external watcher below. awsctl never creates IAM roles or touches IAM.
+  * (watcher mode) An independent WATCHER must be armed first: `watch` waits while nothing is owned (it does not exit), writes a heartbeat receipt, expires if no launch happens within
     `watch_arm_timeout_s`, and keeps watching after launch. `launch --execute` refuses without a fresh receipt from a watcher started with --execute (one that can terminate).
   * The AMI is DESCRIBED and its real root device name is mapped (never a hard-coded one); extra mapped devices, a foreign owner or a Marketplace product code refuse the launch;
     the approved disk is a whole number of GiB within the stage's cap.
@@ -29,6 +32,7 @@ import ipaddress
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -40,7 +44,7 @@ STAGES = {"docker_kvm_small": {"types": ("m7i.xlarge",), "vcpu": 4, "max_hours":
 ALLOWED_TYPES = tuple(t for st in STAGES.values() for t in st["types"])
 REGION = "us-east-1"
 REQUIRED = ("run_id", "approved_by", "account_id", "stage", "quota_standard_vcpu_asserted", "instance_type", "region", "ceiling_hours", "stop_margin_hours", "budget_cap_usd", "hourly_usd", "ebs_gb", "ebs_usd_per_gb_month",
-            "public_ipv4_usd_per_hour", "transfer_out_gb", "transfer_usd_per_gb", "ssh_cidr", "key_name", "subnet_id", "security_group_id", "image_id", "ami_owner_id", "profile", "approved")
+            "public_ipv4_usd_per_hour", "transfer_out_gb", "transfer_usd_per_gb", "ssh_cidr", "key_name", "subnet_id", "security_group_id", "image_id", "ami_owner_id", "deadline_mode", "profile", "approved")
 POSITIVE = ("ceiling_hours", "stop_margin_hours", "budget_cap_usd", "hourly_usd", "ebs_gb", "ebs_usd_per_gb_month", "public_ipv4_usd_per_hour", "transfer_usd_per_gb")
 NONNEGATIVE = ("transfer_out_gb",)
 LIVE_STATES = "pending,running,stopping,stopped,shutting-down"
@@ -49,6 +53,16 @@ TAG_ALL = "drums-bench"
 
 class Refusal(Exception):
     pass
+
+
+class LaunchAborted(Exception):
+    """The instance was created but the managed deadline could not be proven; termination was attempted at once."""
+
+
+SCHEDULE_PREFIX = "drums-term-"
+SCHEDULER_TARGET = "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances"  # the universal target
+ROLE_ARN_RE = re.compile(r"^arn:aws:iam::%s:role/[A-Za-z0-9+=,.@_-]{1,64}$" % APPROVED_ACCOUNT)
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,50}$")
 
 
 def finite(x):
@@ -62,6 +76,8 @@ def bill(a):
              "ebs_volume": a["ebs_gb"] * a["ebs_usd_per_gb_month"] * hours / 730.0,
              "public_ipv4_address": a["public_ipv4_usd_per_hour"] * hours,
              "data_transfer_out": a["transfer_out_gb"] * a["transfer_usd_per_gb"]}
+    if a.get("deadline_mode") == "managed":  # priced at the paid unit rate with NO free-tier deduction (the account's free usage is unknown): never a free-of-charge assumption
+        items["eventbridge_scheduler"] = a.get("scheduler_invocations", 1) * a["scheduler_usd_per_million"] / 1e6
     return {"billed_hours_worst_case": hours, "items_usd": items, "worst_case_usd": sum(items.values()),
             "not_included": ["taxes", "AWS Support plan charges", "any resource not tagged to this run", "price changes", "EBS snapshots (none are taken)", "any quota-request or Marketplace charge"],
             "note": "a runtime ceiling is not a hard dollar cap; the figure holds only if the in-host shutdown or the external watcher works"}
@@ -78,6 +94,17 @@ def validate(a):
     for k in POSITIVE + NONNEGATIVE:
         if not finite(a[k]) or (a[k] <= 0 if k in POSITIVE else a[k] < 0):
             raise Refusal(f"approval.{k}={a[k]!r} must be a finite number " + ("greater than zero" if k in POSITIVE else "not below zero"))
+    if not isinstance(a["run_id"], str) or not RUN_ID_RE.match(a["run_id"]):
+        raise Refusal("run_id must be 1 to 50 characters from A-Z a-z 0-9 . _ - (it names tags and the schedule)")
+    if a["deadline_mode"] not in ("watcher", "managed"):
+        raise Refusal("deadline_mode must be 'watcher' or 'managed'")
+    if a["deadline_mode"] == "managed":
+        if not isinstance(a.get("deadline_role_arn"), str) or not ROLE_ARN_RE.match(a["deadline_role_arn"]):
+            raise Refusal(f"deadline_role_arn must be an IAM role ARN in exactly account {APPROVED_ACCOUNT} (the owner creates the role; awsctl never does)")
+        if not finite(a.get("scheduler_usd_per_million")) or a["scheduler_usd_per_million"] <= 0:
+            raise Refusal("scheduler_usd_per_million must be a finite price above zero (a paid unit rate, no free-tier assumption)")
+        if isinstance(a.get("scheduler_invocations", 1), bool) or not isinstance(a.get("scheduler_invocations", 1), int) or a.get("scheduler_invocations", 1) < 1:
+            raise Refusal("scheduler_invocations must be a whole number of at least 1")
     st = STAGES.get(a["stage"])
     if st is None:
         raise Refusal(f"stage {a['stage']!r} is not one of {sorted(STAGES)}")
@@ -205,13 +232,15 @@ DEADMAN_S = 600
 
 
 def user_data(a):
-    """Two independent in-host stops. (1) the ceiling: `shutdown -h +N`. (2) a DEAD-MAN's switch: the external watcher tags the instance `drums-watch-beat=<epoch>` every beat; this
-    script reads that tag from the instance metadata service (no credentials needed, `InstanceMetadataTags=enabled`) every minute and shuts the host down if the beat is older than
-    DEADMAN_S, so a dead watcher is fail-safe toward cost (the run is lost, the bill stops). Instance-initiated shutdown behaviour is TERMINATE. Failure modes: a tag API throttle
-    or an IMDS fault shuts the host down early; a root user on the host can still cancel both timers."""
-    return f"""#!/bin/bash
-shutdown -h +{int(a['ceiling_hours'] * 60)}
-cat >/usr/local/bin/drums-deadman <<'DEADMAN'
+    """In-host stops. ALWAYS (1) the ceiling: `shutdown -h +N`, which starts at boot and so covers the gap before any API-side deadline exists. In WATCHER mode also (2) a DEAD-MAN's
+    switch: the external watcher tags the instance `drums-watch-beat=<epoch>`; this script reads that tag from the instance metadata service (no credentials needed,
+    `InstanceMetadataTags=enabled`) every minute and shuts the host down if the beat is older than DEADMAN_S. In MANAGED mode no watcher exists, so the dead-man is NOT installed
+    (it would shut the host down for want of a beat); the AWS-managed schedule is the second stop. Instance-initiated shutdown behaviour is TERMINATE. Failure modes: in watcher mode a tag
+    API throttle or an IMDS fault shuts the host down early; a root user on the host can cancel the timers."""
+    ceiling = f"#!/bin/bash\nshutdown -h +{int(a['ceiling_hours'] * 60)}\n"
+    if a.get("deadline_mode") == "managed":
+        return ceiling
+    return ceiling + f"""cat >/usr/local/bin/drums-deadman <<'DEADMAN'
 #!/bin/bash
 T=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token)
 B=$(curl -s -H "X-aws-ec2-metadata-token: $T" http://169.254.169.254/latest/meta-data/tags/instance/drums-watch-beat)
@@ -233,9 +262,88 @@ def dry_run_verdict(rc, out, err):
     return "UNKNOWN"
 
 
+def schedule_name(a):
+    return SCHEDULE_PREFIX + a["run_id"]
+
+
+def schedule_expression(deadline):
+    return time.strftime("at(%Y-%m-%dT%H:%M:%S)", time.gmtime(deadline))
+
+
+def scheduler_role_documents(a):
+    """The exact least-privilege documents the OWNER would create (awsctl never calls IAM): a trust policy for EventBridge Scheduler pinned to this account and to schedules of this
+    prefix (confused-deputy conditions), and a permission policy of ONE action on instances in this account and region that carry the benchmark tag. Plus what the LAUNCHING identity needs."""
+    acct, region = APPROVED_ACCOUNT, REGION
+    trust = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "scheduler.amazonaws.com"}, "Action": "sts:AssumeRole",
+                                                     "Condition": {"StringEquals": {"aws:SourceAccount": acct}, "ArnLike": {"aws:SourceArn": f"arn:aws:scheduler:{region}:{acct}:schedule/default/{SCHEDULE_PREFIX}*"}}}]}
+    perm = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "ec2:TerminateInstances", "Resource": f"arn:aws:ec2:{region}:{acct}:instance/*",
+                                                    "Condition": {"StringEquals": {f"ec2:ResourceTag/{TAG_ALL}": "true"}}}]}
+    launcher = {"scheduler": [f"scheduler:CreateSchedule", "scheduler:GetSchedule", "scheduler:DeleteSchedule"], "scheduler_resource": f"arn:aws:scheduler:{region}:{acct}:schedule/default/{SCHEDULE_PREFIX}*",
+                "iam:PassRole": {"resource": a.get("deadline_role_arn", f"arn:aws:iam::{acct}:role/<the role>"), "condition": {"StringEquals": {"iam:PassedToService": "scheduler.amazonaws.com"}}},
+                "note": "documentation of what the launching identity would need; nothing here grants or assumes it, and its absence makes create-schedule fail, which terminates the instance"}
+    return {"role_trust_policy": trust, "role_permission_policy": perm, "launching_identity_needs": launcher}
+
+
+def schedule_create_args(a, instance_id, deadline):
+    target = {"Arn": SCHEDULER_TARGET, "RoleArn": a["deadline_role_arn"], "Input": json.dumps({"InstanceIds": [instance_id]}, separators=(",", ":")),
+              "RetryPolicy": {"MaximumRetryAttempts": 3, "MaximumEventAgeInSeconds": 3600}}
+    return ["scheduler", "create-schedule", "--name", schedule_name(a), "--group-name", "default", "--schedule-expression", schedule_expression(deadline),
+            "--schedule-expression-timezone", "UTC", "--flexible-time-window", "Mode=OFF", "--action-after-completion", "DELETE", "--state", "ENABLED",
+            "--description", f"drums run {a['run_id']}: terminate the benchmark host at its deadline", "--target", json.dumps(target, separators=(",", ":"))]
+
+
+def verify_schedule(aws, a, instance_id, deadline):
+    """Read the schedule back and require EXACTLY what was asked: enabled, the one-time expression in UTC, the universal terminate target, the approved role, one instance id, no flexible
+    window, auto-delete. Anything else is a failed deadline."""
+    g = aws("scheduler", "get-schedule", "--name", schedule_name(a), "--group-name", "default")
+    t = g.get("Target", {})
+    try:
+        ids = json.loads(t.get("Input", "{}")).get("InstanceIds")
+    except ValueError:
+        ids = None
+    bad = []
+    if g.get("State") != "ENABLED":
+        bad.append(f"state {g.get('State')!r}")
+    if g.get("ScheduleExpression") != schedule_expression(deadline):
+        bad.append(f"expression {g.get('ScheduleExpression')!r}")
+    if g.get("ScheduleExpressionTimezone", "UTC") != "UTC":
+        bad.append("timezone")
+    if t.get("Arn") != SCHEDULER_TARGET:
+        bad.append(f"target {t.get('Arn')!r}")
+    if t.get("RoleArn") != a["deadline_role_arn"]:
+        bad.append(f"role {t.get('RoleArn')!r}")
+    if ids != [instance_id]:
+        bad.append(f"instance ids {ids!r}")
+    if g.get("FlexibleTimeWindow", {}).get("Mode") != "OFF":
+        bad.append("flexible window")
+    if g.get("ActionAfterCompletion") != "DELETE":
+        bad.append(f"action after completion {g.get('ActionAfterCompletion')!r}")
+    if bad:
+        raise RuntimeError("schedule readback differs: " + "; ".join(bad))
+    return {"name": schedule_name(a), "expression": g["ScheduleExpression"], "target": t["Arn"], "role": t["RoleArn"], "instance_ids": ids}
+
+
+def abort_launch(aws, instance_id, reason):
+    ok = True
+    try:
+        aws("ec2", "terminate-instances", "--instance-ids", instance_id)
+    except Exception as e:  # noqa: BLE001 - reported, never swallowed
+        ok = False
+        reason += f"; ALSO the immediate terminate-instances failed ({str(e)[:120]}): the host's own shutdown timer is then the only remaining stop"
+    return LaunchAborted(f"instance {instance_id} was created but its deadline could not be proven ({reason}); terminate-instances was {'issued' if ok else 'NOT accepted'}")
+
+
+def schedule_exists(aws, a):
+    rc, out, err = aws.raw("scheduler", "get-schedule", "--name", schedule_name(a), "--group-name", "default")
+    if rc == 0:
+        return True
+    return False if "ResourceNotFoundException" in (err or "") else None  # None = could not tell
+
+
 def inspect_image(aws, a):
     """The AMI is DESCRIBED before launch, never assumed: owner as stated, x86_64 HVM Linux, EBS-rooted, available, no Marketplace product code, and its block device mappings are exactly
-    the root device plus any device the owner approved BY NAME. Returns the real root device name (the launch maps THAT name, never a hard-coded /dev/sda1) and its snapshot size."""
+    the root device plus any device the owner approved BY NAME. Returns the real root device name (the launch maps THAT name, never a hard-coded /dev/sda1) and its snapshot size. Non-EBS (ephemeral) mappings, which the official Canonical AMI carries as
+    /dev/sdb and /dev/sdc, are suppressed with NoDevice in the launch; an extra EBS device always refuses."""
     imgs = aws("ec2", "describe-images", "--image-ids", a["image_id"])["Images"]
     if len(imgs) != 1:
         raise Refusal(f"AMI {a['image_id']} was not found in {REGION}")
@@ -250,16 +358,18 @@ def inspect_image(aws, a):
     maps = {m["DeviceName"]: m for m in im.get("BlockDeviceMappings", [])}
     if root not in maps or "Ebs" not in maps[root]:
         raise Refusal(f"the AMI's root device {root!r} has no EBS mapping")
-    extra = sorted(set(maps) - {root} - set(a.get("approved_extra_devices", [])))
-    if extra:
-        raise Refusal(f"the AMI maps additional devices {extra} that no manifest approves (they would be extra untracked volumes or bill); list them in approved_extra_devices only if deliberate")
+    others = {n: m for n, m in maps.items() if n != root}
+    extra_ebs = sorted(n for n, m in others.items() if "Ebs" in m)
+    if extra_ebs:
+        raise Refusal(f"the AMI maps additional EBS devices {extra_ebs}: they would be extra volumes and bill, and none is approvable; use another AMI")
+    suppress = sorted(n for n, m in others.items() if "Ebs" not in m)  # instance-store (ephemeral) mappings: the instance types here are EBS-only, so each is suppressed with NoDevice
     snap_gb = maps[root]["Ebs"].get("VolumeSize") or 0
     if a["ebs_gb"] < snap_gb:
         raise Refusal(f"approved ebs_gb {a['ebs_gb']} is below the AMI's own root size {snap_gb}")
-    return {"root_device": root, "ami_root_gb": snap_gb, "owner": im.get("OwnerId"), "name": im.get("Name")}
+    return {"root_device": root, "ami_root_gb": snap_gb, "owner": im.get("OwnerId"), "name": im.get("Name"), "suppress_devices": suppress}
 
 
-def run_instances_args(a, deadline, root_device):
+def run_instances_args(a, deadline, root_device, suppress=()):
     """ONE --tag-specifications flag with BOTH specifications as its values: the AWS CLI replaces an earlier occurrence of a list option with a later one, so repeating the flag
     would silently drop the instance tags (and leave the watcher blind). The root mapping uses the AMI's real device name and nothing else."""
     inst_tags = "ResourceType=instance,Tags=[{Key=drums-run,Value=%s},{Key=%s,Value=true},{Key=drums-deadline,Value=%d}]" % (a["run_id"], TAG_ALL, deadline)
@@ -267,7 +377,7 @@ def run_instances_args(a, deadline, root_device):
     args = ["ec2", "run-instances", "--image-id", a["image_id"], "--instance-type", a["instance_type"], "--count", "1", "--key-name", a["key_name"],
             "--subnet-id", a["subnet_id"], "--security-group-ids", a["security_group_id"], "--associate-public-ip-address",
             "--instance-initiated-shutdown-behavior", "terminate", "--metadata-options", "HttpTokens=required,HttpEndpoint=enabled,InstanceMetadataTags=enabled",
-            "--block-device-mappings", json.dumps([{"DeviceName": root_device, "Ebs": {"VolumeSize": a["ebs_gb"], "VolumeType": "gp3", "DeleteOnTermination": True}}]),
+            "--block-device-mappings", json.dumps([{"DeviceName": root_device, "Ebs": {"VolumeSize": a["ebs_gb"], "VolumeType": "gp3", "DeleteOnTermination": True}}] + [{"DeviceName": n, "NoDevice": ""} for n in suppress]),
             "--tag-specifications", inst_tags, vol_tags, "--user-data", user_data(a)]
     if a.get("cpu_options"):  # e.g. a nested-virtualization option, copied by the owner from the live describe-instance-types result; never assumed here
         args += ["--cpu-options", a["cpu_options"]]
@@ -282,10 +392,10 @@ def launch(aws, a, execute=False, now=time.time, receipt=None):
     if owned_now["instances"]:
         raise Refusal(f"one host maximum: {[i['InstanceId'] for i in owned_now['instances']]} already exists for run {a['run_id']}")
     sg = inspect_security_group(aws, a)
-    rc_ = check_receipt(receipt, a, now) if execute else None
+    rc_ = check_receipt(receipt, a, now) if (execute and a["deadline_mode"] == "watcher") else None
     deadline = int(now() + a["ceiling_hours"] * 3600)
     image = inspect_image(aws, a)
-    args = run_instances_args(a, deadline, image["root_device"])
+    args = run_instances_args(a, deadline, image["root_device"], image["suppress_devices"])
     verdict = dry_run_verdict(*aws.raw(*args, "--dry-run"))
     base = {"bill": b, "deadline_epoch": deadline, "dry_run_verdict": verdict, "security_group": sg, "inventory": inv, "image": image}
     if not execute:
@@ -293,7 +403,17 @@ def launch(aws, a, execute=False, now=time.time, receipt=None):
     if verdict != "allowed":
         raise Refusal(f"the dry run verdict is {verdict}: launch is not authorized for this identity (nothing was created)")
     out = aws(*args)
-    return {"executed": True, "instance_id": out["Instances"][0]["InstanceId"], "watcher": {k: rc_.get(k) for k in ("state", "last_beat", "armed_at")}, **base}
+    iid = out["Instances"][0]["InstanceId"]
+    deadline_info = {"mode": a["deadline_mode"], "in_host_ceiling_minutes": int(a["ceiling_hours"] * 60)}
+    if a["deadline_mode"] == "managed":
+        try:
+            aws(*schedule_create_args(a, iid, deadline))
+            deadline_info["schedule"] = verify_schedule(aws, a, iid, deadline)
+        except Exception as e:  # noqa: BLE001 - any failure to create or prove the deadline terminates the instance now
+            raise abort_launch(aws, iid, f"{type(e).__name__}: {str(e)[:200]}")
+    else:
+        deadline_info["watcher"] = {k: rc_.get(k) for k in ("state", "last_beat", "armed_at")}
+    return {"executed": True, "instance_id": iid, "deadline": deadline_info, **base}
 
 
 def status(aws, a, now=time.time, receipt=None):
@@ -303,6 +423,8 @@ def status(aws, a, now=time.time, receipt=None):
         dl = next((int(t["Value"]) for t in i.get("Tags", []) if t["Key"] == "drums-deadline"), None)
         rows.append({"id": i["InstanceId"], "state": i["State"]["Name"], "past_deadline": bool(dl and now() > dl), "deadline_epoch": dl, "launch_time": i.get("LaunchTime")})
     out = {"instances": rows, "volumes": [v["VolumeId"] for v in o["volumes"]], "addresses": [x.get("AllocationId") for x in o["addresses"]], "more_than_one_host": len(rows) > 1}
+    if a.get("deadline_mode") == "managed":
+        out["deadline_schedule_exists"] = schedule_exists(aws, a)
     if receipt and os.path.exists(receipt):
         r = json.load(open(receipt))
         out["watcher"] = {"state": r.get("state"), "heartbeat_age_s": int(now() - r.get("last_beat", 0)), "stale": now() - r.get("last_beat", 0) > 3 * r.get("interval_s", 60)}
@@ -321,6 +443,11 @@ def teardown(aws, a, execute=False, sleep=time.sleep, tries=60):
             if not owned(aws, a["run_id"])["instances"]:
                 break
             sleep(10)
+    sched = None
+    if a.get("deadline_mode") == "managed":  # the one-time schedule deletes itself after it fires; if the teardown came first it is deleted here, and its absence is verified
+        if schedule_exists(aws, a) is not False:
+            aws("scheduler", "delete-schedule", "--name", schedule_name(a), "--group-name", "default", check=False)
+        sched = schedule_exists(aws, a)
     after = owned(aws, a["run_id"])
     for v in after["volumes"]:
         if not v.get("Attachments"):
@@ -328,8 +455,11 @@ def teardown(aws, a, execute=False, sleep=time.sleep, tries=60):
     for x in after["addresses"]:
         aws("ec2", "release-address", "--allocation-id", x["AllocationId"], check=False)
     final = owned(aws, a["run_id"])
+    resources_gone = not (final["instances"] or final["volumes"] or final["addresses"])
+    schedule_ok = a.get("deadline_mode") != "managed" or sched is False  # an unknown schedule state (None) is never reported clean
     return {"executed": True, "plan": plan, "remaining": {"instances": [i["InstanceId"] for i in final["instances"]], "volumes": [v["VolumeId"] for v in final["volumes"]],
-                                                         "addresses": [x["AllocationId"] for x in final["addresses"]]}, "clean": not (final["instances"] or final["volumes"] or final["addresses"])}
+                                                         "addresses": [x["AllocationId"] for x in final["addresses"]], "deadline_schedule_exists": sched},
+            "clean": resources_gone and schedule_ok}
 
 
 def watch(aws, a, execute=False, interval=60, now=time.time, sleep=time.sleep, max_iters=None, receipt=None, arm_timeout_s=None):
@@ -386,7 +516,11 @@ def main(argv=None):
     ap_ = json.load(open(a.approval))
     try:
         if a.cmd == "plan":
-            print(json.dumps({"bill": validate(ap_)}, indent=1))
+            out = {"bill": validate(ap_)}
+            if ap_["deadline_mode"] == "managed":
+                out["managed_deadline"] = {"schedule_name": schedule_name(ap_), "schedule_target": SCHEDULER_TARGET, "documents_for_the_owner_to_create": scheduler_role_documents(ap_),
+                                           "note": "awsctl creates no role; the role, its policies and the launching identity's permissions are separate owner approvals"}
+            print(json.dumps(out, indent=1))
             return 0
         validate(ap_)
         aws = Aws(ap_["profile"], ap_["region"])
@@ -398,6 +532,9 @@ def main(argv=None):
     except Refusal as e:
         print(f"REFUSED: {e}")
         return 2
+    except LaunchAborted as e:
+        print(f"LAUNCH ABORTED: {e}")
+        return 3
 
 
 if __name__ == "__main__":

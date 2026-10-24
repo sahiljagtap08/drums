@@ -1,5 +1,5 @@
 {
-  "_comment": "EXAMPLE ONLY. incumbent docker_kvm = the small stage: STOCK OSWorld Docker provider (QEMU/KVM in a container, pinned image digest), COLD RESET on both arms (the provider cannot snapshot; none is claimed). 4 CPU and 4 GiB per guest, arms strictly sequential, nested virtualization (timings are not bare metal). qcow2_bytes and qcow2_sha256 come from fetch_docker_image.sh.",
+  "_comment": "EXAMPLE ONLY. incumbent docker_kvm = the small stage: STOCK OSWorld Docker provider (QEMU/KVM in a container, pinned image digest), COLD RESET on both arms (the provider cannot snapshot; none is claimed). 4 CPU and 4 GiB per guest, arms strictly sequential, nested virtualization (timings are not bare metal). qcow2_bytes is the pinned artifact's uncompressed member size (24,460,197,888, from the zip directory); qcow2_sha256 can only come from fetch_docker_image.sh after extraction.",
   "mode": "architecture_measurement",
   "incumbent": "docker_kvm",
   "host_kind": "nested_kvm",
@@ -31,7 +31,7 @@
   "max_runtime_cap_s": 3600,
   "external_watcher_confirmed_by": "OWNER: name of the person who started awsctl watch",
   "qcow2": "/opt/vm-image/Ubuntu.qcow2",
-  "qcow2_bytes": "OWNER: from fetch_docker_image.sh",
+  "qcow2_bytes": 24460197888,
   "qcow2_sha256": "OWNER: from fetch_docker_image.sh",
   "docker_image_digest": "sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9",
   "verify_sha256": true

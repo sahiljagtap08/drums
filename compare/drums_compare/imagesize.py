@@ -2,16 +2,28 @@
 compressed size and the true UNCOMPRESSED size of every member, plus the server's checksum header. Owner-run BEFORE approval, from any machine that can reach the source; it is a
 metadata read, not an image download, and it never touches AWS.
 
-    python -m drums_compare.imagesize https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip
+    python -m drums_compare.imagesize [url]      # default: the commit-pinned URL in KNOWN_ARTIFACT
 
 The disk budget is then arithmetic over MEASURED numbers plus clearly named ALLOWANCES for what cannot be measured beforehand (never presented as measurements)."""
 
 import json
 import math
+import re
 import struct
 import sys
 import urllib.request
 
+MAX_RANGE = 16 << 20  # no single range read may exceed this; the central directory of the known artifact is 102 bytes
+# The artifact the small stage is pinned to: the repository COMMIT in the URL (never the mutable `main`), the exact bytes, and the LFS sha256 of the zip. Read by the independent review
+# through this tool's range read (end 131072 bytes and a 102-byte central directory, both answered 206) and cross-checked against the LFS pointer file.
+KNOWN_ARTIFACT = {
+    "commit": "a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133",
+    "url": "https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133/Ubuntu.qcow2.zip",
+    "zip_bytes": 12273896463,
+    "zip_sha256": "b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712",
+    "member": "Ubuntu.qcow2", "member_compressed_bytes": 12273896173, "member_uncompressed_bytes": 24460197888,
+    "central_directory": {"offset": 12273896263, "size": 102, "entries": 1},
+}
 EOCD, EOCD64, LOC64, CDFH = 0x06054B50, 0x06064B50, 0x07064B50, 0x02014B50
 
 
@@ -57,12 +69,32 @@ def parse_central_directory(cd):
     return out
 
 
+def check_known(result, known=KNOWN_ARTIFACT):
+    """Mismatches between a sizing result and the pinned artifact (empty list = identical bytes and layout)."""
+    bad = []
+    if result["url"] != known["url"]:
+        bad.append(f"url {result['url']} is not the commit-pinned {known['url']}")
+    if result["zip_bytes"] != known["zip_bytes"]:
+        bad.append(f"zip bytes {result['zip_bytes']} != {known['zip_bytes']}")
+    m = {x["name"]: x for x in result["members"]}.get(known["member"])
+    if m is None or len(result["members"]) != 1:
+        bad.append(f"members {[x['name'] for x in result['members']]} are not exactly [{known['member']!r}]")
+    else:
+        if m["uncompressed"] != known["member_uncompressed_bytes"]:
+            bad.append(f"uncompressed {m['uncompressed']} != {known['member_uncompressed_bytes']}")
+        if m["compressed"] != known["member_compressed_bytes"]:
+            bad.append(f"compressed {m['compressed']} != {known['member_compressed_bytes']}")
+    return bad
+
+
 def sizing(url, head, fetch, tail_bytes=1 << 17):
     """`head(url) -> {'size': int, headers...}`; `fetch(url, start, end) -> bytes` (inclusive range)."""
     h = head(url)
     size = h["size"]
     tail = fetch(url, max(0, size - tail_bytes), size - 1)
     cd_off, cd_size, entries = parse_tail(tail)
+    if cd_size > MAX_RANGE or cd_size <= 0:
+        raise ValueError(f"central directory size {cd_size} is outside the allowed range read (1 to {MAX_RANGE} bytes)")
     cd = fetch(url, cd_off, cd_off + cd_size - 1)
     members = parse_central_directory(cd)
     if len(members) != entries:
@@ -96,16 +128,34 @@ def _head(url):
     return h
 
 
-def _fetch(url, start, end):
+def _fetch(url, start, end, opener=urllib.request.urlopen):
+    """One BOUNDED range read. The reply must be 206 with a Content-Range that names exactly this range, and at most length+1 bytes are ever read: a server that ignores Range and
+    answers 200 with the whole file (12 GB here) is refused before the body is read."""
+    length = end - start + 1
+    if length <= 0 or length > MAX_RANGE:
+        raise ValueError(f"refusing a range read of {length} bytes (allowed 1 to {MAX_RANGE})")
     req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return r.read()
+    with opener(req, timeout=120) as r:
+        status = getattr(r, "status", None) or r.getcode()
+        if status != 206:
+            raise ValueError(f"the server answered {status}, not 206: it did not honour the range, and the body was NOT read")
+        m = re.match(r"^bytes (\d+)-(\d+)/(\d+|\*)$", r.headers.get("Content-Range", "") if hasattr(r, "headers") else r.getheader("Content-Range", ""))
+        if not m or (int(m.group(1)), int(m.group(2))) != (start, end):
+            raise ValueError(f"Content-Range {r.headers.get('Content-Range') if hasattr(r, 'headers') else None!r} does not name the requested bytes {start}-{end}")
+        cl = r.headers.get("Content-Length") if hasattr(r, "headers") else None
+        if cl is not None and int(cl) != length:
+            raise ValueError(f"Content-Length {cl} != requested length {length}")
+        data = r.read(length + 1)
+    if len(data) != length:
+        raise ValueError(f"read {len(data)} bytes for a {length}-byte range")
+    return data
 
 
 def main(argv=None):
-    url = (argv or sys.argv[1:])[0]
+    url = (argv or sys.argv[1:] or [KNOWN_ARTIFACT["url"]])[0]
     s = sizing(url, _head, _fetch)
     s["disk_budget"] = disk_budget(s["zip_bytes"], s["uncompressed_total_bytes"])
+    s["matches_pinned_artifact"] = check_known(s)  # [] means the pinned commit URL, bytes and layout are identical
     print(json.dumps(s, indent=1))
 
 

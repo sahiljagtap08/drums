@@ -58,7 +58,15 @@ def test_image_scripts_check_completeness_before_use_and_never_skip_on_a_bare_fi
     assert "Ubuntu.partial" in v  # extraction goes to a scratch dir and is renamed only after the OVF is confirmed
 
 
-@pytest.mark.parametrize("name,args", [("bootstrap.sh", []), ("fetch_image.sh", []), ("fetch_docker_image.sh", []), ("fetch_docker_image.sh", ["--accept-licence-risk"])])
+@pytest.mark.parametrize("name,args", [("bootstrap.sh", []), ("fetch_image.sh", []), ("fetch_docker_image.sh", []), ("fetch_docker_image.sh", ["--accept-licence-risk"]),
+    ("fetch_docker_image.sh", ["--accept-licence-risk", "--zip-bytes", "1", "--uncompressed-bytes", "2"])])
 def test_each_script_refuses_before_doing_anything(name, args):
     r = subprocess.run(["bash", os.path.join(D, name), *args], capture_output=True, text=True, env={"PATH": os.environ["PATH"], "HOME": "/nonexistent"}, timeout=30)
     assert r.returncode == 2 and "REFUSED" in (r.stdout + r.stderr)
+
+
+def test_the_docker_image_script_is_pinned_to_the_commit_and_requires_the_zip_hash():
+    d = read("fetch_docker_image.sh")
+    assert "resolve/$HF_COMMIT/Ubuntu.qcow2.zip" in d and "HF_COMMIT=a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133" in d and "/resolve/main/" not in d.replace("mutable `main`", "")
+    assert "--zip-sha256 is required" in d and "RECORDED ONLY" not in d and '[ "$SHA" = "$ZSHA" ] || die' in d
+    assert "b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712" in d and "12273896463" in d and "24460197888" in d

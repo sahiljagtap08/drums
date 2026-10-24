@@ -12,7 +12,7 @@ ACCT = awsctl.APPROVED_ACCOUNT
 def approval(**kw):
     a = {"run_id": "r1", "approved_by": "owner", "account_id": ACCT, "stage": "vbox_metal", "quota_standard_vcpu_asserted": 96, "instance_type": "m7i.metal-24xl", "region": "us-east-1", "ceiling_hours": 4, "stop_margin_hours": 0.5,
          "budget_cap_usd": 40.0, "hourly_usd": 4.8384, "ebs_gb": 200, "ebs_usd_per_gb_month": 0.08, "public_ipv4_usd_per_hour": 0.005, "transfer_out_gb": 20,
-         "transfer_usd_per_gb": 0.09, "ssh_cidr": "203.0.113.5/32", "key_name": "k", "subnet_id": "subnet-1", "security_group_id": "sg-1", "image_id": "ami-1", "ami_owner_id": "099720109477", "profile": "drums",
+         "transfer_usd_per_gb": 0.09, "ssh_cidr": "203.0.113.5/32", "key_name": "k", "subnet_id": "subnet-1", "security_group_id": "sg-1", "image_id": "ami-1", "ami_owner_id": "099720109477", "deadline_mode": "watcher", "profile": "drums",
          "approved": True}
     a.update(kw)
     return a
@@ -32,15 +32,18 @@ def good_image(**over):
 
 
 class FakeAws:
-    def __init__(self, arn=f"arn:aws:iam::{ACCT}:user/sahil", account=ACCT, instances=(), others=(), volumes=(), addresses=(), bench_volumes=(), sg=None, subnet_vpc="vpc-1", dry="DryRunOperation", image="default"):
+    def __init__(self, arn=f"arn:aws:iam::{ACCT}:user/sahil", account=ACCT, instances=(), others=(), volumes=(), addresses=(), bench_volumes=(), sg=None, subnet_vpc="vpc-1", dry="DryRunOperation", image="default", scheduler_fail=False, schedule_override=None, terminate_fail=False, delete_fails=False):
         self.arn, self.account, self.instances, self.others = arn, account, list(instances), list(others)
         self.volumes, self.addresses, self.bench_volumes, self.sg, self.subnet_vpc, self.dry = list(volumes), list(addresses), list(bench_volumes), sg or good_sg(), subnet_vpc, dry
         self.calls, self.terminated, self.image = [], False, (good_image() if image == 'default' else image)
+        self.schedule, self.scheduler_fail, self.schedule_override, self.terminate_fail, self.delete_fails = None, scheduler_fail, schedule_override or {}, terminate_fail, delete_fails
 
     def raw(self, *args):
         self.calls.append(args)
         if args[:2] == ("ec2", "run-instances") and "--dry-run" in args:
             return 254, "", f"An error occurred ({self.dry}) when calling the RunInstances operation"
+        if args[:2] == ("scheduler", "get-schedule") and self.schedule is None:
+            return 254, "", "An error occurred (ResourceNotFoundException) when calling the GetSchedule operation"
         return 0, json.dumps(self._do(*args)), ""
 
     def __call__(self, *args, check=True):
@@ -68,7 +71,11 @@ class FakeAws:
         if args[:2] == ("ec2", "create-tags"):
             self.tags = getattr(self, "tags", []) + [args]
             return ""
+        if args[0] == "scheduler":
+            return self._scheduler(*args)
         if args[:2] == ("ec2", "terminate-instances"):
+            if self.terminate_fail:
+                raise RuntimeError("terminate refused")
             self.terminated = True
             return {}
         if args[:2] == ("ec2", "delete-volume"):
@@ -79,6 +86,25 @@ class FakeAws:
             return ""
         if args[:2] == ("ec2", "run-instances"):
             return {"Instances": [{"InstanceId": "i-new"}]}
+        raise AssertionError(args)
+
+    def _scheduler(self, *args):
+        if args[1] == "create-schedule":
+            if self.scheduler_fail:
+                raise RuntimeError("AccessDeniedException: not authorized to scheduler:CreateSchedule")
+            o = dict(zip(args[2::2], args[3::2]))
+            self.schedule = {"Name": o["--name"], "State": o["--state"], "ScheduleExpression": o["--schedule-expression"], "ScheduleExpressionTimezone": o["--schedule-expression-timezone"],
+                             "FlexibleTimeWindow": {"Mode": o["--flexible-time-window"].split("=")[1]}, "ActionAfterCompletion": o["--action-after-completion"], "Target": json.loads(o["--target"])}
+            self.schedule.update(self.schedule_override)
+            return {"ScheduleArn": "arn:aws:scheduler:us-east-1:%s:schedule/default/%s" % (ACCT, o["--name"])}
+        if args[1] == "get-schedule":
+            if self.schedule is None:
+                raise RuntimeError("ResourceNotFoundException")
+            return self.schedule
+        if args[1] == "delete-schedule":
+            if not self.delete_fails:
+                self.schedule = None
+            return ""
         raise AssertionError(args)
 
     def made(self, name):
@@ -217,7 +243,7 @@ def test_execute_with_an_armed_watcher_sets_every_control_and_allocates_no_addre
     r = awsctl.launch(f, approval(), execute=True, now=lambda: 1001.0, receipt=p)
     args = [c for c in f.made("run-instances") if "--dry-run" not in c][0]
     s = " ".join(map(str, args))
-    assert r["executed"] and r["instance_id"] == "i-new" and r["deadline_epoch"] == 1001 + 4 * 3600 and r["watcher"]["state"] == "armed"
+    assert r["executed"] and r["instance_id"] == "i-new" and r["deadline_epoch"] == 1001 + 4 * 3600 and r["deadline"]["watcher"]["state"] == "armed" and r["deadline"]["mode"] == "watcher"
     assert "--instance-initiated-shutdown-behavior terminate" in s and "HttpTokens=required" in s and "DeleteOnTermination" in s
     assert "Key=drums-run,Value=r1" in s and "Key=drums-bench,Value=true" in s
     assert "shutdown -h +240" in args[args.index("--user-data") + 1] and "--associate-public-ip-address" in args
@@ -338,7 +364,7 @@ def test_the_amis_real_root_device_is_mapped_and_nothing_else(tmp_path):
 @pytest.mark.parametrize("image,why", [
     (None, "not found"), (good_image(OwnerId="111111111111"), "owner"), (good_image(ProductCodes=[{"ProductCodeId": "x", "ProductCodeType": "marketplace"}]), "Marketplace"),
     (good_image(ImageOwnerAlias="aws-marketplace"), "Marketplace"), (good_image(Architecture="arm64"), "x86_64"), (good_image(RootDeviceType="instance-store"), "EBS-rooted"),
-    (good_image(State="pending"), "available"), (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 8}}, {"DeviceName": "/dev/sdb", "Ebs": {"VolumeSize": 100}}]), "additional devices"),
+    (good_image(State="pending"), "available"), (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 8}}, {"DeviceName": "/dev/sdb", "Ebs": {"VolumeSize": 100}}]), "additional EBS devices"),
     (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sdz", "Ebs": {"VolumeSize": 8}}]), "no EBS mapping"),
     (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 500}}]), "below the AMI"),
 ])
@@ -347,11 +373,28 @@ def test_ami_is_described_and_refused_when_it_is_not_what_was_approved(image, wh
         awsctl.launch(FakeAws(image=image), approval())
 
 
-def test_an_extra_ami_device_is_allowed_only_when_the_owner_names_it():
-    extra = good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 8}}, {"DeviceName": "/dev/sdb", "Ebs": {"VolumeSize": 10}}])
-    with pytest.raises(awsctl.Refusal):
-        awsctl.launch(FakeAws(image=extra), approval())
-    assert awsctl.launch(FakeAws(image=extra), approval(approved_extra_devices=["/dev/sdb"]))["image"]["root_device"] == "/dev/sda1"
+def canonical_image():
+    """The shape of the official Canonical Ubuntu 24.04 amd64 AMI read live for us-east-1: root /dev/sda1 EBS 8 GiB gp3 plus two instance-store template mappings."""
+    return good_image(ImageId="ami-0d6dd9e8265d48906", Name="ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20261023", OwnerId="099720109477", ProductCodes=[],
+                      BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"DeleteOnTermination": True, "SnapshotId": "snap-0abc", "VolumeSize": 8, "VolumeType": "gp3", "Encrypted": False}},
+                                           {"DeviceName": "/dev/sdb", "VirtualName": "ephemeral0"}, {"DeviceName": "/dev/sdc", "VirtualName": "ephemeral1"}])
+
+
+def test_the_official_canonical_ami_is_accepted_with_its_ephemeral_mappings_suppressed_by_nodevice(tmp_path):
+    f = FakeAws(image=canonical_image())
+    r = awsctl.launch(f, approval(ebs_gb=120), execute=True, receipt=arm(tmp_path, f), now=lambda: 1001.0)
+    assert r["image"]["suppress_devices"] == ["/dev/sdb", "/dev/sdc"] and r["image"]["root_device"] == "/dev/sda1"
+    args = _run_args(f)
+    m = json.loads(args[args.index("--block-device-mappings") + 1])
+    assert m == [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 120, "VolumeType": "gp3", "DeleteOnTermination": True}}, {"DeviceName": "/dev/sdb", "NoDevice": ""}, {"DeviceName": "/dev/sdc", "NoDevice": ""}]
+    assert args.count("--block-device-mappings") == 1
+
+
+def test_an_extra_ebs_device_is_always_refused_even_next_to_ephemeral_ones_and_no_approval_field_overrides_it():
+    im = canonical_image()
+    im["BlockDeviceMappings"].append({"DeviceName": "/dev/sdd", "Ebs": {"VolumeSize": 50, "DeleteOnTermination": False}})
+    with pytest.raises(awsctl.Refusal, match="additional EBS devices"):
+        awsctl.launch(FakeAws(image=im), approval(ebs_gb=120, approved_extra_devices=["/dev/sdd"]))  # the old override field is ignored
 
 
 @pytest.mark.parametrize("bad", [7, 401, 200.5, "200", True, None])
@@ -364,3 +407,125 @@ def test_the_amis_owner_must_be_stated_as_twelve_digits():
     for bad in ("", "abc", "12345", 99):
         with pytest.raises(awsctl.Refusal):
             awsctl.validate(approval(ami_owner_id=bad))
+
+
+# ---- managed deadline (EventBridge Scheduler), prices, role documents ----
+ROLE = f"arn:aws:iam::{ACCT}:role/drums-terminate"
+
+
+def managed(**kw):
+    a = approval(deadline_mode="managed", deadline_role_arn=ROLE, scheduler_usd_per_million=1.0, stage="docker_kvm_small", instance_type="m7i.xlarge", hourly_usd=0.2016,
+                 quota_standard_vcpu_asserted=32, ceiling_hours=1.5, stop_margin_hours=0.5, budget_cap_usd=1.0, ebs_gb=120, ebs_usd_per_gb_month=0.08, public_ipv4_usd_per_hour=0.005,
+                 transfer_out_gb=1, transfer_usd_per_gb=0.09)
+    a.update(kw)
+    return a
+
+
+def test_the_verified_small_stage_prices_total_0_529502_and_fit_the_one_dollar_ceiling():
+    b = awsctl.validate(managed())
+    it = b["items_usd"]
+    assert abs(it["ec2_instance_hours"] - 0.4032) < 1e-9 and abs(it["ebs_volume"] - 0.026301) < 1e-6 and abs(it["public_ipv4_address"] - 0.01) < 1e-9
+    assert abs(it["data_transfer_out"] - 0.09) < 1e-9 and abs(it["eventbridge_scheduler"] - 1e-6) < 1e-12 and abs(b["worst_case_usd"] - 0.529502) < 1e-6
+    with pytest.raises(awsctl.Refusal):
+        awsctl.validate(managed(budget_cap_usd=0.5))
+    assert "eventbridge_scheduler" not in awsctl.bill(approval())["items_usd"]  # watcher mode has no scheduler line
+
+
+@pytest.mark.parametrize("over", [{"deadline_role_arn": "arn:aws:iam::111111111111:role/x"}, {"deadline_role_arn": f"arn:aws:iam::{ACCT}:user/x"}, {"deadline_role_arn": ""},
+                                  {"deadline_role_arn": f"arn:aws:iam::{ACCT}:role/x/../y"}, {"scheduler_usd_per_million": 0}, {"scheduler_usd_per_million": float("nan")},
+                                  {"scheduler_invocations": 0}, {"deadline_mode": "magic"}, {"run_id": "bad id!"}])
+def test_managed_mode_needs_an_exact_account_role_and_a_paid_unit_rate(over):
+    a = managed()
+    a.update(over)
+    with pytest.raises(awsctl.Refusal):
+        awsctl.validate(a)
+
+
+def test_managed_launch_creates_then_reads_back_the_schedule_with_no_watcher_receipt_and_no_deadman():
+    f = FakeAws()
+    r = awsctl.launch(f, managed(), execute=True, now=lambda: 1_761_300_000)  # no receipt: the deadline is AWS-managed
+    order = [c[:2] for c in f.calls if c[:2] in (("ec2", "run-instances"), ("scheduler", "create-schedule"), ("scheduler", "get-schedule"))]
+    assert order == [("ec2", "run-instances"), ("ec2", "run-instances"), ("scheduler", "create-schedule"), ("scheduler", "get-schedule")]  # dry run, real run, create, readback
+    create = f.made("create-schedule") or [c for c in f.calls if c[:2] == ("scheduler", "create-schedule")]
+    o = dict(zip(create[0][2::2], create[0][3::2]))
+    tgt = json.loads(o["--target"])
+    assert o["--name"] == "drums-term-r1" and o["--schedule-expression"] == "at(2025-10-24T11:30:00)" and o["--schedule-expression-timezone"] == "UTC"
+    assert o["--flexible-time-window"] == "Mode=OFF" and o["--action-after-completion"] == "DELETE" and o["--group-name"] == "default" and o["--state"] == "ENABLED"
+    assert tgt["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances" and tgt["RoleArn"] == ROLE and json.loads(tgt["Input"]) == {"InstanceIds": ["i-new"]}
+    ud = _run_args(f)[_run_args(f).index("--user-data") + 1]
+    assert "shutdown -h +90" in ud and "drums-deadman" not in ud and "drums-watch-beat" not in ud  # the host timer stays; the dead-man needs a watcher that does not exist here
+    assert r["deadline"]["mode"] == "managed" and r["deadline"]["schedule"]["instance_ids"] == ["i-new"] and r["deadline"]["in_host_ceiling_minutes"] == 90
+    assert "drums-deadman" in awsctl.user_data(approval())  # watcher mode keeps its dead-man
+
+
+def test_watcher_mode_still_needs_a_receipt_and_managed_mode_does_not_create_a_schedule_in_a_dry_run():
+    with pytest.raises(awsctl.Refusal, match="no watcher receipt"):
+        awsctl.launch(FakeAws(), approval(), execute=True)
+    f = FakeAws()
+    awsctl.launch(f, managed())
+    assert [c for c in f.calls if c[0] == "scheduler"] == [] and f.schedule is None
+
+
+def test_if_the_schedule_cannot_be_created_the_instance_is_terminated_at_once():
+    f = FakeAws(scheduler_fail=True)
+    with pytest.raises(awsctl.LaunchAborted, match="deadline could not be proven.*terminate-instances was issued"):
+        awsctl.launch(f, managed(), execute=True, now=lambda: 1_761_300_000)
+    assert f.terminated and f.made("terminate-instances")[0][3:] == ("i-new",)
+
+
+@pytest.mark.parametrize("override", [{"State": "DISABLED"}, {"ScheduleExpression": "at(2099-01-01T00:00:00)"}, {"ScheduleExpressionTimezone": "America/New_York"},
+                                      {"FlexibleTimeWindow": {"Mode": "FLEXIBLE"}}, {"ActionAfterCompletion": "NONE"},
+                                      {"Target": {"Arn": "arn:aws:scheduler:::aws-sdk:ec2:stopInstances", "RoleArn": ROLE, "Input": '{"InstanceIds":["i-new"]}'}},
+                                      {"Target": {"Arn": "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances", "RoleArn": f"arn:aws:iam::{ACCT}:role/other", "Input": '{"InstanceIds":["i-new"]}'}},
+                                      {"Target": {"Arn": "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances", "RoleArn": ROLE, "Input": '{"InstanceIds":["i-new","i-other"]}'}},
+                                      {"Target": {"Arn": "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances", "RoleArn": ROLE, "Input": "not json"}}])
+def test_a_schedule_that_does_not_read_back_exactly_terminates_the_instance(override):
+    f = FakeAws(schedule_override=override)
+    with pytest.raises(awsctl.LaunchAborted, match="readback differs"):
+        awsctl.launch(f, managed(), execute=True, now=lambda: 1_761_300_000)
+    assert f.terminated
+
+
+def test_when_even_the_abort_terminate_fails_the_error_says_only_the_host_timer_remains():
+    f = FakeAws(scheduler_fail=True, terminate_fail=True)
+    with pytest.raises(awsctl.LaunchAborted, match="host's own shutdown timer is then the only remaining stop"):
+        awsctl.launch(f, managed(), execute=True, now=lambda: 1_761_300_000)
+
+
+def test_teardown_deletes_the_schedule_and_reports_clean_only_when_it_is_verified_gone():
+    f = FakeAws(instances=[inst()])
+    awsctl.launch(FakeAws(), managed(), execute=True)  # (separate fake; just proves the path runs)
+    f.schedule = {"Name": "drums-term-r1"}
+    r = awsctl.teardown(f, managed(), execute=True, sleep=lambda s: None)
+    assert r["clean"] and r["remaining"]["deadline_schedule_exists"] is False and f.schedule is None
+    f2 = FakeAws(instances=[inst()], delete_fails=True)
+    f2.schedule = {"Name": "drums-term-r1"}
+    r2 = awsctl.teardown(f2, managed(), execute=True, sleep=lambda s: None)
+    assert not r2["clean"] and r2["remaining"]["deadline_schedule_exists"] is True  # a schedule that remains is never called clean
+    assert awsctl.teardown(FakeAws(instances=[inst()]), approval(), execute=True, sleep=lambda s: None)["clean"]  # watcher mode: no schedule involved
+
+
+def test_the_role_documents_are_least_privilege_and_scoped_to_this_account_region_tag_and_schedule_prefix():
+    d = awsctl.scheduler_role_documents(managed())
+    trust, perm = d["role_trust_policy"]["Statement"][0], d["role_permission_policy"]["Statement"]
+    assert trust["Principal"] == {"Service": "scheduler.amazonaws.com"} and trust["Action"] == "sts:AssumeRole"
+    assert trust["Condition"]["StringEquals"]["aws:SourceAccount"] == ACCT
+    assert trust["Condition"]["ArnLike"]["aws:SourceArn"] == f"arn:aws:scheduler:us-east-1:{ACCT}:schedule/default/drums-term-*"
+    assert len(perm) == 1 and perm[0]["Action"] == "ec2:TerminateInstances" and perm[0]["Resource"] == f"arn:aws:ec2:us-east-1:{ACCT}:instance/*"
+    assert perm[0]["Condition"] == {"StringEquals": {"ec2:ResourceTag/drums-bench": "true"}}
+    assert "*" not in perm[0]["Action"] and "iam" not in json.dumps(perm) and "scheduler:" not in json.dumps(perm)
+    need = d["launching_identity_needs"]
+    assert need["iam:PassRole"]["resource"] == ROLE and need["iam:PassRole"]["condition"] == {"StringEquals": {"iam:PassedToService": "scheduler.amazonaws.com"}} and "nothing here grants" in need["note"]
+
+
+def test_awsctl_never_calls_iam_or_creates_a_role():
+    src = open(awsctl.__file__).read()
+    assert '"iam"' not in src and "create-role" not in src and "put-role-policy" not in src and "attach-role-policy" not in src
+
+
+def test_plan_prints_the_role_documents_for_managed_mode(tmp_path, capsys):
+    p = tmp_path / "a.json"
+    p.write_text(json.dumps(managed()))
+    assert awsctl.main(["plan", "--approval", str(p)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["managed_deadline"]["schedule_target"] == "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances" and "role_trust_policy" in out["managed_deadline"]["documents_for_the_owner_to_create"]
