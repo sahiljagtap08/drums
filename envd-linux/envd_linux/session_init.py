@@ -33,7 +33,7 @@ def setup_full_root(a):
     sh("mount", "-t", "tmpfs", "tmpfs", stage)
     for d in ("upper", "work", "merged"):
         os.makedirs(f"{stage}/{d}")
-    lower = f"{a.lower}:/" if a.lower else "/"
+    lower = compose_lower(a.lower, a.base_root)
     upper, work = f"{stage}/upper", f"{stage}/work"
     if a.criu_friendly:  # the upper must live where the host can copy it (a checkpoint of the processes is not a checkpoint of the files)
         upper, work = a.upper, a.work
@@ -67,6 +67,11 @@ def setup_full_root(a):
     sh("pivot_root", m, f"{m}/.drums-old")
     os.chdir("/")
     sh("umount", "-l", "/.drums-old")
+
+
+def compose_lower(lower, base_root="/"):
+    """The overlay's lower layers: the template (if any) over the base root. The base root is the host's `/` unless a read-only image root was given."""
+    return f"{lower}:{base_root}" if lower else base_root
 
 
 TIMING = {"f": None}
@@ -149,6 +154,7 @@ def start_real_desktop(a):
     env = dict(os.environ, DISPLAY=f":{a.display}", HOME=a.home, LANG="C.UTF-8", LC_ALL="C.UTF-8",
                XDG_RUNTIME_DIR=runtime, PATH=f"{kit}/bin:" + os.environ.get("PATH", ""),
                GTK_MODULES="gail:atk-bridge", NO_AT_BRIDGE="0", ACCESSIBILITY_ENABLED="1")
+    os.makedirs(a.home, exist_ok=True)  # an image root may not have the home yet; harmless otherwise
     open(os.path.join(a.home, ".Xauthority"), "a").close()  # python-xlib insists on the file existing
     bus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
                          capture_output=True, text=True, env=env, check=True).stdout.split()
@@ -190,6 +196,7 @@ def main(argv=None):
     ap.add_argument("--ready", required=True)
     ap.add_argument("--xlog", required=True)
     ap.add_argument("--root", choices=["home", "full"], default="home")
+    ap.add_argument("--base-root", default="/")
     ap.add_argument("--osworld-port", type=int, default=0)
     ap.add_argument("--pkg", default="")
     ap.add_argument("--python", default="/usr/bin/python3")

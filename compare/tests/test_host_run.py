@@ -60,6 +60,8 @@ def setup(tmp_path, incumbent="virtualbox", **over):
             return 0, st["dirty"]
         if cmd[0] == "VBoxManage":
             return 0, "7.0.20r163906"
+        if cmd[0] == "findmnt":
+            return 0, st.get("mnt_opts", "ro,relatime")
         if cmd[:3] == ["docker", "version", "--format"]:
             return 0, "27.3.1"
         if cmd[:3] == ["docker", "image", "inspect"]:
@@ -547,3 +549,14 @@ def test_a_cold_reset_stage_does_not_need_criu_restore_but_a_snapshot_stage_does
     assert "drums_preflight_go" not in failing(hr.check_all(cfg, deps))
     cfg2, deps2 = setup(tmp_path, pf=nore)
     assert "drums_preflight_go" in failing(hr.check_all(cfg2, deps2))
+
+
+def test_an_alternative_drums_base_root_must_be_a_read_only_mount_and_only_for_cold_reset_stages(tmp_path):
+    cfg, deps = setup(tmp_path, incumbent="docker_kvm", cfg={"drums_base_root": "/mnt/vm-image-ro", "drums_home": "/home/user"})
+    assert "drums_base_root_read_only" not in failing(hr.check_all(cfg, deps))
+    cfg, deps = setup(tmp_path, incumbent="docker_kvm", mnt_opts="rw,relatime", cfg={"drums_base_root": "/mnt/vm-image-ro"})
+    assert "drums_base_root_read_only" in failing(hr.check_all(cfg, deps))
+    cfg, deps = setup(tmp_path, cfg={"drums_base_root": "/mnt/vm-image-ro"})  # the VirtualBox stage reuses state with CRIU, which cannot take another base root
+    assert "drums_base_root_read_only" in failing(hr.check_all(cfg, deps))
+    cfg, deps = setup(tmp_path, incumbent="docker_kvm")
+    assert "drums_base_root_read_only" not in {c["name"] for c in hr.check_all(cfg, deps)["checks"]}  # default "/" adds no check: behaviour unchanged

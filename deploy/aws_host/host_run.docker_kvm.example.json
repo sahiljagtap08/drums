@@ -34,5 +34,8 @@
   "qcow2_bytes": 24460197888,
   "qcow2_sha256": "OWNER: from fetch_docker_image.sh",
   "docker_image_digest": "sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9",
-  "verify_sha256": true
+  "verify_sha256": true,
+  "drums_home": "/home/drums",
+  "drums_base_root": "/",
+  "_matched_software_note": "drums_home and drums_base_root are the matched-software knobs (docs/matched-software-plan.md): defaults keep today's behaviour. A base root other than / must be a READ-ONLY mount of the image root (mount_image_rootfs.sh), cold-reset stages only, and drums_home /home/user makes the unmodified Impress task's /home/user path resolve. Both are UNVALIDATED on a real image."
 }

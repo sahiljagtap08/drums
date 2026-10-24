@@ -70,3 +70,12 @@ def test_the_docker_image_script_is_pinned_to_the_commit_and_requires_the_zip_ha
     assert "resolve/$HF_COMMIT/Ubuntu.qcow2.zip" in d and "HF_COMMIT=a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133" in d and "/resolve/main/" not in d.replace("mutable `main`", "")
     assert "--zip-sha256 is required" in d and "RECORDED ONLY" not in d and '[ "$SHA" = "$ZSHA" ] || die' in d
     assert "b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712" in d and "12273896463" in d and "24460197888" in d
+
+
+def test_the_image_mount_script_is_read_only_checked_and_refuses_before_acting():
+    s = read("mount_image_rootfs.sh")
+    assert subprocess.run(["bash", "-n", os.path.join(D, "mount_image_rootfs.sh")]).returncode == 0 and "set -euo pipefail" in s
+    assert "--read-only --connect" in s and "mount -o ro,noload" in s and "is not read-only" in s and "LARGEST ext4 partition" in s and "nosuid" not in s
+    for bad in ([], ["/nonexistent.qcow2", "/mnt/x"], ["--unmount"]):
+        r = subprocess.run(["bash", os.path.join(D, "mount_image_rootfs.sh"), *bad], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 2 and "REFUSED" in r.stderr, bad

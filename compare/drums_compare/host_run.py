@@ -316,6 +316,12 @@ def check_all(cfg, deps=None, options=None):
         _check_virtualbox(cfg, d, out)
     else:
         _check_docker(cfg, d, out, src)
+    # Drums: an alternative base root must be a READ-ONLY mount (the image is evidence; nothing may write to it), and CRIU is not combinable with it
+    base = cfg.get("drums_base_root", "/")
+    if base != "/":
+        rc, opts = d["sh"](["findmnt", "-n", "-o", "OPTIONS", "--target", base])
+        out.append(chk("drums_base_root_read_only", rc == 0 and "ro" in opts.split(",") and INCUMBENTS[inc]["reuse"] == "none",
+                       f"base root {base} mount options: {opts.strip() or 'unreadable'}; must contain ro, and only cold-reset stages may use it (CRIU assumes '/')"))
     # Drums
     try:
         pf = d["preflight"](cfg) if "preflight" in d else _real_preflight(cfg)

@@ -60,11 +60,15 @@ class Supervisor:
                  firewall=None, nat=False, block_private_egress=True,
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
-                 ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True):
+                 ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True,
+                 home=HOME, base_root="/"):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
         lower_home is a $HOME-shaped tree in "home" mode and a root-shaped tree in "full" mode.
+        home: the session's $HOME (default /home/drums); sessions still run as ROOT with this HOME, no uid or ownership change is made.
+        base_root: the filesystem under the template layer in "full" mode (default "/", the host root, exactly as before). A different DIRECTORY, such as a READ-ONLY mounted
+        image root, makes the session's userland that tree's; it is refused with CRIU (the restore path assumes "/") and outside "full" mode. PROTOTYPE, never run on a real image root.
         firewall (default: on whenever netns is): the nftables policy in firewall.py, so sessions cannot
         reach each other whatever `ip_forward` is. nat: also give sessions outbound internet by masquerade;
         this sets the host's net.ipv4.ip_forward=1 (restored by close()). block_private_egress: with nat,
@@ -72,6 +76,20 @@ class Supervisor:
         sweep_on_start: first run the outer sweep (sweep.py), which removes what a crashed earlier run left
         (sessions, links, the nftables table, ip_forward) but never touches another LIVE Supervisor. This
         Supervisor then writes a ledger entry (in sweep_dir) so a later sweep can undo its changes if it dies."""
+        if not (isinstance(home, str) and os.path.isabs(home) and os.path.normpath(home) == home and home != "/"):
+            raise ValueError(f"home must be a normalized absolute path other than /: {home!r}")
+        if not (isinstance(base_root, str) and os.path.isabs(base_root) and os.path.normpath(base_root) == base_root):
+            raise ValueError(f"base_root must be a normalized absolute path: {base_root!r}")
+        if base_root != "/":
+            if root_mode != "full":
+                raise ValueError("base_root other than / needs root_mode='full'")
+            if criu_friendly or restore_from is not None:
+                raise ValueError("base_root other than / is incompatible with CRIU: the restore path assumes '/' as a lower layer")
+            if not os.path.isdir(base_root):
+                raise ValueError(f"base_root {base_root!r} is not a directory")
+            if os.path.commonpath([os.path.abspath(state_dir), base_root]) in (base_root, os.path.abspath(state_dir)):
+                raise ValueError("base_root and the state directory must not contain one another (overlay layers cannot nest)")
+        self.home, self.base_root = home, base_root
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None
         if exec_systemd and not (netns and os.environ.get("DRUMS_ALLOW_SYSTEMD_PROBE") == "1"):
@@ -185,7 +203,8 @@ class Supervisor:
         shutil.rmtree(d, ignore_errors=True)
         for sub in ("upper", "work", "x11"):
             os.makedirs(os.path.join(d, sub))
-        os.makedirs(HOME, exist_ok=True)
+        if self.base_root == "/":  # the mount target on the HOST root; with another base root the home lives inside that tree
+            os.makedirs(self.home, exist_ok=True)
         os.makedirs("/tmp/.X11-unix", exist_ok=True)
         try:
             os.chmod("/tmp/.X11-unix", 0o1777)
@@ -211,7 +230,7 @@ class Supervisor:
         if self.criu_friendly:  # PROTOTYPE C: the overlay's upper sits on a tmpfs the host can see (and a checkpoint can keep)
             upper, work = self._stage(d)
         sargs = ["--lower", self.lower, "--upper", upper, "--work", work,
-                 "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
+                 "--home", self.home, "--base-root", self.base_root, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
                  "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
                  "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
                  "--python", self.python, "--tag", self.tag,
@@ -262,7 +281,7 @@ class Supervisor:
             raise SessionError("session init pid not found")
         self._procs[slot] = proc
         self._epochs[slot] = self._epochs.get(slot, 0) + 1
-        info = {"epoch": self._epochs[slot], "display": n, "init_pid": kids[0], "home": HOME,
+        info = {"epoch": self._epochs[slot], "display": n, "init_pid": kids[0], "home": self.home,
                 "unshare_pid": proc.pid, "created": time.time(), "root_mode": self.root_mode,
                 "netns": self.netns, "osworld_port": self.osworld_port}
         if cg is not None:
@@ -421,7 +440,7 @@ class Supervisor:
         try:  # from here the session is registered: any failure must tear it down, never leave processes, mounts or a veth behind
             self._epochs[slot] = self._epochs.get(slot, 0) + 1
             self._slot_layers[slot] = layers  # a checkpoint of this session stacks on these read-only layers
-            info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": HOME, "unshare_pid": pid, "inner_if": meta["inner_if"],
+            info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": self.home, "unshare_pid": pid, "inner_if": meta["inner_if"],
                     "created": time.time(), "root_mode": self.root_mode, "netns": True, "osworld_port": self.osworld_port,
                     "restored": True, "criu_restore_s": res["seconds"], "restore_total_s": time.time() - t0, **net}
             deadline = time.time() + self.ready_timeout

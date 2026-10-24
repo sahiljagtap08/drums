@@ -32,15 +32,21 @@ def build_drums(cfg, work):
     from envd_linux.scalecua.pool import DrumsSessionPool
     from envd_linux.session import Supervisor
     from envd_linux.template import build_home_template
+    from envd_linux.session import HOME as DEFAULT_HOME
     t0 = time.time()
     kit = realkit.DEFAULT_KIT
     tpl = os.path.join(work, "tpl")
-    build_home_template(os.path.join(tpl, "home", "drums"))
-    os.makedirs(os.path.join(tpl, "home", "drums", "Desktop"), exist_ok=True)
+    home = cfg.get("drums_home", DEFAULT_HOME)
+    base_root = cfg.get("drums_base_root", "/")
+    home_tpl = os.path.join(tpl, home.lstrip("/"))
+    if base_root == "/":
+        build_home_template(home_tpl)  # a Chromium first-run profile built from the host's browser path
+    # with another base root (a read-only image root) the host's browser path need not exist there, and the home comes from that tree: only the Desktop directory is laid down
+    os.makedirs(os.path.join(home_tpl, "Desktop"), exist_ok=True)
     limits = lim.Limits(cpus=float(cfg.get("guest_cpus", 2)), memory_bytes=int(cfg.get("guest_memory_mib", 4096)) * MIB)
     sup = Supervisor(os.path.join(work, "state"), tpl, root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
                      init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120, criu_friendly=(cfg.get("incumbent") == "virtualbox"),
-                     criu=Criu() if cfg.get("incumbent") == "virtualbox" else None, sweep_dir=os.path.join(work, "led"), limits=limits)
+                     criu=Criu() if cfg.get("incumbent") == "virtualbox" else None, sweep_dir=os.path.join(work, "led"), limits=limits, home=home, base_root=base_root)
     pool = DrumsSessionPool(sup, 4, health_timeout=90, eager_reset=False)
     return sup, pool, time.time() - t0
 
@@ -229,7 +235,7 @@ def run_matched(cfg, out, gates=None, gates_reuse=None):
                 "guest_budget": {"cpus": cfg.get("guest_cpus", 2), "memory_mib": cfg.get("guest_memory_mib", 4096)}, "require_a11y_tree": False, "screen_size": [1280, 800],
                 "prices_file": cfg["prices"], "image_manifest": cfg.get("image_manifest"), "incumbent_image_prep": f"NOT timed unless vm_prep_s_reported is set: {cfg.get('vm_prep_s_reported')}",
                 "known_risks": hr.KNOWN_RISKS, "non_equivalence": "docs/incumbent-preflight-plan.md section 4a",
-                "gates_reuse": gates_reuse, "arm_provider_expect": {n: EXPECT_PROVIDER[n] for n in factories}, "timing_boundaries": "inside the run clock: guest open, every reset (a cold reboot for docker_kvm), steps, evaluation, close; reported apart: Drums pool build, image fetch, between-block cleanup"}
+                "drums_home": cfg.get("drums_home", "/home/drums"), "drums_base_root": cfg.get("drums_base_root", "/"), "gates_reuse": gates_reuse, "arm_provider_expect": {n: EXPECT_PROVIDER[n] for n in factories}, "timing_boundaries": "inside the run clock: guest open, every reset (a cold reboot for docker_kvm), steps, evaluation, close; reported apart: Drums pool build, image fetch, between-block cleanup"}
         label = None if mode == "comparison" else "architecture measurement only: image composition not shown equivalent; no cross-arm ratio, no cost-per-valid comparison, no claim"
         hooks = {"drums": ceiling_hook, arm_name: vm_hook if inc == "virtualbox" else docker_hook}
         summary = fc.run_alternating(arms, by_id, seq, lambda: om.ScriptedAgent(scripts), cfg.get("blocks", 4), {"drums": price, arm_name: price}, out, pins, concurrency=1,
