@@ -1,0 +1,480 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "criu": "Version: 4.2",
+ "args": {
+  "out": "/tmp/claude-0/scratch/criu_probe_reseeded.json",
+  "task": "/tmp/claude-0/scratch/osw-main/evaluation_examples/examples/os/e0df059f-28a6-4169-924f-b9623e7184cc.json",
+  "starts": 20,
+  "trials": 3,
+  "max_n": 20,
+  "skip_memory": false,
+  "skip_correctness": false,
+  "drop_caches": false
+ },
+ "stages": {
+  "R1_criu_check": {
+   "ok": true,
+   "seconds": 0.0644845962524414,
+   "pass": true,
+   "detail": "u: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n/tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n"
+  },
+  "R3_server_only_dump": {
+   "ok": true,
+   "seconds": 3.9664318561553955,
+   "dump_seconds": 0.24658727645874023,
+   "image_mib": 75.72607421875
+  },
+  "R4_chromium_dump": {
+   "ok": true,
+   "seconds": 4.727341651916504,
+   "dump_seconds": 0.8457942008972168,
+   "image_mib": 254.70434665679932
+  },
+  "R3_server_only_restore": {
+   "ok": false,
+   "seconds": 0.8792698383331299,
+   "error": "RuntimeError: browser reseed failed: ne 1360, in http_open\n    return self.do_open(http.client.HTTPConnection, req)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/urllib/request.py\", line 1334, in do_open\n    raise URLError(err)\nurllib.error.URLError: <urlopen error [Errno 111] Connection refused>\n"
+  },
+  "R4_chromium_restore": {
+   "ok": true,
+   "seconds": 1.1380157470703125,
+   "restore_total_s": 0.8087916374206543,
+   "criu_restore_s": 0.32723426818847656,
+   "browser_titles": [
+    "drums-ready"
+   ]
+  },
+  "C2_screenshot_shows_browser": {
+   "ok": true,
+   "seconds": 0.31840944290161133,
+   "ready_extra_s": 0.19008731842041016,
+   "changed_fraction_vs_blank": 0.9974453125,
+   "titles": [
+    "drums-ready"
+   ],
+   "PASS": true
+  },
+  "C3_sibling_audit": {
+   "ok": true,
+   "seconds": 9.085043668746948,
+   "processes": {
+    "a": 18,
+    "b": 19
+   },
+   "pid_sets_disjoint": true,
+   "distinct_namespaces": {
+    "pid": true,
+    "mnt": true,
+    "net": true,
+    "ipc": true,
+    "uts": true
+   },
+   "shared_pipe_or_socket_inodes": [],
+   "shared_regular_files_readonly": [],
+   "shared_regular_files_writable": [],
+   "shared_character_devices": [
+    "chr:6:3:/dev/null",
+    "chr:6:7:/dev/urandom"
+   ],
+   "shared_lock_entries": [],
+   "xvfb_socket_inodes_differ": true,
+   "addresses_differ": true,
+   "write_in_a_visible_in_b": false,
+   "PASS_ignoring_devices": true,
+   "cold_pair_control": {
+    "shared_pipe_or_socket_inodes": [],
+    "shared_regular_files_writable": [],
+    "shared_character_devices": [
+     "chr:6:3:/dev/null",
+     "chr:6:7:/dev/urandom"
+    ],
+    "shared_lock_entries": [],
+    "PASS_ignoring_devices": true
+   },
+   "PASS_literal": false,
+   "introduced_by_restore": {
+    "character_devices": [],
+    "writable_files": [],
+    "locks": []
+   },
+   "PASS_revision_2a": true,
+   "PASS_vs_cold_control": true
+  },
+  "C1_public_task_from_restored_session": {
+   "ok": true,
+   "seconds": 34.55997085571289,
+   "score_before": 0.0,
+   "score_after": 1.0,
+   "sessions_were_restored": true,
+   "PASS": true
+  }
+ },
+ "latency": {
+  "COLD": {
+   "n": 20,
+   "p50": 2.147202253341675,
+   "p95": 2.4489786267280578,
+   "mean": 2.160050117969513,
+   "all": [
+    2.21100115776062,
+    2.448918104171753,
+    2.150442600250244,
+    2.2873916625976562,
+    2.235914945602417,
+    2.4501285552978516,
+    2.2433478832244873,
+    2.0019445419311523,
+    2.1856672763824463,
+    2.0319135189056396,
+    2.00308895111084,
+    2.1403324604034424,
+    2.1439619064331055,
+    2.024230718612671,
+    2.0912535190582275,
+    2.092650890350342,
+    2.194178342819214,
+    2.020768404006958,
+    2.017247438430786,
+    2.2266194820404053
+   ]
+  },
+  "RESTORE_FULL": {
+   "n": 20,
+   "p50": 1.2242048978805542,
+   "p95": 1.3784847021102906,
+   "mean": 1.2419976949691773,
+   "all": [
+    1.3668935298919678,
+    1.5987169742584229,
+    1.1728925704956055,
+    1.2269878387451172,
+    1.2214219570159912,
+    1.307868242263794,
+    1.2974727153778076,
+    1.2701127529144287,
+    1.1665701866149902,
+    1.2341852188110352,
+    1.202634572982788,
+    1.1866507530212402,
+    1.2651033401489258,
+    1.3264665603637695,
+    1.1733357906341553,
+    1.116445541381836,
+    1.0913951396942139,
+    1.166710376739502,
+    1.1581058502197266,
+    1.2899839878082275
+   ]
+  },
+  "RESTORE_SERVER_ONLY": {
+   "n": 0,
+   "p50": null,
+   "p95": null,
+   "mean": null,
+   "all": []
+  },
+  "ratio_cold_over_restore_full_p50": 1.7539565942425903
+ },
+ "latency_faults": [
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 0,
+   "why": "~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/urllib/request.py\", line 1334, in do_open\n    raise URLError(err)\nurllib.error.URLError: <urlopen error [Errno 111] Connection refused>\n"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 1,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 2,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 3,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 4,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 5,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 6,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 7,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 8,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 9,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 10,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 11,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 12,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 13,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 14,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 15,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 16,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 17,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 18,
+   "why": "slot 42 already running"
+  },
+  {
+   "arm": "RESTORE_SERVER_ONLY",
+   "rep": 19,
+   "why": "slot 42 already running"
+  }
+ ],
+ "memory": [
+  {
+   "arm": "COLD",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 201012
+    },
+    {
+     "n": 4,
+     "delta_kib": 869936
+    },
+    {
+     "n": 8,
+     "delta_kib": 1827472
+    },
+    {
+     "n": 12,
+     "delta_kib": 2776248
+    },
+    {
+     "n": 16,
+     "delta_kib": 3706852
+    },
+    {
+     "n": 20,
+     "delta_kib": 4668268
+    }
+   ],
+   "slope_mib_per_session": 230.07309055511183
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 285872
+    },
+    {
+     "n": 4,
+     "delta_kib": 985988
+    },
+    {
+     "n": 8,
+     "delta_kib": 1972112
+    },
+    {
+     "n": 12,
+     "delta_kib": 2910968
+    },
+    {
+     "n": 16,
+     "delta_kib": 3903792
+    },
+    {
+     "n": 20,
+     "delta_kib": 4849268
+    }
+   ],
+   "slope_mib_per_session": 235.19756389776362
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 221368
+    },
+    {
+     "n": 4,
+     "delta_kib": 978760
+    },
+    {
+     "n": 8,
+     "delta_kib": 1907220
+    },
+    {
+     "n": 12,
+     "delta_kib": 2890532
+    },
+    {
+     "n": 16,
+     "delta_kib": 3862800
+    },
+    {
+     "n": 20,
+     "delta_kib": 4792888
+    }
+   ],
+   "slope_mib_per_session": 234.99340055910545
+  },
+  {
+   "arm": "COLD",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 235936
+    },
+    {
+     "n": 4,
+     "delta_kib": 961784
+    },
+    {
+     "n": 8,
+     "delta_kib": 1897172
+    },
+    {
+     "n": 12,
+     "delta_kib": 2852760
+    },
+    {
+     "n": 16,
+     "delta_kib": 3807888
+    },
+    {
+     "n": 20,
+     "delta_kib": 4742632
+    }
+   ],
+   "slope_mib_per_session": 231.65809954073484
+  },
+  {
+   "arm": "COLD",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 165844
+    },
+    {
+     "n": 4,
+     "delta_kib": 878420
+    },
+    {
+     "n": 8,
+     "delta_kib": 1808204
+    },
+    {
+     "n": 12,
+     "delta_kib": 2763516
+    },
+    {
+     "n": 16,
+     "delta_kib": 3686440
+    },
+    {
+     "n": 20,
+     "delta_kib": 4609992
+    }
+   ],
+   "slope_mib_per_session": 228.5617961261981
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 196020
+    },
+    {
+     "n": 4,
+     "delta_kib": 941564
+    },
+    {
+     "n": 8,
+     "delta_kib": 1876708
+    },
+    {
+     "n": 12,
+     "delta_kib": 2849932
+    },
+    {
+     "n": 16,
+     "delta_kib": 3816524
+    },
+    {
+     "n": 20,
+     "delta_kib": 4795012
+    }
+   ],
+   "slope_mib_per_session": 235.75849141373806
+  }
+ ],
+ "memory_summary": {
+  "COLD": 230.09766207401492,
+  "RESTORE": 235.31648529020237,
+  "restore_over_cold": 1.0226809050085381,
+  "cold_minus_restore_ci95": [
+   -6.686634717784898,
+   -3.7264401956869335
+  ]
+ }
+}

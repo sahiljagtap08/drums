@@ -78,7 +78,7 @@ sequenceDiagram
 | Sharing mechanism F (fork server) | `mechanism-f-fork-server.md` | BUILT as a prototype, MEASURED: FAILED its thresholds |
 | Sharing mechanism B (shared browser) | `mechanism-b-shared-browser.md` | BUILT as a prototype, MEASURED: FAILED isolation |
 | Sharing mechanism K (page merging) | `mechanism-k-page-merging.md` | BUILT as a prototype, MEASURED: K2 saves memory only with ASLR off (not shippable) and fails CPU; K1 saves 7% and fails CPU; no K arm shippable; introduces a strong timing channel |
-| Sharing mechanism C (CRIU restore of a warm session) | `mechanism-c-criu-restore.md` | BUILT as a feasibility probe, MEASURED: works; 2.09x faster than cold L0 start (1.87x cold cache); no incumbent comparison |
+| Sharing mechanism C (CRIU restore of a warm session) | `mechanism-c-criu-restore.md` | BUILT as a feasibility probe, MEASURED: works; 1.76x faster than a cold L0 start with the hygiene reseed (below the 2x target); crash cleanup demonstrated; no incumbent comparison |
 | Per-session resource limits and interference canary | `matched-comparison-protocol.md` section 4a | BUILT (READINESS, not a result) |
 | The matched comparison against an incumbent | `matched-comparison-protocol.md` | PRE-REGISTERED; runner BUILT, never run |
 | The path to a real training smoke | `training-integration-runbook.md` | PLAN |

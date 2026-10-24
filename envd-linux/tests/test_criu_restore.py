@@ -97,3 +97,28 @@ def test_two_siblings_restored_from_one_checkpoint_serve_audit_clean_and_leave_n
         sup.close()
     assert subprocess.run(["pgrep", "-f", "envd_linux.session_init"], capture_output=True).stdout.split() == []
     assert str(tmp_path) not in open("/proc/self/mounts").read()
+
+
+@pytest.mark.skipif(_prereqs() is not None, reason=str(_prereqs()))
+def test_a_restore_that_fails_after_the_session_is_registered_leaves_nothing_behind(tmp_path, monkeypatch):
+    """Regression for a leak found while measuring: the reseed step raised after the restored session was registered, destroy() could not find
+    session.json, and the processes and veth outlived the supervisor."""
+    from envd_linux import clone
+    kit = realkit.DEFAULT_KIT
+    tpl = tmp_path / "tpl"
+    build_home_template(str(tpl / "home" / "drums"))
+    sup = Supervisor(str(tmp_path / "state"), str(tpl), root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
+                     init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120,
+                     criu_friendly=True, criu=cr.Criu(HOME), sweep_dir=str(tmp_path / "led"))
+    try:
+        sup.create(0)
+        sup.restore_from = sup.checkpoint(0, str(tmp_path / "ck"), clean=True)
+        monkeypatch.setattr(clone, "reseed", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        with pytest.raises(RuntimeError):
+            sup.create(1)
+        time.sleep(0.5)
+        assert 1 not in sup._procs
+        assert subprocess.run(["pgrep", "-f", "envd_linux.session_init"], capture_output=True).stdout.split() == []
+        assert not [n for n in os.listdir("/sys/class/net") if n.startswith("dvh")]
+    finally:
+        sup.close()

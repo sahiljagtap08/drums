@@ -1,0 +1,171 @@
+{
+ "clones_reseed_off": {
+  "a": {
+   "hostname": "drums-s90",
+   "server": {
+    "pid": 36,
+    "python_random": 0.6463347644353902,
+    "numpy_loaded": true,
+    "numpy_random": 0.04728298194748337,
+    "hash": 2948294875299473548
+   },
+   "cookie": [
+    "secret-token-pre-checkpoint"
+   ],
+   "pages": 1,
+   "page_random": [
+    0.49651956567658984,
+    0.4998148068619187,
+    0.9187712575597066,
+    [
+     1964221087,
+     4005166473
+    ]
+   ]
+  },
+  "b": {
+   "hostname": "drums-s90",
+   "server": {
+    "pid": 36,
+    "python_random": 0.6463347644353902,
+    "numpy_loaded": true,
+    "numpy_random": 0.4680471119601476,
+    "hash": 2948294875299473548
+   },
+   "cookie": [
+    "secret-token-pre-checkpoint"
+   ],
+   "pages": 1,
+   "page_random": [
+    0.49651956567658984,
+    0.4998148068619187,
+    0.9187712575597066,
+    [
+     3448358872,
+     2944463056
+    ]
+   ]
+  }
+ },
+ "siblings_reseed_on": {
+  "a": {
+   "hostname": "drums-s1-dfd639",
+   "server": {
+    "pid": 36,
+    "python_random": 0.6995381175554947,
+    "numpy_loaded": true,
+    "numpy_random": 0.029515224811502594,
+    "hash": 2948294875299473548
+   },
+   "cookie": [],
+   "pages": 1,
+   "page_random": [
+    0.18788648197236157,
+    0.3308005352984478,
+    0.3474893850565064,
+    [
+     769961592,
+     1211815970
+    ]
+   ]
+  },
+  "b": {
+   "hostname": "drums-s2-f39478",
+   "server": {
+    "pid": 36,
+    "python_random": 0.699032255360075,
+    "numpy_loaded": true,
+    "numpy_random": 0.2299338747895714,
+    "hash": 2948294875299473548
+   },
+   "cookie": [],
+   "pages": 1,
+   "page_random": [
+    0.7878493549086415,
+    0.24296678922240522,
+    0.6424369010886288,
+    [
+     1106379394,
+     378832714
+    ]
+   ]
+  },
+  "reseed_a": {
+   "hostname": "drums-s1-dfd639",
+   "server_reseeded": 1,
+   "browser": {
+    "context": "B0C731631CC7806B3416B6B9A189B96A",
+    "target": "71E17B9B913368F84124E2A20CF10B66",
+    "title": "data:text/html,<title>drums-ready</title><h1>ready</h1>",
+    "closed": 1
+   }
+  },
+  "reseed_b": {
+   "hostname": "drums-s2-f39478",
+   "server_reseeded": 1,
+   "browser": {
+    "context": "B96D4ECC3055A9D76BFD86F20F04BB79",
+    "target": "44D006581745B80B4A007FFD7F6854FD",
+    "title": "drums-ready",
+    "closed": 1
+   }
+  },
+  "reseed_s": [
+   0.19790291786193848,
+   0.21515107154846191
+  ]
+ },
+ "not_clean_checkpoint": {
+  "a": {
+   "hostname": "drums-s4-f16416",
+   "server": {
+    "pid": 36,
+    "python_random": 0.5562474298049792,
+    "numpy_loaded": true,
+    "numpy_random": 0.8403053309422756,
+    "hash": 922520629094178889
+   },
+   "cookie": [
+    "task-login-token"
+   ],
+   "pages": 1,
+   "page_random": [
+    0.7364394806569494,
+    0.1645726099598137,
+    0.2644560137215063,
+    [
+     4178441914,
+     3623286502
+    ]
+   ]
+  },
+  "b": {
+   "hostname": "drums-s5-e96c68",
+   "server": {
+    "pid": 36,
+    "python_random": 0.30565488767420657,
+    "numpy_loaded": true,
+    "numpy_random": 0.5873790276525459,
+    "hash": 922520629094178889
+   },
+   "cookie": [
+    "task-login-token"
+   ],
+   "pages": 1,
+   "page_random": [
+    0.7364394806569494,
+    0.1645726099598137,
+    0.2644560137215063,
+    [
+     4064131053,
+     411676995
+    ]
+   ]
+  },
+  "reseed_a": {
+   "hostname": "drums-s4-f16416",
+   "server_reseeded": 1,
+   "browser": "preserved (checkpoint not declared clean)"
+  }
+ }
+}

@@ -1,8 +1,8 @@
 # Mechanism C: CRIU checkpoint and restore of a warm session
 
-**Status: BUILT as a feasibility probe. MEASURED on one host (raw data: `docs/data/l1-criu/`). Verdict: it works; speedup over a cold L0 start is 2.09x
-(interval 1.99 to 2.15) with a warm cache and 1.87x with a cold one; memory is 0.97x of cold; correctness passes C1 and C2, and C3 passes against a cold control but
-fails its literal wording on two shared host device nodes. No increment over any incumbent was measured.** Pre-registration: `l1-shared-runtime-design.md` section 14
+**Status: BUILT as a feasibility probe. MEASURED on one host (raw data: `docs/data/l1-criu/`). Verdict: it works, and the usable version (with the clone-hygiene reseed) is
+1.76x faster than a cold L0 start (interval 1.73 to 1.83), BELOW the registered 2x target; without the reseed it was 2.09x, but a restore that skips hygiene is not usable. Memory with the reseed is 1.04x of cold
+(4% MORE). C3 fails its original wording on two shared host device nodes and passes the amended revision 2a; supervisor-crash cleanup is demonstrated. No increment over any incumbent was measured.** Pre-registration: `l1-shared-runtime-design.md` section 14
 (commit `8f5ed06`). Results: section 15. `drums_level` stays L0. A fast restore is prior-art territory (VM snapshot resume).
 
 ## The idea in plain English
@@ -78,6 +78,13 @@ flowchart TB
 - **The server-only arm is PARTIAL:** the browser stays cold, so it is not the mechanism. It missed the 2x target.
 - **What it took:** CRIU 4.2 (4.1.1 cannot read TCP socket options on kernel 6.18); a session whose fds and mappings all lie inside its own root; the kill-on-parent-exit signal disabled; the
   overlay upper kept on a host-visible tmpfs. Full list and the CRIU flags in section 15.
+
+## Follow-up: hygiene, crash cleanup, amended audit (section 17 of the design doc)
+
+- **Clone hygiene is built:** hostname, the guest server's Python `random`, and (for a checkpoint DECLARED CLEAN only) the browser's cookies and a fresh renderer. A checkpoint not declared clean keeps its browser state, because erasing a real task's cookies would change the task. Residuals: Python's string-hash seed and the address-space layout stay identical across clones.
+- **With the reseed:** restore p50 1.19 s vs cold 2.10 s = **1.76x (FAIL of the 2x target)**; memory 238.3 vs 229.6 MiB per session (1.04x, passes the 1.05x threshold, but costs more than cold).
+- **Crash cleanup:** killing the supervisor with restored sessions live leaves them running (friendly mode removed the kernel's kill), and the ownership sweep then reaps all of it (processes, 7 mounts, links, table) while sparing a decoy. Works for the run that made the checkpoint only.
+- **C3 under revision 2a** (exactly `/dev/null` and `/dev/urandom`, with the cold control): PASS; under the original wording: FAIL, kept.
 
 ## Honest limits
 

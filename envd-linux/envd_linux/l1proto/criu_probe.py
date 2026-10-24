@@ -56,14 +56,37 @@ def screenshot(ip, timeout=5):
         return r.read()
 
 
+_DIFF = (
+    "import io,sys,pickle\nfrom PIL import Image, ImageChops\na,b=pickle.load(sys.stdin.buffer)\n"
+    "a,b=Image.open(io.BytesIO(a)).convert('RGB'),Image.open(io.BytesIO(b)).convert('RGB')\n"
+    "print(1.0 if a.size!=b.size else ImageChops.difference(a,b).convert('L').point(lambda v:255 if v>16 else 0).histogram()[255]/(a.size[0]*a.size[1]))\n")
+
+
 def changed_fraction(png_a, png_b):
-    import io
-    from PIL import Image, ImageChops
+    """Fraction of pixels that differ (by more than 16/255) between two PNGs. Uses Pillow here if present, else the system python3's."""
+    try:
+        import io
+        from PIL import Image, ImageChops
+    except ImportError:
+        import pickle
+        r = subprocess.run(["/usr/bin/python3", "-c", _DIFF], input=pickle.dumps((png_a, png_b)), capture_output=True)
+        return float(r.stdout.decode().strip())
     a, b = Image.open(io.BytesIO(png_a)).convert("RGB"), Image.open(io.BytesIO(png_b)).convert("RGB")
     if a.size != b.size:
         return 1.0
     d = ImageChops.difference(a, b).convert("L").point(lambda v: 255 if v > 16 else 0)
     return d.histogram()[255] / (a.size[0] * a.size[1])
+
+
+def blank_png(w=1280, h=800, rgb=(0, 0, 0)):
+    """A solid-colour PNG without any imaging library (for comparisons against a blank desktop)."""
+    import struct
+    import zlib
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    raw = (b"\x00" + bytes(rgb) * w) * h
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
 def cdp_titles(init_pid):
@@ -240,7 +263,7 @@ def main(argv=None):
                 time.sleep(2)
                 if name == "srv":
                     blank["png"] = screenshot(info["ip"])
-                ck[name] = sup.checkpoint(slot, os.path.join(tmp, f"ck-{name}"))
+                ck[name] = sup.checkpoint(slot, os.path.join(tmp, f"ck-{name}"), clean=True)  # the data-URL page holds no task setup and no login
                 return {"dump_seconds": ck[name].meta()["dump_seconds"], "image_mib": ck[name].meta()["image_bytes"] / 2**20}
             return go
 
@@ -293,6 +316,11 @@ def main(argv=None):
                 r["introduced_by_restore"] = {"character_devices": sorted(set(r["shared_character_devices"]) - set(ctl["shared_character_devices"])),
                                               "writable_files": sorted(set(r["shared_regular_files_writable"]) - set(ctl["shared_regular_files_writable"])),
                                               "locks": sorted(set(r["shared_lock_entries"]) - set(ctl["shared_lock_entries"]))}
+                dev_names = lambda keys: {k.split(":", 3)[3] for k in keys}
+                # revision 2a (registered in section 16.4): shared writable objects tolerated only if they are exactly /dev/null and /dev/urandom AND the cold control shares them too
+                r["PASS_revision_2a"] = bool(r["PASS_ignoring_devices"] and dev_names(r["shared_character_devices"]) <= {"/dev/null", "/dev/urandom"}
+                                             and set(r["shared_character_devices"]) <= set(ctl["shared_character_devices"])
+                                             and not any(r["introduced_by_restore"].values()))
                 r["PASS_vs_cold_control"] = bool(r["PASS_ignoring_devices"] and not any(r["introduced_by_restore"].values()))
                 return r
             if 1 in live:

@@ -1,0 +1,403 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "criu": "Version: 4.2",
+ "args": {
+  "out": "/tmp/claude-0/scratch/criu_probe_reseeded.json",
+  "task": "/tmp/claude-0/scratch/osw-main/evaluation_examples/examples/os/e0df059f-28a6-4169-924f-b9623e7184cc.json",
+  "starts": 20,
+  "trials": 3,
+  "max_n": 20,
+  "skip_memory": false,
+  "skip_correctness": false,
+  "drop_caches": false
+ },
+ "stages": {
+  "R1_criu_check": {
+   "ok": true,
+   "seconds": 0.07794976234436035,
+   "pass": true,
+   "detail": "u: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n/tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n"
+  },
+  "R3_server_only_dump": {
+   "ok": true,
+   "seconds": 3.9698312282562256,
+   "dump_seconds": 0.27318358421325684,
+   "image_mib": 75.74168968200684
+  },
+  "R4_chromium_dump": {
+   "ok": true,
+   "seconds": 4.998012065887451,
+   "dump_seconds": 0.8508651256561279,
+   "image_mib": 252.07124137878418
+  },
+  "R3_server_only_restore": {
+   "ok": true,
+   "seconds": 0.7519640922546387,
+   "restore_total_s": 0.702277421951294,
+   "criu_restore_s": 0.24796772003173828,
+   "screenshot_bytes": 3391
+  },
+  "R4_chromium_restore": {
+   "ok": true,
+   "seconds": 1.0906257629394531,
+   "restore_total_s": 0.8107044696807861,
+   "criu_restore_s": 0.3378288745880127,
+   "browser_titles": [
+    "drums-ready"
+   ]
+  },
+  "C2_screenshot_shows_browser": {
+   "ok": true,
+   "seconds": 0.3282754421234131,
+   "ready_extra_s": 0.16967034339904785,
+   "changed_fraction_vs_blank": 0.9974453125,
+   "titles": [
+    "drums-ready"
+   ],
+   "PASS": true
+  },
+  "C3_sibling_audit": {
+   "ok": true,
+   "seconds": 7.069573402404785,
+   "processes": {
+    "a": 18,
+    "b": 18
+   },
+   "pid_sets_disjoint": true,
+   "distinct_namespaces": {
+    "pid": true,
+    "mnt": true,
+    "net": true,
+    "ipc": true,
+    "uts": true
+   },
+   "shared_pipe_or_socket_inodes": [],
+   "shared_regular_files_readonly": [],
+   "shared_regular_files_writable": [],
+   "shared_character_devices": [
+    "chr:6:3:/dev/null",
+    "chr:6:7:/dev/urandom"
+   ],
+   "shared_lock_entries": [],
+   "xvfb_socket_inodes_differ": true,
+   "addresses_differ": true,
+   "write_in_a_visible_in_b": false,
+   "PASS_ignoring_devices": true,
+   "cold_pair_control": {
+    "shared_pipe_or_socket_inodes": [],
+    "shared_regular_files_writable": [],
+    "shared_character_devices": [
+     "chr:6:3:/dev/null",
+     "chr:6:7:/dev/urandom"
+    ],
+    "shared_lock_entries": [],
+    "PASS_ignoring_devices": true
+   },
+   "PASS_literal": false,
+   "introduced_by_restore": {
+    "character_devices": [],
+    "writable_files": [],
+    "locks": []
+   },
+   "PASS_revision_2a": true,
+   "PASS_vs_cold_control": true
+  },
+  "C1_public_task_from_restored_session": {
+   "ok": true,
+   "seconds": 33.21864175796509,
+   "score_before": 0.0,
+   "score_after": 1.0,
+   "sessions_were_restored": true,
+   "PASS": true
+  }
+ },
+ "latency": {
+  "COLD": {
+   "n": 20,
+   "p50": 2.096000909805298,
+   "p95": 2.235459327697754,
+   "mean": 2.118419361114502,
+   "all": [
+    1.9917774200439453,
+    2.094266176223755,
+    2.055086851119995,
+    2.2290689945220947,
+    2.048152208328247,
+    2.1320509910583496,
+    2.093204975128174,
+    2.164472818374634,
+    2.0759644508361816,
+    2.233196258544922,
+    2.1049892902374268,
+    2.016618490219116,
+    2.0808637142181396,
+    2.1264169216156006,
+    2.097735643386841,
+    2.076416492462158,
+    2.056036949157715,
+    2.2144935131073,
+    2.199117422103882,
+    2.2784576416015625
+   ]
+  },
+  "RESTORE_FULL": {
+   "n": 20,
+   "p50": 1.1883180141448975,
+   "p95": 1.2900432705879212,
+   "mean": 1.1952932119369506,
+   "all": [
+    1.1260566711425781,
+    1.1802797317504883,
+    1.1367967128753662,
+    1.202530860900879,
+    1.160426378250122,
+    1.2648651599884033,
+    1.1877849102020264,
+    1.2862279415130615,
+    1.157175064086914,
+    1.2684357166290283,
+    1.1668429374694824,
+    1.362534523010254,
+    1.0981299877166748,
+    1.1325345039367676,
+    1.2101984024047852,
+    1.2040901184082031,
+    1.1888511180877686,
+    1.1980657577514648,
+    1.1463878154754639,
+    1.2276499271392822
+   ]
+  },
+  "RESTORE_SERVER_ONLY": {
+   "n": 20,
+   "p50": 1.2449431419372559,
+   "p95": 1.374409019947052,
+   "mean": 1.2676891803741455,
+   "all": [
+    1.1998348236083984,
+    1.2016079425811768,
+    1.2405619621276855,
+    1.2173714637756348,
+    1.2258398532867432,
+    1.2049167156219482,
+    1.2269275188446045,
+    1.3028123378753662,
+    1.330091953277588,
+    1.2053871154785156,
+    1.2660791873931885,
+    1.2258071899414062,
+    1.1870908737182617,
+    1.3072929382324219,
+    1.2493243217468262,
+    1.2909226417541504,
+    1.2683532238006592,
+    1.4819467067718506,
+    1.3687491416931152,
+    1.3528656959533691
+   ]
+  },
+  "ratio_cold_over_restore_full_p50": 1.7638383705842922,
+  "ratio_cold_over_restore_server_only_p50": 1.683611756392112
+ },
+ "latency_faults": [],
+ "memory": [
+  {
+   "arm": "COLD",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 132208
+    },
+    {
+     "n": 4,
+     "delta_kib": 827308
+    },
+    {
+     "n": 8,
+     "delta_kib": 1758728
+    },
+    {
+     "n": 12,
+     "delta_kib": 2706596
+    },
+    {
+     "n": 16,
+     "delta_kib": 3663144
+    },
+    {
+     "n": 20,
+     "delta_kib": 4574960
+    }
+   ],
+   "slope_mib_per_session": 229.10838658146966
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 215188
+    },
+    {
+     "n": 4,
+     "delta_kib": 953236
+    },
+    {
+     "n": 8,
+     "delta_kib": 1910424
+    },
+    {
+     "n": 12,
+     "delta_kib": 2882724
+    },
+    {
+     "n": 16,
+     "delta_kib": 3861940
+    },
+    {
+     "n": 20,
+     "delta_kib": 4852840
+    }
+   ],
+   "slope_mib_per_session": 237.90362919329075
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 159624
+    },
+    {
+     "n": 4,
+     "delta_kib": 896140
+    },
+    {
+     "n": 8,
+     "delta_kib": 1864532
+    },
+    {
+     "n": 12,
+     "delta_kib": 2852536
+    },
+    {
+     "n": 16,
+     "delta_kib": 3811640
+    },
+    {
+     "n": 20,
+     "delta_kib": 4790632
+    }
+   ],
+   "slope_mib_per_session": 237.90508186900962
+  },
+  {
+   "arm": "COLD",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 155880
+    },
+    {
+     "n": 4,
+     "delta_kib": 858860
+    },
+    {
+     "n": 8,
+     "delta_kib": 1808568
+    },
+    {
+     "n": 12,
+     "delta_kib": 2721288
+    },
+    {
+     "n": 16,
+     "delta_kib": 3674536
+    },
+    {
+     "n": 20,
+     "delta_kib": 4608852
+    }
+   ],
+   "slope_mib_per_session": 228.7606030351438
+  },
+  {
+   "arm": "COLD",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 182548
+    },
+    {
+     "n": 4,
+     "delta_kib": 903596
+    },
+    {
+     "n": 8,
+     "delta_kib": 1872808
+    },
+    {
+     "n": 12,
+     "delta_kib": 2789504
+    },
+    {
+     "n": 16,
+     "delta_kib": 3732840
+    },
+    {
+     "n": 20,
+     "delta_kib": 4686816
+    }
+   ],
+   "slope_mib_per_session": 230.9032997204473
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 192380
+    },
+    {
+     "n": 4,
+     "delta_kib": 943288
+    },
+    {
+     "n": 8,
+     "delta_kib": 1890688
+    },
+    {
+     "n": 12,
+     "delta_kib": 2887208
+    },
+    {
+     "n": 16,
+     "delta_kib": 3865460
+    },
+    {
+     "n": 20,
+     "delta_kib": 4851912
+    }
+   ],
+   "slope_mib_per_session": 239.14967052715656
+  }
+ ],
+ "memory_summary": {
+  "COLD": 229.59076311235359,
+  "RESTORE": 238.31946052981897,
+  "restore_over_cold": 1.0380185043123615,
+  "cold_minus_restore_ci95": [
+   -9.858276757188492,
+   -7.416645034611292
+  ]
+ }
+}

@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 16 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 17 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -700,3 +700,58 @@ terminal-interference route; `/dev/zero`, `/dev/full` and `/dev/random` were not
 **Browser hygiene scope (supersedes the browser bullet of 16.3).** Clearing cookies and storage and opening a new browser context is a property of a DECLARED CLEAN CHECKPOINT only: one taken from a session whose browser holds no task setup and no login (the probe's data-URL page). A checkpoint is
 declared clean when it is created (`clean=True`); the reseed applies the browser step only to a clean checkpoint. For a later real task checkpoint (declared not clean) the browser is left untouched: its cookies, storage, logged-in sessions and task setup are PRESERVED, because erasing them would change the task. The cost of that choice is stated, not hidden: siblings of a non-clean checkpoint share identical logged-in state by design and the page renderer's random-number state (V8 `Math.random`) is a clone; that clone state is a known residual for such checkpoints.
 What is reset for every restored sibling regardless: the hostname, and the guest-server process's Python and numpy random-number state (neither is task state). What is reset only for clean checkpoints: default-context cookies and storage, and the renderer. The single public task `e0df059f` validates only that task from a clean checkpoint; it does not validate general benchmark semantics, logged-in tasks, or non-clean checkpoints.
+
+
+## 17. Mechanism C follow-up results (MEASURED; raw data in `docs/data/l1-criu/`)
+
+**Status: MEASURED on one host, against the thresholds registered in section 16 and its corrections in 16.4 (`080a893`, `fc1d88d`). PROTOTYPE. `drums_level` stays L0.**
+In plain terms: the supervisor-crash cleanup works, restored siblings can be made to diverge without breaking the public task, and the amended audit rule passes; but with the hygiene step in place the restore is
+1.76 times faster than a cold start, not 2.09 (that number was for a restore with no hygiene, which is not a usable restore), so the latency target is missed, and a restored session now costs 4% MORE memory than a cold one.
+
+### 17.1 C3 under the amended rule (the original FAIL stays in the record)
+
+| Rule | Result |
+|---|---|
+| Original wording (section 14), `ca07330` run and this run | **FAIL**: two shared writable objects, `/dev/null` and `/dev/urandom` |
+| Revision 2a (section 16.4: exactly those two, and the cold control shares them too, and nothing else) | **PASS**: the shared objects are exactly those two; the cold-pair control shares the same two; restore introduced no shared device, writable file or lock; no pipe or socket inode shared; a write in one sibling is invisible to the other |
+Whether sharing those two host device nodes is acceptable is still a judgement about L0 that the reviewer may reject, in which case C3 stays FAIL. Nothing was run under the withdrawn six-device wording.
+
+### 17.2 Supervisor crash: orphan cleanup (the regression friendly mode introduced)
+
+`tests/test_criu_orphan_cleanup.py`, data `orphan_cleanup.json`. A Supervisor with one cold friendly session and two restored siblings (and a checkpoint layer) was killed with SIGKILL.
+- **The regression is real:** after the kill, all of the run's session processes were still alive (4 processes carrying the run's tag), 2 veth links and 7 mounts under the state directory remained.
+- **The ownership sweep reaped it all:** it killed the 4 tagged processes, unmounted all 7 recorded mounts (overlay roots, tmpfs stages, checkpoint layer, template tmpfs), deleted the run's nftables table and the X11 links; afterwards 0 tagged processes, 0 mounts, 0 `dvh*` links, no table, no ledger file.
+- **It spared what is not ours:** a decoy process with another run's tag and a tmpfs at an unrecorded path were untouched.
+- Passed on the first complete run (my expectation was about 75%). A second, unplanned demonstration: when I killed a probe run with SIGKILL mid-measurement, its leftover session was also reaped by the sweep.
+- Two things the test taught me: a killed-but-unreaped supervisor still looks alive to the sweep (the test waits for it), and a restored session carries the checkpointing run's tag in its command line, so cleanup works only for the run that made the checkpoint; reuse of a checkpoint across runs would need the tag to be rewritten or recorded, which is not built.
+- A leak found while measuring, now fixed and covered by a test: a restore that failed after the session was registered (the reseed step) left its processes and veth behind, because `destroy()` needed a `session.json` that is written last.
+**Cleanup is demonstrated for these cases (supervisor SIGKILL with restored and cold friendly sessions); it is not demonstrated for a crash during the restore call itself, or for sessions of a different run than the checkpoint's.**
+
+### 17.3 Clone hygiene (`tests/test_criu_clone_hygiene.py`; data `clone_hygiene.json`, `clone_task_semantics.json`)
+
+**1. The clone problem, shown (reseed off, two siblings from one checkpoint):** same hostname (`drums-s90`); the guest-server process's next `random.random()` is identical (0.646335 in both); the page's next three `Math.random()` values are identical (0.49652, 0.499815, 0.918771); the pre-checkpoint cookie is present in both; Python's string-hash seed is identical. **Not a clone, contrary to what I registered:** the numpy global generator differed between the siblings (it is seeded lazily on first use), and `crypto.getRandomValues` differed (kernel-backed). So the cloned parts are Python's `random`, V8's `Math.random`, the cookie jar and the hostname.
+
+**2. With the reseed (clean checkpoint):** hostnames differ (`drums-s1-dfd639`, `drums-s2-f39478`); the server's Python draws differ (re-run three times, all different); numpy still differs; the new-context page's `Math.random()` differs between siblings; the pre-checkpoint cookie is gone in both; the page is still there (one page target, title present, screenshot 99.7% different from blank).
+
+**3. Scope for a checkpoint NOT declared clean (a stand-in for a real task checkpoint):** the cookie `task-login-token` is PRESERVED in both siblings and the page is untouched; hostname and the server's Python state are still reseeded; the page's `Math.random()` sequence is identical across those siblings, the stated residual. What is preserved and what is reset, and why, is in 16.4: the browser is reset only for a declared clean checkpoint because erasing cookies or storage from a real task checkpoint would change the task.
+
+**4. Semantics:** the public task `e0df059f` scores **0.0 then 1.0** through the real evaluator from a reseeded restored session (sessions confirmed restored and reseeded), and the session's wall clock differs from the host's by 0.19 s. This validates that task from a clean checkpoint with a hand-written step. It does not validate logged-in tasks, tasks that depend on browser state, non-clean checkpoints, or general benchmark semantics.
+
+Known residual, not fixable without restarting processes: Python's string-hash seed and the whole address-space layout are identical across clones (a security-relevant property of restored siblings, as with any fork-style cloning).
+
+### 17.4 Latency and memory WITH the reseed (20 starts per arm interleaved, 3 memory trials; the registered pass criteria of section 14 and 16.3)
+
+| Arm | p50 | p95 | vs COLD (p50) |
+|---|---|---|---|
+| COLD | 2.10 s | 2.24 s | |
+| RESTORE (full, reseeded) | 1.19 s | 1.29 s | **1.76x** (bootstrap 95% interval 1.73 to 1.83) |
+| RESTORE-SERVER-ONLY (PARTIAL; hostname and server reseed only, no browser to reset) | 1.25 s | 1.37 s | 1.68x |
+
+- **Latency target (>= 2x): FAIL**, as I predicted in advance (I expected 1.5 to 1.7x; it is slightly better, still below). The reseed costs about 0.2 s per start (the new browser context round trip dominates). The 2.09x of section 15 was a restore with no hygiene.
+- **Memory:** COLD 229.6 MiB per added session, RESTORE 238.3 MiB (ratio **1.038**; restored sessions cost 7.4 to 9.9 MiB MORE, the extra renderer of the new browser context). Against the registered numeric threshold (<= 1.05x) this **passes**; against the plain statement "no more than cold" it does not. I report both.
+- The earlier no-hygiene numbers (section 15) are unchanged and remain the record for a restore that skips the reseed; they are not the figures for a usable restore.
+- A host-level check: 793 `/proc/sys` entries before and after were identical.
+
+### What is still NOT established
+
+No increment over an incumbent (no KVM here). Cross-run checkpoint reuse and crash-during-restore cleanup are untested. Task semantics are validated for one public task from a clean checkpoint only. One host, one kernel, no GPU, `--no-sandbox` Chromium.

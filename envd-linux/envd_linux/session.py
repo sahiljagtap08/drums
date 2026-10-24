@@ -60,7 +60,7 @@ class Supervisor:
                  firewall=None, nat=False, block_private_egress=True,
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
-                 ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None):
+                 ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -82,6 +82,7 @@ class Supervisor:
         # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8): sessions forked from a zygote
         self.zygote, self.server_mode, self.workload = zygote, server_mode, workload
         self._ckpt_layers = []
+        self.restore_reseed = restore_reseed  # clone.reseed on every restored sibling (hostname, server RNG; browser only for a clean checkpoint)
         self.criu, self.restore_from, self._restored = criu, restore_from, {}  # restore_from: a criu.Checkpoint; create() then restores it
         self.criu_friendly = criu_friendly or restore_from is not None  # PROTOTYPE of mechanism C (section 14): a session CRIU can dump
         self.limits, self.cgroup_root, self._cgroups = limits, cgroup_root, {}  # READINESS: per-session cgroup limits (limits.py)
@@ -292,9 +293,10 @@ class Supervisor:
             time.sleep(0.1)
         subprocess.run(["umount", "-l", path], capture_output=True)
 
-    def checkpoint(self, slot, path):
+    def checkpoint(self, slot, path, clean=False):
         """PROTOTYPE of mechanism C: CRIU-dump the running session in `slot` (its processes die), keep its overlay upper as the
-        checkpoint's read-only layer, release the slot. Returns the criu.Checkpoint."""
+        checkpoint's read-only layer, release the slot. `clean` declares that the session holds no task setup and no login (its browser
+        may be reset on restore); a checkpoint of real task state must leave it False. Returns the criu.Checkpoint."""
         from . import criu as cr
         ck = cr.Checkpoint(path)
         os.makedirs(path, exist_ok=True)
@@ -315,7 +317,7 @@ class Supervisor:
         if os.path.islink(link):
             os.unlink(link)
         shutil.rmtree(d, ignore_errors=True)
-        ck.write_meta(inner_if=f"dvs{slot}", display=info["display"], lower=self.lower, root_mode=self.root_mode, dump_seconds=res["seconds"],
+        ck.write_meta(clean=bool(clean), has_browser=(self.workload == "chromium"), inner_if=f"dvs{slot}", display=info["display"], lower=self.lower, root_mode=self.root_mode, dump_seconds=res["seconds"],
                       source_ip=info.get("ip"), image_bytes=sum(os.path.getsize(os.path.join(ck.img, f)) for f in os.listdir(ck.img)))
         del proc
         return ck
@@ -385,6 +387,15 @@ class Supervisor:
                     self.destroy(slot)
                     raise SessionError("restored session's guest server did not answer")
                 time.sleep(0.02)
+        if self.restore_reseed:
+            from . import clone
+            tr = time.time()
+            try:
+                info["reseed"] = clone.reseed(info, slot, clean=bool(meta.get("clean")) and bool(meta.get("has_browser")), python=self.python, pkg_dir=PKG_DIR)
+            except Exception:
+                self.destroy(slot)  # never leave a registered-but-unusable session behind
+                raise
+            info["reseed_s"] = time.time() - tr
         info["ready_s"] = time.time() - t0
         with open(os.path.join(d, "session.json.tmp"), "w") as f:
             json.dump(info, f)
@@ -407,7 +418,8 @@ class Supervisor:
             info = self.info(slot)
             os.kill(info["init_pid"], signal.SIGKILL)  # killing PID 1 of the namespace kills all of it
         except (OSError, FileNotFoundError, KeyError, ValueError):
-            pass
+            if isinstance(proc, _ForkedProc):  # session.json is written last: a session that failed before it still has its pid here
+                proc.kill()
         if isinstance(proc, _ForkedProc):
             proc.wait(10)  # a restored session's mount can be released only after its processes are gone
         if proc is not None and not isinstance(proc, _ForkedProc):

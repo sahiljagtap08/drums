@@ -1,0 +1,59 @@
+{
+ "before_kill": {
+  "processes_with_tag": 4,
+  "mounts_under_state_dir": 7
+ },
+ "after_supervisor_sigkill": {
+  "surviving_processes_with_tag": 4,
+  "veth_links": [
+   "dvh1",
+   "dvh2",
+   "dvh3"
+  ],
+  "mounts_under_state_dir": 7
+ },
+ "sweep_report": {
+  "killed": [
+   7111,
+   7273,
+   7429,
+   7430
+  ],
+  "links": [],
+  "unmounted": [
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/state/s1/stage",
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/state/s2/stage",
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/state/s3/stage",
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/state/s1/root",
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/state/s2/root",
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/state/tplfs",
+   "/tmp/pytest-of-root/pytest-126/test_sweep_reaps_restored_sess0/w/ck/layer"
+  ],
+  "tables": [
+   "drums_0ce3282a382c"
+  ],
+  "ip_forward_restored": null,
+  "entries_removed": [
+   6786
+  ],
+  "live_supervisors": [],
+  "x11_links": [
+   "/tmp/.X11-unix/X91",
+   "/tmp/.X11-unix/X92",
+   "/tmp/.X11-unix/X93"
+  ],
+  "sysfs_restored": [],
+  "cgroups": []
+ },
+ "after_sweep": {
+  "processes_with_tag": 0,
+  "mounts_under_state_dir": 0,
+  "dvh_links": [],
+  "nft_table_present": false,
+  "ledger_files": 0
+ },
+ "decoys": {
+  "process_alive": true,
+  "mount_present": true
+ }
+}

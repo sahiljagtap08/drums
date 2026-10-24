@@ -105,6 +105,9 @@ def start_server(a, env, kit):
     server_dir = f"{kit}/server"
     py = f"{kit}/venv/bin/python"
     entry = "import main; main.app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)"
+    if a.criu_friendly:  # signal handlers the per-sibling reseed of a restored session uses (clone.py); installed before any checkpoint
+        from .clone import SERVER_HOOK
+        entry = SERVER_HOOK + entry
     if a.server_mode == "asshipped":  # `python main.py`: OSWorld's debug reloader, so two interpreters
         return subprocess.Popen([py, "main.py"], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
     if a.server_mode == "module":  # fresh interpreter, same entry as the fork arm
