@@ -1,5 +1,7 @@
 # Drums on Linux: architecture and envd-linux scope
 
+**Epistemic status: DESIGN. HYPOTHESIS-UNTESTED except where a line says "tested here".** The L0 session machinery it describes is BUILT: see `architecture-overview.md`. The L1 part is not built.
+
 Status: design. Nothing in this document is built except what is marked "tested here".
 Where I decided something the repo does not state, it says "decision" and gives the
 alternative that was rejected, so the owner can overrule it.

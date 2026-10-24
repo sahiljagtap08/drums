@@ -1,5 +1,7 @@
 # Phase C: matched short RL run, Drums-Linux vs a tuned incumbent backend
 
+**Epistemic status: PLAN and RESEARCH NOTES. HYPOTHESIS-UNTESTED: no training has run; licence and hardware facts are quoted from their sources.**
+
 Status: plan only. Phase C is unscheduled, nothing is launched, no cloud resource exists,
 no price in this document was fetched, and no spend is approved. Everything below was read
 from the owning sources on 2026-10-23 unless it says "derived" (my arithmetic from those

@@ -1,5 +1,7 @@
 # Drums-on-Linux vs tuned Linux incumbents: comparison design
 
+**Epistemic status: DESIGN with BUILT local code (the harness and scorer, fake-tested). No real comparison has been run.** The runner for the OSWorld tasks is specified in `matched-comparison-protocol.md`.
+
 Status: design and local code only. Nothing here has been run on a real environment, no
 cloud resource exists, and no spend is approved. This replaces the earlier macOS-based
 plan, which is withdrawn (the Mac, its cost plan and the questions about it are dropped).

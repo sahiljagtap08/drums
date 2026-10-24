@@ -1,5 +1,7 @@
 # Incident: host state left by the systemd-as-PID-1 probe
 
+**Epistemic status: RECORD of an incident (evidence quoted from the commands that ran at the time).**
+
 STATUS: closed. Nothing was cleaned by hand; the state was already gone when the cleanup was authorised.
 
 ## What happened

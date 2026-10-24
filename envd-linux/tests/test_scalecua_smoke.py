@@ -65,3 +65,16 @@ def test_wall_cap_stops_the_job_and_destroys_every_session(tmp_path):
     res = json.loads(out.read_text())
     assert res["status"] == "wall_cap_reached" and res["summary"]["attempts"] < 200
     assert veths() == [] and subprocess.run(["pgrep", "-x", "Xvfb"], capture_output=True).returncode == 1
+
+
+@pytest.mark.skipif(not os.path.exists("/opt/drums-osworld-real/server/main.py"), reason="build the kit: python -m envd_linux.realkit <OSWorld checkout>")
+def test_smoke_with_the_real_guest_server_goes_through_the_trainers_controller_path(tmp_path):
+    p, out = run_smoke(tmp_path, "--slots", "2", "--attempts", "3", "--concurrency", "2", "--max-wall-s", "240",
+                       "--real-kit", "/opt/drums-osworld-real")
+    assert p.returncode == 0, p.stderr[-800:]
+    res = json.loads(out.read_text())
+    assert res["status"] == "ok", res["summary"]
+    assert res["summary"]["ok"] == 3 and not res["summary"]["faults"]
+    # the real server's accessibility route and real pyautogui were checked in every attempt
+    assert "create_controller" in res["controller_path"] or "patch.build" in res["controller_path"]
+    assert veths() == [] and subprocess.run(["pgrep", "-x", "Xvfb"], capture_output=True).returncode == 1

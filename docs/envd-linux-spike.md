@@ -1,5 +1,7 @@
 # envd-linux spike: what runs, what is proven, what is stubbed
 
+**Epistemic status: BUILT and MEASURED (one sample on one sandbox, numbers in this page; tests in `envd-linux/tests`).** L0 only.
+
 Status: local spike on this sandbox only. Nothing launched, no cloud, no credentials.
 Code: `envd-linux/envd_linux/`, tests `envd-linux/tests/`. Adapter and harness changes in `compare/`.
 

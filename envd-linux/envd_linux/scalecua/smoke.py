@@ -112,12 +112,44 @@ def check_guest(c: GuestClient, expect_size=(1280, 800)):
     return bad
 
 
+def make_controller(args, backend):
+    """Build the controller the way the trainer's worker does: through `create_controller("drums", ...)` after the entry point's
+    `install()`, so the smoke exercises the SAME env-pool path (delegation, patched factory, pool, session lifecycle) the trainer
+    will use. Falls back to `patch.build` (the function that factory calls) when `agentrl-worker` is not importable."""
+    from . import patch
+    delegation = DrumsEnvironmentDelegation()
+    options = dict(backend=backend, slots=args.slots, health_timeout=args.health_timeout,
+                   acquire_timeout=args.acquire_timeout, events_path=args.events, eager_reset=False)
+    try:
+        import agentrl.worker.environment as env
+    except ImportError:
+        return patch.build(delegation, **options), "patch.build (agentrl-worker not importable here)"
+    patch.install()
+    return env.create_controller("drums", delegation, **options), "agentrl.worker.environment.create_controller('drums')"
+
+
+def check_real_server(c):
+    """With the real OSWorld kit: the server's own accessibility route returns a tree and real pyautogui runs."""
+    bad = []
+    try:
+        st, body = c._req("GET", "/accessibility")
+        if st != 200 or b"desktop-frame" not in body:
+            bad.append("real_accessibility")
+    except Exception:
+        bad.append("real_accessibility")
+    try:
+        r = c.execute(["python", "-c", "import pyautogui; print(pyautogui.size())"])
+        if r.get("returncode") != 0 or "Size(" not in r.get("output", ""):
+            bad.append("real_pyautogui")
+    except Exception:
+        bad.append("real_pyautogui")
+    return bad
+
+
 def run(args, backend, now=time.time):
     result = {"status": "running", "args": {k: v for k, v in vars(args).items() if k != "func"},
               "host": host_facts(), "attempts": [], "t_start": now()}
-    ctl = DrumsEnvironmentController(DrumsEnvironmentDelegation(), backend, args.slots,
-                                     health_timeout=args.health_timeout, acquire_timeout=args.acquire_timeout,
-                                     events_path=args.events, eager_reset=False)
+    ctl, result["controller_path"] = make_controller(args, backend)
     ctl.run_loop_in_thread()
     stop = threading.Event()
     lock = threading.Lock()
@@ -164,6 +196,8 @@ def run(args, backend, now=time.time):
                 row["start_s"] = now() - t0
                 info = ctl.session_info(sid)["ubuntu"]
                 row["failed"] = check_guest(GuestClient(urls["ubuntu"]))
+                if getattr(args, "real_kit", None):
+                    row["failed"] += check_real_server(GuestClient(urls["ubuntu"]))
                 row["ok"] = not row["failed"]
                 from ..x11 import pidns_members
                 with lock:
@@ -236,6 +270,7 @@ def main(argv=None):
     ap.add_argument("--max-wall-s", type=float, default=600)
     ap.add_argument("--health-timeout", type=float, default=60)
     ap.add_argument("--acquire-timeout", type=float, default=120)
+    ap.add_argument("--real-kit", default=None, help="run the REAL OSWorld guest server from this kit (envd_linux.realkit)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--events", default=None)
     a = ap.parse_args(argv)
@@ -243,7 +278,8 @@ def main(argv=None):
     from ..session import Supervisor
     start_report = sw.sweep()  # outer sweep before: removes what an earlier killed run left
     sup = Supervisor(a.state, a.template, root_mode=a.root_mode, netns=not a.no_netns, osworld_port=5000,
-                     sweep_on_start=False)
+                     sweep_on_start=False, osworld_real_kit=a.real_kit,
+                     **({"init_python": a.real_kit + "/venv/bin/python", "server_mode": "module", "ready_timeout": 120} if a.real_kit else {}))
     res = None
     try:
         res = run(a, sup)

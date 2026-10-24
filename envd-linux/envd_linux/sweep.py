@@ -20,6 +20,7 @@ override it) BEFORE it changes anything, and appends to it as it creates things:
   ip_forward          prior value recorded BEFORE the run changed it      restored to that value, and only if
                                                                           the current value is still the one the
                                                                           run set (a foreign change is left alone)
+  other sysfs/proc    {path, prior, set_to} recorded BEFORE the write     same rule as ip_forward (KSM knobs today)
 
 A resource without a record (a process with no tag, a link with no alias, a table with another name, an
 unlisted mount, a leaked resource from a run that never wrote a ledger entry) is NOT touched. That is the
@@ -50,7 +51,7 @@ _LOCK = threading.Lock()  # record() is read-modify-write on a file shared by al
 DEFAULT_LEDGER = "/run/drums"
 FORWARD = "/proc/sys/net/ipv4/ip_forward"
 EMPTY = {"killed": [], "links": [], "unmounted": [], "tables": [], "ip_forward_restored": None,
-         "entries_removed": [], "live_supervisors": [], "x11_links": []}
+         "entries_removed": [], "live_supervisors": [], "x11_links": [], "sysfs_restored": []}
 
 
 def ledger_dir(path=None):
@@ -94,7 +95,7 @@ def register(state_dir, run_id, ledger=None):
     path = os.path.join(d, f"sup-{os.getpid()}-{next(_COUNTER)}.json")
     _save(path, {"pid": os.getpid(), "starttime": _starttime(os.getpid()), "run_id": run_id,
                  "tag": f"drums:{run_id}", "state_dir": os.path.abspath(state_dir), "t": time.time(),
-                 "mounts": [], "x11_links": [], "tables": [], "links": [], "forward": None})
+                 "mounts": [], "x11_links": [], "tables": [], "links": [], "forward": None, "sysfs": []})
     return path
 
 
@@ -109,6 +110,32 @@ def record(path, key, value):
         else:
             e[key] = value
         _save(path, e)
+
+
+def set_sysfs(ledger_path, path, value):
+    """Write a sysfs/proc knob, recording {path, prior, set_to} in the ledger FIRST so a crash can be undone. Returns the prior."""
+    with open(path) as f:
+        prior = f.read().strip()
+    record(ledger_path, "sysfs", {"path": path, "prior": prior, "set_to": str(value)})
+    with open(path, "w") as f:
+        f.write(str(value))
+    return prior
+
+
+def restore_sysfs(entry_sysfs, others_live=()):
+    """Undo recorded writes in reverse order, only where the knob still has the value we set. Returns the restored paths."""
+    done = []
+    for rec in reversed(entry_sysfs):
+        try:
+            with open(rec["path"]) as f:
+                cur = f.read().strip()
+            if cur == rec["set_to"] and rec["prior"] != cur and rec["path"] not in others_live:
+                with open(rec["path"], "w") as f:
+                    f.write(rec["prior"])
+                done.append(rec["path"])
+        except OSError:
+            pass
+    return done
 
 
 def unregister(path):
@@ -240,6 +267,8 @@ def sweep(ledger=None, force=False):
             if fw["prior"] != fw["set_to"]:
                 write_forward(fw["prior"])
                 rep["ip_forward_restored"] = fw["prior"]
+        live_paths = {r["path"] for le in live for r in le.get("sysfs", [])}
+        rep["sysfs_restored"] += restore_sysfs(e.get("sysfs", []), live_paths)
         unregister(e["_path"])
         rep["entries_removed"].append(e["pid"])
     return rep

@@ -1,5 +1,7 @@
 # Weights routes for the matched RL run: facts, no recommendation
 
+**Epistemic status: RESEARCH NOTES (licence facts as read from the cards; nothing downloaded).**
+
 STATUS: documentation only. Nothing was downloaded or used. The choice is the project owner's, with these facts in
 front of them. Everything here is about the START POLICY (initial weights) and the data and recipe that go
 with it; the environment backend (Drums versus the tuned baseline) is the same in every route.

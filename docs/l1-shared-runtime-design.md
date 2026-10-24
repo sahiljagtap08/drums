@@ -1,8 +1,8 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**STATUS: UNBUILT. DESIGN ONLY.** Nothing in this document exists as code. No L1 measurement has been taken,
-and nothing here is a result. Where this document names a mechanism, it is a candidate whose feasibility is
-unknown. Every number from this repository so far was taken at L0 (below) and is not evidence for L1.
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 11 are PROTOTYPE pre-registrations (each
+committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
+stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
 Related: `drums-linux-architecture.md` (the level definitions and the rule that every result states its level),
 `linux-comparison-design.md` (the matched comparison and the verdict rule), `envd-linux-spike.md` and
@@ -311,4 +311,51 @@ attached as its own PROFILE inside it, instead of one exec'd browser per session
   drive its siblings. A per-session filtering proxy would be needed and is NOT part of this milestone.
 - If the browser process model blocks safe branching (crashes, profile cross-talk, target confusion), the failure is documented in
   hazard-test style as a result.
+
+## 11. PROTOTYPE B results (measured; thresholds are the ones committed in d116f92)
+
+**PROTOTYPE of mechanism B. Not an L1 proof.** Raw data: `docs/data/l1-branch/` (`bench.json`, `isolation.json`). Code:
+`envd_linux/l1proto/branch*.py`. One sandbox (4 vCPU, 16 GiB, kernel 6.18), real OSWorld guest server in every session. The readable
+version with diagrams is `mechanism-b-shared-browser.md`.
+
+| ID | Threshold (fixed in d116f92) | Measured | Verdict |
+|---|---|---|---|
+| M1 memory | B slope <= 0.80 x A0 slope AND interval of (A0 - B) excludes 0 | A0 229.8, B 104.6 MiB per additional session (4 trials each; per-trial B 105.3 / 106.5 / 104.3 / 102.3). Ratio 0.455; A0 - B = 125.1 MiB, interval [122.9, 127.3]. Fixed cost of the shared browser 175 MiB; total at 20 sessions 4596 vs 2281 MiB | **PASS** (far better than the 0.65 to 0.85 I expected) |
+| M2 latency | B p95 < A0 p95 AND B p50 <= 0.7 x A0 p50 | A0 p50 0.320 / p95 0.380 s; B p50 0.205 / p95 0.233 s (profile copy 0.014 s of it, handoff 0.093 s); B p50 is 0.64 x A0 | **PASS** (I expected a FAIL: the handoff is cheaper than a cold launch) |
+| M3 storage isolation | 0 foreign observations, 0 cross-profile cache hits, 20 profiles | cookies, localStorage, IndexedDB: 0 foreign observations in 60 store checks; server saw 20 cache requests for 20 profiles (0 cross-profile hits); 0 requests with a foreign cookie header; each profile's second fetch hit its own cache | **PASS** |
+| M4 targets and routing | 20 distinct targets and contexts, 60 of 60 concurrent attaches correct | 20 distinct target ids and 20 distinct browser-context ids; every profile's `chrome://version` path matched; **concurrent attaches: 59 of 60 correct** (one, `C2x19`, failed its verification; cause not diagnosed: a handoff race or a verification artifact, not separated) | **FAIL** (by one) |
+| M5 shared-channel exposure | any cross-profile observation or influence path = leak = isolation FAIL | see below | **FAIL** |
+| M6 display and observation | reported | a session's own screenshot is byte-identical before and after its profile is attached; 24 windows sit in the one shared host display | reported: **the observation is not in the session** |
+| M7 blast radius | reported | see below | reported |
+
+### M5 in detail
+
+- **As built, a session cannot reach the endpoint**: Chromium bound the debugging port to 127.0.0.1 only (the requested
+  `--remote-debugging-address=0.0.0.0` was ignored in headful mode), so from inside a session the connection was refused. That is an
+  accident of the configuration, not a design property: any session that is to drive ITS OWN profile needs a path to the endpoint.
+- **With the simplest such path** (a plain TCP forwarder on the session's gateway address) a session could: list all 21 page targets
+  with their titles; read a value held only in a sibling's page memory (`SECRET-IN-P2`); execute script in the sibling (it changed the
+  sibling's title, which the host then saw); and read process information for the whole browser through the browser-level endpoint.
+  Reading the sibling's cookies through `Storage.getCookies` returned an empty list (not conclusive; the other channels already
+  suffice). Per-session filtering (a proxy exposing only that session's targets) is NOT built.
+- No connection or socket was shared between profiles (the server saw different client ports for different profiles).
+- Shared by design (process inventory, 20 profiles): 1 browser process, 2 zygotes, 1 GPU process, 1 network service, 1 storage service,
+  and 22 renderers (one per window plus spares).
+
+### M7 in detail (4 to 20 profiles attached)
+
+- Killing one renderer lost exactly ONE profile in each of 8 kills.
+- Killing the GPU process lost none of the remaining profiles (it is restarted).
+- Killing the browser main process took the debugging endpoint down: **every attached profile is lost**. The crash domain of a
+  shared browser is the whole host's sessions.
+
+### What this does and does not support
+
+- Supports: sharing one browser gives a real, large memory saving (54% less per additional session, 50% less in total at 20 sessions)
+  and a faster browser-ready time, with storage kept separate per profile.
+- Does not support B as a path: the isolation check fails (a sibling session can read and drive another session's pages through the
+  shared debugging endpoint), and the browser is not in the session's own display, so an OSWorld-style screenshot of the session
+  would be blank for the browser (measured, M6). A CDP screenshot substitute is not equivalent to the session's real desktop.
+- Useful as a bound: about 125 MiB per session is browser-side state that is duplicated when each session has its own browser. That is
+  the target for a mechanism that keeps per-session processes (next section).
 

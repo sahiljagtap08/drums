@@ -1,5 +1,7 @@
 # OSWorld-contract spike: guest server, network namespace, full-root overlay, controller skeleton
 
+**Epistemic status: BUILT and MEASURED locally (single runs; the tests named in each section are the evidence).** L0 only; the OSWorld image is not used.
+
 Status: local, this sandbox only. Nothing launched, no cloud, no credentials. Code:
 `envd-linux/envd_linux/{osworld_server,netsetup,session_init,session}.py` and
 `envd-linux/envd_linux/scalecua/`. Tests: `envd-linux/tests/test_osworld_*`, `test_scalecua_controller.py`.

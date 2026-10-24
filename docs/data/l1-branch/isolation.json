@@ -1,0 +1,137 @@
+{
+ "n_profiles": 20,
+ "M6_display_and_observation": {
+  "session_screenshot_unchanged_after_attach": true,
+  "note": "the profile windows live in the shared host Xvfb, not in the session's own display",
+  "windows_in_shared_xvfb": 24
+ },
+ "M3_storage_isolation": {
+  "profiles": 20,
+  "stores_checked_per_profile": 3,
+  "foreign_observations": [],
+  "server_cached_requests": 20,
+  "expected_if_isolated": 20,
+  "cross_profile_cache_hits": 0,
+  "requests_with_foreign_cookie_header": 0,
+  "second_fetch_served_from_own_cache": 20,
+  "PASS": true
+ },
+ "M4_targets": {
+  "distinct_target_ids": 20,
+  "distinct_browser_context_ids": 20,
+  "profile_path_mismatches": [],
+  "sample_profile_path": "/tmp/l1isoeojeskha/b/ud/P1"
+ },
+ "M4_concurrent_attach": {
+  "attempts": 60,
+  "correct": 59,
+  "failures": [
+   "C2x19"
+  ]
+ },
+ "M5a_as_built": {
+  "debug_port_bound_on": [
+   "127.0.0.1"
+  ],
+  "from_session_0": {
+   "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+  }
+ },
+ "M5b_with_forwarder_on_the_gateway": {
+  "reachable": true,
+  "targets_visible": 21,
+  "sibling_titles_visible": [
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "About Version",
+   "about:blank",
+   "ready-P2"
+  ],
+  "process_info_entries": 26,
+  "process_info_types": [
+   "GPU",
+   "browser",
+   "network.mojom.NetworkService",
+   "renderer",
+   "storage.mojom.StorageService"
+  ],
+  "sibling_cookies_read_via_browser_endpoint": [],
+  "sibling_secret_read": "SECRET-IN-P2",
+  "sibling_script_executed": "HIJACKED",
+  "sibling_title_seen_by_host_after": "HIJACKED",
+  "sibling_was_modified_by_a_session": true
+ },
+ "M5_process_inventory": {
+  "renderer": 22,
+  "browser": 1,
+  "zygote": 2,
+  "gpu-process": 1,
+  "utility:NetworkService": 1,
+  "utility:StorageService": 1
+ },
+ "M5_socket_reuse": {
+  "P3_client_ports": [
+   46102,
+   46112,
+   60340
+  ],
+  "P4_client_ports": [
+   46118,
+   46134,
+   60356
+  ],
+  "shared_connection_between_profiles": false
+ },
+ "M7_blast_radius": {
+  "before": {
+   "P5": true,
+   "P6": true,
+   "P7": true,
+   "P8": true
+  },
+  "profiles_lost_per_renderer_kill": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "after_renderer_kills_P5_to_P8_alive": {
+   "P5": false,
+   "P6": false,
+   "P7": false,
+   "P8": true
+  },
+  "after_killing_gpu_process": {
+   "P5": false,
+   "P6": false,
+   "P7": false,
+   "P8": true
+  },
+  "debug_endpoint_after_killing_browser": "down"
+ },
+ "VERDICT": {
+  "storage_isolation_leak": false,
+  "shared_debug_channel_leak": true,
+  "isolation_check": "FAIL"
+ }
+}

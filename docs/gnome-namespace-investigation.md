@@ -1,5 +1,7 @@
 # Can the OSWorld image's GNOME session run in a namespaced session without systemd as PID 1?
 
+**Epistemic status: HYPOTHESIS-UNTESTED for GNOME under our namespaces; one systemd-as-PID-1 experiment was RUN and MEASURED once (results and an incident in this page).**
+
 STATUS: desk investigation PLUS one local experiment (section 'Experiment: systemd as PID 1', below). The OSWorld image's GNOME session itself is still **not established**. This sandbox has no
 `gnome-session`, `gnome-shell`, `mutter` or `at-spi-bus-launcher`, no OSWorld image and no `/dev/kvm`
 (PID 1 here is `process_api`; `dbus-daemon` and `dbus-run-session` exist). Anything below that is not a

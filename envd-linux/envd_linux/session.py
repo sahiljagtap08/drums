@@ -59,7 +59,8 @@ class Supervisor:
                  size="1280x800x24", display_base=90, root_mode="home", netns=False, osworld_port=0,
                  firewall=None, nat=False, block_private_egress=True,
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
-                 zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30):
+                 zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
+                 ksm=False, no_aslr=False):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -80,6 +81,7 @@ class Supervisor:
                              "DRUMS_ALLOW_SYSTEMD_PROBE=1, and still writes into the host cgroup hierarchy")
         # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8): sessions forked from a zygote
         self.zygote, self.server_mode, self.workload = zygote, server_mode, workload
+        self.ksm, self.no_aslr = ksm, no_aslr  # PROTOTYPE of mechanism K (page merging); see l1-shared-runtime-design.md section 12
         self.init_python, self.ready_timeout = init_python or python, ready_timeout
         self.exec_systemd = exec_systemd  # EXPERIMENT: systemd as the session's PID 1 (see systemd_probe.py)
         self.osworld_real_kit = osworld_real_kit  # path to a realkit.py kit: run the REAL OSWorld server
@@ -146,6 +148,11 @@ class Supervisor:
                 self._saved_forward = None
         if self._ledger:
             from . import sweep as sw
+            try:
+                with open(self._ledger) as f:
+                    sw.restore_sysfs(json.load(f).get("sysfs", []))
+            except (OSError, ValueError):
+                pass
             sw.unregister(self._ledger)
             self._ledger = None
 
@@ -192,7 +199,8 @@ class Supervisor:
                  *(["--osworld-real", self.osworld_real_kit] if self.osworld_real_kit else []),
                  *(["--exec-systemd"] if self.exec_systemd else []),
                  *(["--server-mode", self.server_mode, "--timing", timing] if self.osworld_real_kit else []),
-                 *(["--workload", self.workload] if self.workload else [])]
+                 *(["--workload", self.workload] if self.workload else []),
+                 *(["--ksm"] if self.ksm else []), *(["--no-aslr"] if self.no_aslr else [])]
         self.t_request = {**getattr(self, "t_request", {}), slot: time.time()}
         if self.zygote:  # PROTOTYPE: fork from the pre-warmed zygote instead of exec'ing a fresh interpreter
             proc = _ForkedProc(self.zygote.spawn(sargs, env, os.path.join(d, "init.log"), net=self.netns))
@@ -241,6 +249,11 @@ class Supervisor:
             json.dump(info, f)
         os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))
         return info
+
+    def set_host_knob(self, path, value):
+        """Write a sysfs/proc knob with a ledger record first; undone by close() (and by the sweep after a crash)."""
+        from . import sweep as sw
+        return sw.set_sysfs(self._ledger, path, value)
 
     def info(self, slot):
         with open(os.path.join(self._dir(slot), "session.json")) as f:

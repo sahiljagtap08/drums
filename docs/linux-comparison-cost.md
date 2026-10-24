@@ -1,5 +1,7 @@
 # Linux-vs-Linux comparison: cost model and shutdown plan
 
+**Epistemic status: HYPOTHESIS-UNTESTED. A cost model with every price unverified; nothing is approved or launched.**
+
 STATUS: DRAFT MODEL, NOTHING APPROVED. The earlier Mac-based plan and its figures
 (USD 100, USD 140, a 10-hour cap) are withdrawn and are not carried into this document.
 No launch, provisioning or cloud credential use happens, and no approval is assumed.

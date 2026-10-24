@@ -1,5 +1,7 @@
 # Incumbent Linux setups: what is runnable end to end
 
+**Epistemic status: RESEARCH NOTES. HYPOTHESIS-UNTESTED: none of the incumbent setups listed here was configured or run by us.**
+
 Checked 2026-10-23 from the owning repos, papers and project docs reachable from this
 sandbox. Nothing below was installed or run. "Verified" means I read it in the owner's own
 source; "unverified" means I could not, and says what I did read instead.

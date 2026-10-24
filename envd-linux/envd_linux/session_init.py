@@ -192,9 +192,20 @@ def main(argv=None):
     ap.add_argument("--workload", choices=["", "chromium"], default="")
     ap.add_argument("--timing", default="")  # jsonl of wall-clock marks, opened before the pivot
     ap.add_argument("--chrome", default="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+    # PROTOTYPE of mechanism K (docs/l1-shared-runtime-design.md section 12): page merging across sessions
+    ap.add_argument("--ksm", action="store_true", help="prctl(PR_SET_MEMORY_MERGE): the whole session's memory may be merged by KSM")
+    ap.add_argument("--no-aslr", action="store_true", help="personality(ADDR_NO_RANDOMIZE) for every process exec'd in this session")
     ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
     a = ap.parse_args(argv)
 
+    if a.no_aslr or a.ksm:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        if a.no_aslr:
+            cur = libc.personality(0xFFFFFFFF)
+            libc.personality(cur | 0x0040000)  # ADDR_NO_RANDOMIZE: inherited across fork and exec
+        if a.ksm:
+            libc.prctl(67, 1, 0, 0, 0)  # PR_SET_MEMORY_MERGE
     if a.timing:
         TIMING["f"] = open(a.timing, "a")
     mark("init_start")
