@@ -35,3 +35,36 @@ def test_a_host_with_vmx_and_virtualbox_passes_the_incumbent_checks():
     assert names["cpu_virtualization"]["ok"] and names["virtualbox_installed"]["ok"] and names["virtualbox_installed"]["detail"].startswith("7.1")
     assert names["virtualbox_extension_pack"]["status"] == "untested" and "Extension Packs: 0" in names["virtualbox_extension_pack"]["detail"]
     assert r["go_incumbent"] is False  # untested items keep the answer at no-go until they are tested
+
+
+def test_empty_extpacks_output_does_not_crash_and_static_checks_are_not_runtime_probes():
+    class R:
+        def __init__(self, s, rc=0):
+            self.stdout, self.returncode, self.stderr = s, rc, ""
+    r = preflight.run(which=lambda t: "/usr/bin/" + t if t == "VBoxManage" else None, run_cmd=lambda cmd: R(""))
+    ext = [c for c in r["checks"] if c["name"] == "virtualbox_extension_pack"][0]
+    assert "empty output" in ext["detail"] and ext["status"] == "untested"
+    kinds = {c["name"]: c["kind"] for c in r["checks"]}
+    assert kinds["namespace_pid_file"] == "static" and kinds["probe_namespaces_can_be_created"] == "runtime_probe" and kinds["gate_canary_clean_on_both_arms"] == "gate"
+    probes = [c for c in r["checks"] if c["kind"] == "runtime_probe"]
+    assert probes and all(c["status"] == "untested" for c in probes)  # not run: untested, neither supported nor unsupported
+
+
+def test_joint_is_not_ready_while_gates_or_limits_or_hardware_state_are_untested_even_if_everything_else_passes():
+    class R:
+        def __init__(self, s="", rc=0):
+            self.stdout, self.returncode, self.stderr = s, rc, ""
+    probes = [("probe_namespaces_can_be_created", ["drums"], lambda: (True, "ok")), ("probe_overlay_mount_with_redirect_dir", ["drums"], lambda: (True, "ok")),
+              ("probe_cgroup_limits_can_be_written", ["drums_limits"], lambda: (True, "ok")), ("probe_virtualbox_reports_hardware_virtualization", ["incumbent"], lambda: (True, "yes"))]
+    r = preflight.run(criu_home="/nonexistent", read=lambda p: "flags : vmx\n" if p == "/proc/cpuinfo" else open(p).read(), which=lambda t: "/usr/bin/" + t,
+                      run_cmd=lambda cmd: R("7.1\n"), probe=True, probes=probes)
+    assert r["go_joint_run_on_this_host"] is False
+    assert "gate_evaluator_scores_correct_and_wrong" in r["untested"]  # the gates alone keep a joint run at no-go
+
+
+def test_a_failing_probe_is_unsupported_with_its_error():
+    def boom():
+        raise PermissionError("not permitted")
+    r = preflight.run(probe=True, probes=[("probe_namespaces_can_be_created", ["drums"], boom)])
+    c = [c for c in r["checks"] if c["name"] == "probe_namespaces_can_be_created"][0]
+    assert c["status"] == "unsupported" and "PermissionError" in c["detail"]

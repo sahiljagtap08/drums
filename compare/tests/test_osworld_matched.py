@@ -436,3 +436,26 @@ def test_alternating_blocks_keep_first_rollout_work_in_every_block_and_make_no_c
     assert s["engineering_validation_only"] and s["no_headline_claim"] and s["no_training_claim"] and "win" not in json.dumps(s)
     assert (tmp_path / "pins.json").exists() and (tmp_path / "block3_A.json").exists() and (tmp_path / "summary.json").exists()
     assert s["arms"]["A"]["interference"] == 0
+    assert s["resource_parity_claimed"] is False and s["per_environment_resource_capture"].startswith("MISSING")
+
+
+
+def test_first_check_reports_preparation_and_telemetry_instead_of_hiding_them(tmp_path):
+    from drums_compare import first_check as fc
+    clk = Clock()
+
+    def arm():
+        SnapEnv.clock = clk
+        return om.DesktopEnvAdapter("x", om.incumbent_factory("vmware", path_to_vm="/vm", desktop_env_module=SnapModule), reuse="post_setup")
+    tasks = {"a": {"id": "a", "config": [{"type": "launch"}]}}
+    cpu = iter(range(0, 1000, 7))
+    s = fc.run_alternating({"A": arm, "B": arm}, tasks, ["a", "a"], lambda: om.ScriptedAgent({}), 2, {"A": PRICE, "B": PRICE}, str(tmp_path), {},
+                           clock=clk, external_prep={"A": 1800.0}, mem_reader=lambda: 12345, cpu_reader=lambda: float(next(cpu)))
+    a, b = s["arms"]["A"], s["arms"]["B"]
+    assert a["external_prep_s"] == 1800.0 and b["external_prep_s"] == 0.0
+    assert a["cost_with_prep_usd"] > a["cost_usd"] and b["cost_with_prep_usd"] >= b["cost_usd"]  # prep is added to the arm that did it (1800 s at the placeholder price)
+    assert a["cost_per_valid_usd_with_prep"] > a["cost_per_valid_usd_run_arm_only"]
+    assert a["host_cpu_busy_s"] == [7.0, 7.0] and all(m and "baseline_kib" in m and m["samples"] >= 0 for m in a["host_memory"])  # a fake-clock run is too short for the 1 s sampler: baseline only, reported as samples=0
+    s2 = fc.run_alternating({"A": arm, "B": arm}, tasks, ["a"], lambda: om.ScriptedAgent({}), 2, {"A": PRICE, "B": PRICE}, str(tmp_path / "n"), {}, clock=clk,
+                            mem_reader=None, cpu_reader=None)
+    assert s2["arms"]["A"]["host_memory"] == "MISSING (no reader)" and s2["arms"]["A"]["host_cpu_busy_s"] == "MISSING (no reader)"
