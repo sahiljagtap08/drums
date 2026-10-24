@@ -137,7 +137,7 @@ def test_pgrep_dash_f_matches_its_own_shell_and_pgrep_dash_x_does_not(tmp_path):
 
 def test_the_gates_use_the_exact_name_form_of_pgrep_everywhere():
     code = open(hr.__file__).read()
-    assert "pgrep -f soffice.bin" not in code and code.count("pgrep -x soffice.bin") == 3
+    assert "pgrep -f soffice.bin" not in code and code.count("pgrep -x soffice.bin") == 2 and code.count('live_pids(sh_out, "soffice.bin")') == 2  # the cold gate's before/after use the state-based exact-name scan
 
 
 def test_skipping_the_image_hash_needs_an_owner_statement_and_binds_the_file_stat(tmp_path):
