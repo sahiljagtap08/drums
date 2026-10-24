@@ -599,6 +599,16 @@ def test_a_custom_base_root_that_cannot_run_the_session_is_refused_by_check_with
     cfg["drums_template_overlay"] = str(ov)
     assert "the kit's python" in [c for c in hr.check_all(cfg, deps)["checks"] if c["name"] == "drums_base_root_userland"][0]["detail"]  # python3.12 is still missing from the root
     _tree(str(ov), "/usr/bin/python3.12")
+    d12 = [c for c in hr.check_all(cfg, deps)["checks"] if c["name"] == "drums_base_root_userland"][0]
+    assert not d12["ok"] and "pyvenv.cfg" in d12["detail"]  # a kit with no recorded python version is refused, never guessed
+    os.remove(ov / "opt/drums-osworld-real/venv/bin/python")
+    _tree(str(ov), "/opt/drums-osworld-real/venv/bin/python", link="/usr/bin/python3.10")
+    _tree(str(ov), "/opt/drums-osworld-real/venv/pyvenv.cfg", "version = 3.12.3\n")
+    os.makedirs(ov / "opt/drums-osworld-real/venv/lib/python3.12/site-packages")
+    d_mix = [c for c in hr.check_all(cfg, deps)["checks"] if c["name"] == "drums_base_root_userland"][0]
+    assert not d_mix["ok"] and "never mixed" in d_mix["detail"]  # a 3.12 venv under the root's 3.10 is refused
+    (ov / "opt/drums-osworld-real/venv/pyvenv.cfg").write_text("version = 3.10.12\n")
+    os.makedirs(ov / "opt/drums-osworld-real/venv/lib/python3.10/site-packages")
     r = hr.check_all(cfg, deps)
     assert [c for c in r["checks"] if c["name"] == "drums_base_root_userland"][0]["ok"], r["checks"]
     assert r["inputs"]["template_overlay_listing"]
