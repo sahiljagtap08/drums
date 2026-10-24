@@ -1,5 +1,7 @@
 # Runbook: first matched Drums vs VirtualBox run on one AWS bare-metal host (action-ready preparation)
 
+**CORRECTED after independent review of `3bdcce1` (see `docs/aws-small-stage-plan.md` for the small Docker/KVM stage and the current controls): the original text below overstated readiness in these ways, now fixed in code but still UNRUN: the watcher exited when nothing was owned (now armed first, heartbeat receipt, dead-man switch); the launch trusted the approved CIDR instead of inspecting the security group and accepted any non-root account (now exact account, inspected group, account-wide one-host inventory); a repeated `--tag-specifications` flag could lose the instance tags and the root device name was hard-coded (now one flag and the AMI's real root mapping); the config hash did not bind input bytes (now every input is digest-bound); the image manifest was never read (now required for a comparison, with measured digest-bound equivalence evidence per difference, otherwise the run is labelled NOT_A_COMPARISON); the live gate had no GUI state (a Writer pixel-state gate was added for the snapshot incumbent); stubs were allowed silently (comparison mode now refuses any stub); bootstrap lacked directories and kit packages; and export archived whole work directories (now an explicit allowlist). The VirtualBox path below remains unrun and needs the 96 vCPU quota.**
+
 **Status: BUILT (code and scripts, unit-tested with fakes) and UNRUN. HYPOTHESIS-UNTESTED for everything that needs the host. No AWS credential was available here, no instance was launched, no quota was changed, nothing was spent, nothing was merged to main. No VirtualBox, no VM image and no real incumbent result exists. The first result this produces will be an engineering validation on ONE task: no throughput, no cost-advantage, no training and no benchmark claim.**
 
 Branch `claude/linux-comparison-prep` only. Owner actions are marked **OWNER**; everything else is code in this repository.
@@ -31,9 +33,9 @@ Branch `claude/linux-comparison-prep` only. Owner actions are marked **OWNER**; 
 
 0. **OWNER:** quota request 5 to 96 is APPROVED and in effect; a non-root IAM profile exists; the owner's SSH CIDR is known. (Both candidate instances are 96 vCPU, so 96 is exactly enough with nothing else running. Metal capacity in the chosen AZ is not known until a launch is attempted.)
 1. **OWNER:** copy `approval.example.json`, fill every field with current prices, set the budget at or above the `awsctl plan` worst case, set `approved: true`. `python -m drums_compare.awsctl plan --approval approval.json` must print the bill.
-2. **OWNER:** start the external watcher on a machine other than the host (`awsctl watch --approval approval.json --execute`), then `awsctl launch --approval approval.json` (dry run) and, if it answers as expected, `--execute`.
-3. On the host: `DRUMS_REF=<commit> bash deploy/aws_host/bootstrap.sh`.
-4. On the host: `bash deploy/aws_host/fetch_image.sh --accept-licence-risk`.
+2. **OWNER:** ARM the external watcher FIRST, on an always-on machine other than the host (`awsctl watch --approval approval.json --execute --receipt R`: it waits, heartbeats and expires if no launch comes), then `awsctl launch --approval approval.json --receipt R` (dry run; its verdict must read `allowed`) and, if it does, `--execute` (which refuses without a fresh receipt from a watcher that can terminate).
+3. On the host: `STAGE=vbox DRUMS_REF=<commit> bash deploy/aws_host/bootstrap.sh` (as a normal user; host_run itself runs as root with the host venv, see the end of bootstrap's output).
+4. On the host, as root: `bash deploy/aws_host/fetch_image.sh --accept-licence-risk`.
 5. `python -m drums_compare.host_run check --config host_run.json --out RUN` (all PASS, or stop).
 6. `... gates ...` (both arms pass, or stop).
 7. `... run ...` with `blocks: 2` first (a smoke), then the intended blocks only if the smoke is clean and time and budget remain.
