@@ -153,6 +153,39 @@ class DrumsSessionPool:
             self._event(event="fault", kind="reset_failed", slot=s.n, detail=str(e)[:200])
             self._release(s, _Slot.BROKEN)
 
+    # -- snapshot support (PROTOTYPE of mechanism C: the Drums provider's save_state / revert_to_snapshot)
+    def checkpoint_session(self, session_id, path, clean=False):
+        """Checkpoint the session's state and bring it back in place, so the holder carries on (same slot, same address)."""
+        with self._cond:
+            s = self._by_sid.get(session_id)
+        if s is None:
+            raise KeyError(session_id)
+        ck = self.backend.checkpoint(s.n, path, clean=clean)
+        s.info = self.backend.create(s.n, from_checkpoint=ck)
+        self._wait_healthy(s)
+        self._event(event="checkpoint", slot=s.n, session_id=session_id, path=path)
+        return ck
+
+    def restore_session(self, session_id, checkpoint):
+        """Replace the session's state with a checkpoint's (a revert to a named snapshot)."""
+        with self._cond:
+            s = self._by_sid.get(session_id)
+        if s is None:
+            raise KeyError(session_id)
+        t0 = self.clock()
+        self.backend.destroy(s.n)
+        s.info = self.backend.create(s.n, from_checkpoint=checkpoint)
+        self._wait_healthy(s)
+        self._event(event="revert", slot=s.n, session_id=session_id, seconds=self.clock() - t0)
+        return s.info
+
+    def _wait_healthy(self, s):
+        deadline = self.clock() + self.health_timeout
+        while not self.health(s.info["ip"]):
+            if self.clock() > deadline:
+                raise SessionStartError(f"guest on slot {s.n} not healthy within {self.health_timeout}s")
+            time.sleep(0.05)
+
     # -- helpers for the harness
     def renew(self, session_id):
         with self._cond:

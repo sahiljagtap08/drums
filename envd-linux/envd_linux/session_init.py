@@ -37,8 +37,10 @@ def setup_full_root(a):
     upper, work = f"{stage}/upper", f"{stage}/work"
     if a.criu_friendly:  # the upper must live where the host can copy it (a checkpoint of the processes is not a checkpoint of the files)
         upper, work = a.upper, a.work
-    sh("mount", "-t", "overlay", "overlay", "-o",
-       f"lowerdir={lower},upperdir={upper},workdir={work}", f"{stage}/merged")
+    opts = f"lowerdir={lower},upperdir={upper},workdir={work}"
+    if a.criu_friendly:
+        opts += ",redirect_dir=on"  # without it renaming a directory that lives in a lower layer fails with EXDEV (found on a restored task state)
+    sh("mount", "-t", "overlay", "overlay", "-o", opts, f"{stage}/merged")
     m = f"{stage}/merged"
     sh("mount", "-t", "proc", "proc", f"{m}/proc")
     sh("mount", "--rbind", "/sys", f"{m}/sys")
@@ -253,6 +255,11 @@ def main(argv=None):
         ready = open(a.ready, "w")
     if a.root == "full" and not a.stage2:
         setup_full_root(a)
+        try:  # sudo, getent and friends wait ~24 s for a DNS answer when the hostname does not resolve (the session has no DNS): found as the cost of a task setup
+            with open("/etc/hosts", "a") as hf:
+                hf.write(f"127.0.1.1 drums-s{a.display}\n")
+        except OSError:
+            pass
         if a.criu_friendly:
             os.set_inheritable(ready.fileno(), True)
             os.execv(sys.executable, [sys.executable, "-m", "envd_linux.session_init", *argv, "--stage2", "--ready-fd", str(ready.fileno())])

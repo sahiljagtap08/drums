@@ -126,6 +126,8 @@ class DrumsProvider(Provider):
         self.pool = pool
         self._lock = threading.Lock()
         self._sessions = {}  # path -> (session_id, ip)
+        self._snaps = {}  # snapshot name -> criu.Checkpoint (PROTOTYPE of mechanism C)
+        self._snap_dir = None
 
     def start_emulator(self, path_to_vm, headless=True, os_type=None):
         with self._lock:
@@ -141,10 +143,33 @@ class DrumsProvider(Provider):
         return ":".join([ip, *map(str, PORTS)])
 
     def save_state(self, path_to_vm, snapshot_name):
-        raise NotImplementedError("Drums sessions have no snapshot to save; a session is rebuilt per attempt")
+        """Snapshot the running session's LIVE state (processes, windows, files) with CRIU, and carry on from it in place.
+        Needs a pool whose backend can checkpoint (a Supervisor with criu_friendly=True and a private CRIU)."""
+        import os
+        import tempfile
+        with self._lock:
+            sid, ip = self._sessions[path_to_vm]
+        if not hasattr(self.pool.backend, "checkpoint"):
+            raise NotImplementedError("this Drums backend cannot checkpoint a session")
+        if self._snap_dir is None:
+            self._snap_dir = tempfile.mkdtemp(prefix="drums-snap-")
+        path = os.path.join(self._snap_dir, f"{len(self._snaps)}-{snapshot_name.replace('/', '_').replace(':', '_')}")
+        ck = self.pool.checkpoint_session(sid, path, clean=False)  # task state must be preserved, never reset
+        self._snaps[snapshot_name] = ck
+        info = self.pool.session_info(sid)
+        with self._lock:
+            self._sessions[path_to_vm] = (sid, info["ip"])
 
     def revert_to_snapshot(self, path_to_vm, snapshot_name):
-        self.stop_emulator(path_to_vm)
+        ck = self._snaps.get(snapshot_name)
+        if ck is None:  # the generic initial state: a session is rebuilt per attempt
+            self.stop_emulator(path_to_vm)
+            return path_to_vm
+        with self._lock:
+            sid, _ = self._sessions[path_to_vm]
+        info = self.pool.restore_session(sid, ck)
+        with self._lock:
+            self._sessions[path_to_vm] = (sid, info["ip"])
         return path_to_vm
 
     def stop_emulator(self, path_to_vm):

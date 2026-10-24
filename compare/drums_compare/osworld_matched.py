@@ -66,6 +66,8 @@ class Rollout:
     fault: str | None = None
     valid: bool = False
     t_start: float = 0.0
+    reuse_phase: str = ""  # "" (no reuse) | "setup+save" (first rollout of a task on an environment: the setup AND the save) | "revert"
+    state_kind: str = ""  # "" | "setup_only" (independent of any agent action) | "agent_prefix" (reached by one agent's actions: branch-style training only)
     canary: str = "off"  # off | clean | interference | unsupported
     canary_seen: list = field(default_factory=list)
 
@@ -82,6 +84,16 @@ class Lease(ABC):
 
     def release(self) -> None:  # noqa: B027
         pass
+
+    # Branching (PROTOTYPE of mechanism C): save the live state mid-task and later revert to it. phase / state_kind are set by reset() and restore_branch().
+    phase = ""
+    state_kind = ""
+
+    def save_branch(self, name: str) -> None:
+        raise NotImplementedError
+
+    def restore_branch(self, name: str, task_config: dict) -> dict:
+        raise NotImplementedError
 
     # Interference canary (READINESS): rollout k writes a marker into the slot, rollout k+1 on the same slot must not see it.
     def canary_probe(self) -> list:
@@ -170,6 +182,23 @@ class MemorySampler:
                 "mean_kib": statistics.mean(self.samples), "peak_delta_per_env_mib": (peak - self.baseline) / 1024 / max(concurrency, 1)}
 
 
+def _reuse_summary(rows):
+    """Reuse accounting. The first-rollout work (setup AND save) is reported apart from the cheap reverts and is INSIDE every headline number (the arm's wall
+    time and cost); state kinds are counted separately and never merged into one figure."""
+    out = {"phases": {}, "valid_by_state_kind": {}}
+    for r in rows:
+        if r.reuse_phase:
+            ph = out["phases"].setdefault(r.reuse_phase, {"n": 0, "reset_sum_s": 0.0})
+            ph["n"] += 1
+            ph["reset_sum_s"] += r.reset_s
+        if r.valid and r.state_kind:
+            out["valid_by_state_kind"][r.state_kind] = out["valid_by_state_kind"].get(r.state_kind, 0) + 1
+    for ph in out["phases"].values():
+        ph["reset_mean_s"] = ph["reset_sum_s"] / ph["n"]
+    out["first_rollout_work_s"] = out["phases"].get("setup+save", {}).get("reset_sum_s", 0.0)
+    return out
+
+
 def _canary(lease, r):
     try:
         seen = lease.canary_probe()
@@ -218,6 +247,7 @@ def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, 
                     t1 = clock()
                     obs = lease.reset(tasks_by_id[tid])
                     r.reset_s = clock() - t1
+                    r.reuse_phase, r.state_kind = getattr(lease, "phase", ""), getattr(lease, "state_kind", "")
                     if canary:
                         _canary(lease, r)
                     agent.start(tasks_by_id[tid], obs)
@@ -272,6 +302,7 @@ def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, 
                "cost_usd": prices.total(hours),
                "cost_per_valid_usd": prices.total(hours) / valid if valid else None,
                "rollout_wall_p50_s": pct(0.5), "rollout_wall_p95_s": pct(0.95),
+               "reuse": _reuse_summary(rows),
                "interference_count": sum(1 for r in rows if r.canary == "interference"),
                "canary_clean": sum(1 for r in rows if r.canary == "clean"),
                "canary_unsupported": sum(1 for r in rows if r.canary == "unsupported"),
@@ -306,14 +337,56 @@ def compare(a, b, n_boot=10000, seed=1):
 
 # ---------------- DesktopEnv-based adapters (public API only) ----------------
 class _DesktopEnvLease(Lease):
-    def __init__(self, env):
-        self.env = env
+    """One `DesktopEnv`. `reuse="post_setup"` uses only OSWorld's public snapshot API on BOTH arms: after the first rollout of a task on this environment its
+    setup is saved (`_save_state`), and later rollouts revert to that snapshot (`snapshot_name` + `reset` with the setup config emptied) instead of
+    replaying the setup. What the snapshot preserves is the PROVIDER's: a local-hypervisor VM keeps live state, the AWS provider keeps a disk image only."""
+
+    def __init__(self, env, adapter=None, worker=0):
+        self.env, self.adapter, self.worker = env, adapter, worker
+
+    def _revert_reset(self, name, task_config):
+        env = self.env
+        env.snapshot_name = name
+        env.is_environment_used = True  # DesktopEnv.reset then reverts to `name` and restarts the emulator handle
+        try:
+            return env.reset(task_config=dict(task_config, config=[]))  # the setup is already in the snapshot
+        finally:
+            env.snapshot_name = "init_state"
 
     def reset(self, task_config):
+        a = self.adapter
         try:
+            if a is not None and a.reuse == "post_setup":
+                key = (self.worker, task_config["id"])
+                name = f"post_setup:{task_config['id']}:w{self.worker}"
+                self.state_kind = "setup_only"
+                if key in a.saved:
+                    obs = self._revert_reset(a.saved[key], task_config)
+                    self.phase = "revert"
+                    return obs
+                obs = self.env.reset(task_config=task_config)
+                self.env._save_state(name)
+                a.saved[key] = name
+                self.phase = "setup+save"
+                return obs
             return self.env.reset(task_config=task_config)
         except Exception as e:
             raise AdapterFault("reset_failed", str(e)[:200]) from e
+
+    def save_branch(self, name):
+        try:
+            self.env._save_state(name)
+            self.state_kind = "agent_prefix"
+        except Exception as e:
+            raise AdapterFault("save_failed", str(e)[:200]) from e
+
+    def restore_branch(self, name, task_config):
+        try:
+            obs = self._revert_reset(name, task_config)
+            self.phase, self.state_kind = "revert", "agent_prefix"
+            return obs
+        except Exception as e:
+            raise AdapterFault("restore_failed", str(e)[:200]) from e
 
     def step(self, action):
         try:
@@ -333,6 +406,9 @@ class _DesktopEnvLease(Lease):
 
     def canary_write(self, token):
         _desktop_canary_write(self.env, token)
+        # the marker is a guest mutation made outside `step`, which DesktopEnv does not track: without this its next reset would skip the revert
+        # ("environment is clean") and the marker would survive. The canary found exactly that in the fake test; a real agent's `step` marks the env used itself.
+        self.env.is_environment_used = True
 
 
 CANARY_PATHS = ("/tmp/.drums_canary", "~/.drums_canary")
@@ -359,16 +435,19 @@ def _desktop_canary_write(env, token):
 class DesktopEnvAdapter(Adapter):
     """A pool of `DesktopEnv` instances built up front and REUSED across rollouts (reset between uses). `factory(worker)` builds one.
     Pool reuse and whatever snapshot revert the provider supports are the incumbent's own mechanisms: we only call
-    `reset`/`step`/`evaluate`/`close`, the public surface."""
+    `reset`/`step`/`evaluate`/`close` and, with `reuse="post_setup"`, `_save_state` and `snapshot_name`, the public snapshot surface; the same code path
+    serves both arms, so neither gets reuse the other lacks. First-rollout work is inside that rollout's measured reset time."""
 
-    def __init__(self, name, factory):
-        self.name, self.factory, self.envs = name, factory, []
+    def __init__(self, name, factory, reuse="none"):
+        if reuse not in ("none", "post_setup"):
+            raise ValueError(reuse)
+        self.name, self.factory, self.envs, self.reuse, self.saved = name, factory, [], reuse, {}
 
     def open(self, slots):
         self.envs = [self.factory(i) for i in range(slots)]
 
     def acquire(self, worker):
-        return _DesktopEnvLease(self.envs[worker])
+        return _DesktopEnvLease(self.envs[worker], self, worker)
 
     def close(self):
         for e in self.envs:
@@ -376,7 +455,7 @@ class DesktopEnvAdapter(Adapter):
                 e.close()
             except Exception:
                 pass
-        self.envs = []
+        self.envs, self.saved = [], {}
 
 
 def incumbent_factory(provider_name, region=None, path_to_vm=None, snapshot_name="init_state", screen_size=(1920, 1080),

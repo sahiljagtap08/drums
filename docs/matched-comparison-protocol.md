@@ -98,6 +98,10 @@ flowchart LR
   on a slot cannot see anything by construction. The check covers two file locations only; it does not look for leaked processes, browser state or
   clipboard. Tested with fake adapters that reset cleanly and that leak, a failing probe (a fault, never a pass), and the controller path, AND exercised in the real-session dry run (`test_osworld_matched_dryrun.py`): 4 of 4 rollouts probed clean on real Drums sessions, with a positive control (a written marker is seen by the probe; a Drums reset removes it). The incumbent adapter's canary has run against fakes only.
 
+## 4b. Reuse accounting (BUILT; real-session validation for the Drums arm only, see design doc sections 20 and 21)
+
+`DesktopEnvAdapter(reuse="post_setup")` gives BOTH arms the same reuse through OSWorld's public snapshot API (`_save_state` after the first rollout of a task, revert to it for later rollouts). Each rollout is labelled `setup+save` or `revert`; the first-rollout work is reported apart (`reuse.first_rollout_work_s`) and stays inside the arm's wall time and cost; state kinds (`setup_only`, `agent_prefix`) are counted separately and never merged. What an incumbent's snapshot preserves depends on its provider (live state on `vmware` and `virtualbox`; a disk image only on `aws`; unsupported on `docker`): the run specification must name the provider and what it preserves. Real-host checks still missing are in the design doc, section 20.2.
+
 ## 5. Verdict rule (fixed now)
 
 The ratio is *valid rollouts per dollar of Drums divided by the same quantity for the incumbent*, with a 95% bootstrap interval over

@@ -293,3 +293,124 @@ def test_desktop_env_lease_canary_uses_the_public_controller_and_sees_markers():
     assert lease.canary_probe() == []
     lease.canary_write("t1")
     assert lease.canary_probe() == ["t1"]
+
+
+
+# ---- snapshot-API reuse accounting (READINESS: fake DesktopEnv; the real-session version is envd-linux/tests/test_matched_reuse_real.py) ----
+class SnapEnv:
+    """A fake DesktopEnv with the public snapshot surface: reset replays the setup (cost `setup_s`) unless the config is empty, reverting first when used."""
+    clock = None
+    setup_s, revert_s, save_s = 10.0, 1.0, 2.0
+    log = []
+
+    def __init__(self, **kw):
+        self.kw, self.snapshot_name, self.is_environment_used, self.saved = kw, "init_state", False, set()
+        self.markers = {}
+
+    def reset(self, task_config=None, seed=None, options=None):
+        if self.is_environment_used:
+            SnapEnv.log.append(("revert", self.snapshot_name))
+            self.clock.advance(self.revert_s)
+            self.markers = {}  # a revert undoes anything written after the snapshot
+            self.is_environment_used = False
+        if task_config.get("config"):
+            self.clock.advance(self.setup_s)
+            SnapEnv.log.append(("setup", task_config["id"]))
+            self.is_environment_used = True
+        return {"screenshot": b""}
+
+    def _save_state(self, name):
+        self.clock.advance(self.save_s)
+        self.saved.add(name)
+        SnapEnv.log.append(("save", name))
+
+    def step(self, action, pause=2):
+        self.is_environment_used = True
+        return {"screenshot": b""}, 0, False, {}
+
+    def evaluate(self):
+        return 1.0
+
+    def close(self):
+        pass
+
+    @property
+    def controller(self):
+        env = self
+
+        class C:
+            def run_bash_script(self, script, timeout=30):
+                if script.startswith("cat"):
+                    return {"status": "success", "output": "\n".join(env.markers.values())}
+                for part in script.split("; "):
+                    tok, path = part.replace("echo ", "").split(" > ")
+                    env.markers[path] = tok
+                return {"status": "success", "output": ""}
+        return C()
+
+
+class SnapModule:
+    DesktopEnv = SnapEnv
+
+
+def _snap_run(reuse, seq, clk):
+    SnapEnv.clock, SnapEnv.log = clk, []
+    tasks = {"a": {"id": "a", "config": [{"type": "launch"}]}, "b": {"id": "b", "config": [{"type": "launch"}]}}
+    ad = om.DesktopEnvAdapter("arm", om.incumbent_factory("vmware", path_to_vm="/vm", desktop_env_module=SnapModule), reuse=reuse)
+    return ad, om.run_arm(ad, tasks, seq, lambda: om.ScriptedAgent({}), 1, PRICE, clock=clk)
+
+
+def test_post_setup_reuse_shows_first_rollout_work_separately_and_keeps_it_in_the_headline():
+    clk = Clock()
+    ad, r = _snap_run("post_setup", ["a", "a", "a", "b", "b"], clk)
+    s = r["summary"]
+    ph = [row["reuse_phase"] for row in r["rows"]]
+    assert ph == ["setup+save", "revert", "revert", "setup+save", "revert"]
+    # first rollout of a task: setup 10 + save 2 (13 for the second task: the env was dirty, so DesktopEnv reverts to its initial state first); reverts: 1
+    assert [round(row["reset_s"], 6) for row in r["rows"]] == [12.0, 1.0, 1.0, 13.0, 1.0]
+    assert s["reuse"]["first_rollout_work_s"] == 25.0 and s["reuse"]["phases"]["revert"]["n"] == 3
+    assert s["reuse"]["valid_by_state_kind"] == {"setup_only": 5}
+    assert s["wall_s"] == 28.0 and s["cost_usd"] == 28.0 and s["valid"] == 5  # the first-rollout work is in the wall time and the cost
+    assert [x for x in SnapEnv.log if x[0] == "setup"] == [("setup", "a"), ("setup", "b")]  # setup replayed once per task, not per rollout
+
+
+def test_without_reuse_the_same_arm_replays_the_setup_every_rollout_and_labels_nothing():
+    clk = Clock()
+    ad, r = _snap_run("none", ["a", "a", "a"], clk)
+    s = r["summary"]
+    assert [row["reuse_phase"] for row in r["rows"]] == ["", "", ""] and s["reuse"]["phases"] == {} and s["reuse"]["valid_by_state_kind"] == {}
+    assert s["wall_s"] == 10 + (1 + 10) * 2  # 3 setups, 2 reverts of the init_state
+
+
+def test_both_arms_take_the_same_reuse_path_through_the_same_adapter_class():
+    for provider in ("vmware", "virtualbox"):
+        clk = Clock()
+        SnapEnv.clock, SnapEnv.log = clk, []
+        ad = om.DesktopEnvAdapter(provider, om.incumbent_factory(provider, path_to_vm="/vm", desktop_env_module=SnapModule), reuse="post_setup")
+        r = om.run_arm(ad, {"a": {"id": "a", "config": [{"type": "launch"}]}}, ["a", "a"], lambda: om.ScriptedAgent({}), 1, PRICE, clock=clk)
+        assert [row["reuse_phase"] for row in r["rows"]] == ["setup+save", "revert"]
+
+
+def test_the_canary_still_sees_nothing_after_a_snapshot_revert_and_catches_a_leaky_one():
+    clk = Clock()
+    ad, r = _snap_run("post_setup", ["a", "a", "a"], clk)
+    assert r["summary"]["interference_count"] == 0 and r["summary"]["canary_clean"] == 3
+    SnapEnv.clock = clk
+    orig = SnapEnv.reset
+
+    def leaky(self, task_config=None, **k):  # a revert that forgets to undo what the previous rollout wrote
+        keep = dict(self.markers)
+        out = orig(self, task_config, **k)
+        self.markers = keep
+        return out
+    SnapEnv.reset = leaky
+    try:
+        ad, r = _snap_run("post_setup", ["a", "a", "a"], Clock())
+    finally:
+        SnapEnv.reset = orig
+    assert r["summary"]["interference_count"] == 2
+
+
+def test_an_unknown_reuse_mode_is_refused():
+    with pytest.raises(ValueError):
+        om.DesktopEnvAdapter("x", lambda w: None, reuse="magic")

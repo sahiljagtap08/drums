@@ -82,6 +82,7 @@ class Supervisor:
         # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8): sessions forked from a zygote
         self.zygote, self.server_mode, self.workload = zygote, server_mode, workload
         self._ckpt_layers = []
+        self._slot_layers = {}
         self.restore_reseed = restore_reseed  # clone.reseed on every restored sibling (hostname, server RNG; browser only for a clean checkpoint)
         self.criu, self.restore_from, self._restored = criu, restore_from, {}  # restore_from: a criu.Checkpoint; create() then restores it
         self.criu_friendly = criu_friendly or restore_from is not None  # PROTOTYPE of mechanism C (section 14): a session CRIU can dump
@@ -170,12 +171,14 @@ class Supervisor:
     def display(self, slot):
         return self.display_base + slot
 
-    def create(self, slot):
+    def create(self, slot, from_checkpoint=None):
+        """Start a session in `slot`: cold, or (PROTOTYPE of mechanism C) restored from `from_checkpoint`, defaulting to `self.restore_from`."""
         d = self._dir(slot)
         if slot in self._procs:
             raise SessionError(f"slot {slot} already running")
-        if self.restore_from is not None:
-            return self._restore(slot)
+        ck = from_checkpoint if from_checkpoint is not None else self.restore_from
+        if ck is not None:
+            return self._restore(slot, ck)
         shutil.rmtree(d, ignore_errors=True)
         for sub in ("upper", "work", "x11"):
             os.makedirs(os.path.join(d, sub))
@@ -301,7 +304,7 @@ class Supervisor:
         ck = cr.Checkpoint(path)
         os.makedirs(path, exist_ok=True)
         info = self.info(slot)
-        res = cr.dump(self.criu, info["init_pid"], ck.img, inner_if=f"dvs{slot}")
+        res = cr.dump(self.criu, info["init_pid"], ck.img, inner_if=info.get("inner_if", f"dvs{slot}"))
         if res["rc"] != 0:
             raise SessionError(f"criu dump failed: {res['log'][-3:]}")
         proc = self._procs.pop(slot, None)
@@ -317,15 +320,17 @@ class Supervisor:
         if os.path.islink(link):
             os.unlink(link)
         shutil.rmtree(d, ignore_errors=True)
-        ck.write_meta(clean=bool(clean), has_browser=(self.workload == "chromium"), inner_if=f"dvs{slot}", display=info["display"], lower=self.lower, root_mode=self.root_mode, dump_seconds=res["seconds"],
+        ck.write_meta(clean=bool(clean), has_browser=(self.workload == "chromium"), inner_if=info.get("inner_if", f"dvs{slot}"),
+                      layers=[os.path.join(layer, "upper")] + list(self._slot_layers.get(slot, [])), display=info["display"], lower=self.lower, root_mode=self.root_mode, dump_seconds=res["seconds"],
                       source_ip=info.get("ip"), image_bytes=sum(os.path.getsize(os.path.join(ck.img, f)) for f in os.listdir(ck.img)))
         del proc
         return ck
 
-    def _restore(self, slot):
+    def _restore(self, slot, ck):
         from . import criu as cr
         from . import sweep as sw
-        ck, meta, d = self.restore_from, self.restore_from.meta(), self._dir(slot)
+        meta, d = ck.meta(), self._dir(slot)
+        layers = list(meta.get("layers") or [os.path.join(ck.path, "layer", "upper")])
         shutil.rmtree(d, ignore_errors=True)
         for sub in ("x11", "root"):
             os.makedirs(os.path.join(d, sub))
@@ -343,9 +348,12 @@ class Supervisor:
         sw.record(self._ledger, "mounts", root)  # recorded before the mount exists
         t0 = time.time()
         subprocess.run(["mount", "-t", "overlay", "overlay", "-o",
-                        f"lowerdir={os.path.join(ck.path, 'layer', 'upper')}:{meta['lower']}:/,upperdir={upper},workdir={work}", root],
+                        f"lowerdir={':'.join(layers)}:{meta['lower']}:/,upperdir={upper},workdir={work},redirect_dir=on", root],
                        check=True)
         sw.record(self._ledger, "links", f"dvh{slot}")  # CRIU creates the host end; recorded first
+        end = time.time() + 10
+        while os.path.exists(f"/sys/class/net/dvh{slot}") and time.time() < end:  # the previous session's veth goes away asynchronously after its namespace dies
+            time.sleep(0.05)
         pidfile = os.path.join(d, "pid")
         res = cr.restore(self.criu, ck.img, root, x11, f"dvh{slot}", pidfile, inner_if=meta["inner_if"])
         if res["rc"] != 0:
@@ -374,7 +382,8 @@ class Supervisor:
         self._restored[slot] = root
         try:  # from here the session is registered: any failure must tear it down, never leave processes, mounts or a veth behind
             self._epochs[slot] = self._epochs.get(slot, 0) + 1
-            info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": HOME, "unshare_pid": pid,
+            self._slot_layers[slot] = layers  # a checkpoint of this session stacks on these read-only layers
+            info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": HOME, "unshare_pid": pid, "inner_if": meta["inner_if"],
                     "created": time.time(), "root_mode": self.root_mode, "netns": True, "osworld_port": self.osworld_port,
                     "restored": True, "criu_restore_s": res["seconds"], "restore_total_s": time.time() - t0, **net}
             deadline = time.time() + self.ready_timeout
@@ -438,6 +447,7 @@ class Supervisor:
         link = f"/tmp/.X11-unix/X{self.display(slot)}"
         if os.path.islink(link):
             os.unlink(link)
+        self._slot_layers.pop(slot, None)
         root = self._restored.pop(slot, None)
         if root is not None:  # a restored session's overlay root was mounted on the host by us
             self._umount(root)
