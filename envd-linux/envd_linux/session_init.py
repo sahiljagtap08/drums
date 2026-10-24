@@ -101,21 +101,36 @@ def drop_privileges(uid, gid):
 
 
 def process_table():
-    """[(pid, euid, comm)] of what is running in this session's PID namespace, read from /proc."""
+    """[(pid, ppid, euid, comm)] of what is running in this session's PID namespace, read from /proc."""
     out = []
     for pid in os.listdir("/proc"):
         if not pid.isdigit():
             continue
         try:
             comm = open(f"/proc/{pid}/comm").read().strip()
-            uid = [int(l.split()[2]) for l in open(f"/proc/{pid}/status") if l.startswith("Uid:")][0]
+            st = open(f"/proc/{pid}/status").read().splitlines()
+            uid = [int(l.split()[2]) for l in st if l.startswith("Uid:")][0]
+            ppid = [int(l.split()[1]) for l in st if l.startswith("PPid:")][0]
         except (OSError, IndexError):
             continue
-        out.append((int(pid), uid, comm))
+        out.append((int(pid), ppid, uid, comm))
     return out
 
 
-def record_identity(a, env):
+def tree_of(root_pid, table):
+    """root_pid and every descendant in `table` (the server's own process tree; never this init, never other python)."""
+    kids, seen, todo = {}, {root_pid}, [root_pid]
+    for pid, ppid, _, _ in table:
+        kids.setdefault(ppid, []).append(pid)
+    while todo:
+        for c in kids.get(todo.pop(), []):
+            if c not in seen:
+                seen.add(c)
+                todo.append(c)
+    return seen
+
+
+def record_identity(a, env, server=None):
     """Identity of what actually runs, recorded as a timing mark: the uid of the desktop processes and the WINDOW MANAGER name read from X (_NET_SUPPORTING_WM_CHECK -> _NET_WM_NAME), never just a binary version."""
     wm, deadline = None, time.time() + (60 if a.desktop == "gnome" else 5)
     while time.time() < deadline and wm is None:
@@ -131,9 +146,11 @@ def record_identity(a, env):
         if wm is None:
             time.sleep(0.5)
     procs = process_table()
+    spid = getattr(server, "pid", server)
+    mine = tree_of(spid, procs) if spid else set()
     want = ("gnome-shell", "gnome-session-binary", "gnome-session") if a.desktop == "gnome" else (WM_COMMANDS[a.desktop][0],)
-    mark("identity", desktop=a.desktop, wm_name=wm, uid_requested=a.uid, desktop_procs=sorted({(c, u) for _, u, c in procs if c in want}),
-         server_uids=sorted({u for _, u, c in procs if c.startswith("python")}), user=env.get("USER"), home=env.get("HOME"))
+    mark("identity", desktop=a.desktop, wm_name=wm, uid_requested=a.uid, desktop_procs=sorted({(c, u) for _, _, u, c in procs if c in want}),
+         server_pid=spid, server_uids=sorted({u for pid, _, u, _ in procs if pid in mine}), user=env.get("USER"), home=env.get("HOME"))
 
 
 def http_ok(url, timeout=0.5):
@@ -219,6 +236,11 @@ def start_real_desktop(a):
     os.makedirs(a.home, exist_ok=True)  # an image root may not have the home yet; harmless otherwise
     open(os.path.join(a.home, ".Xauthority"), "a").close()  # python-xlib insists on the file existing
     if a.uid >= 0:
+        for sub in ("screenshots", "__pycache__"):  # the unmodified main.py writes server/screenshots/screenshot.png next to itself; the user must be able to, and ONLY these two directories change owner
+            d = os.path.join(kit, "server", sub)
+            os.makedirs(d, exist_ok=True)
+            os.chown(d, a.uid, a.gid)
+        os.chmod("/tmp", 0o1777)  # recordings use tempfile.mkdtemp under /tmp
         os.chown(a.home, a.uid, a.gid)
         os.chown(os.path.join(a.home, ".Xauthority"), a.uid, a.gid)
     bus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
@@ -230,14 +252,14 @@ def start_real_desktop(a):
     time.sleep(0.5)
     lo_up()
     mark("desktop_stack_started")
-    start_server(a, env, kit, pre)
+    server = start_server(a, env, kit, pre)
     mark("server_spawned")
     deadline = time.time() + 60
     while time.time() < deadline and not http_ok("http://127.0.0.1:5000/platform")[0]:
         time.sleep(0.02)
     mark("server_ready")
     if a.desktop != "openbox" or a.uid >= 0:
-        record_identity(a, env)
+        record_identity(a, env, server)
     if a.workload == "chromium":
         start_chromium(a, env)
         mark("chromium_spawned")

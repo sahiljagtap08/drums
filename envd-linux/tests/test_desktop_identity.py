@@ -23,7 +23,7 @@ def test_the_drop_clears_supplementary_groups_then_gid_then_uid(monkeypatch):
 
 def test_the_process_table_reads_proc_with_uids():
     t = SI.process_table()
-    assert any(pid == os.getpid() and uid == os.geteuid() for pid, uid, _ in t)
+    assert any(pid == os.getpid() and uid == os.geteuid() and ppid == os.getppid() for pid, ppid, uid, _ in t)
 
 
 def sup(tmp_path, **kw):
@@ -41,3 +41,17 @@ def test_the_supervisor_validates_desktop_and_user_and_defaults_stay(tmp_path):
     with pytest.raises(ValueError, match="fork"):
         sup(tmp_path, uid=1000, gid=1000, user="user", server_mode="fork")
     assert sup(tmp_path, uid=1000, gid=1000, user="user", desktop="gnome").user == "user"
+
+
+def test_the_server_identity_is_its_own_process_tree_never_init_or_other_python():
+    table = [(1, 0, 0, "python3"), (10, 1, 1000, "python"), (11, 10, 1000, "python"), (12, 11, 1000, "sh"), (20, 1, 0, "python3"), (30, 1, 1000, "gnome-shell")]
+    tree = SI.tree_of(10, table)
+    assert tree == {10, 11, 12}
+    assert sorted({u for pid, _, u, _ in table if pid in tree}) == [1000]  # init (1, uid 0) and the other root python (20) are not counted
+    assert SI.tree_of(99, table) == {99}
+
+
+def test_only_the_two_server_output_directories_change_owner_and_nothing_else_in_the_kit():
+    import inspect
+    src = inspect.getsource(SI.start_real_desktop)
+    assert '("screenshots", "__pycache__")' in src and "os.chown(d, a.uid, a.gid)" in src and "chown(kit" not in src and "chown(os.path.join(kit" not in src

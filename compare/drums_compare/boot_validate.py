@@ -1,5 +1,5 @@
 """BOOT-ONLY validation of Drums in a read-only image root, before any timing. PROTOTYPE: no live run has happened. Run as root on the owner's host, after `mount_image_rootfs.sh` and
-`prepare_kit_for_image.sh`; it starts ONE session, records what actually ran and stops. It never times anything, and `timing_allowed` is true only if every check below holds:
+`prepare_kit_for_image.sh`; it starts ONE session, records what actually ran and stops. It never times anything, and `boot_identity_ok` is true only if every check below holds. It authorizes NO timing: task gates and parity checks are still required (`timing_authorized` is always false here):
 
   1. the image root plus the template overlay can run the session (rootcheck: programs of the chosen desktop, loader, kit, kit python minor == the root's python, site-packages), else ABORT_ROOT
      with the reasons and NO session is created;
@@ -52,7 +52,7 @@ def read_marks(path):
 def run(a, deps=None):
     d = deps or {}
     from envd_linux import rootcheck
-    report = {"status": None, "problems": [], "timing_allowed": False, "uid": a.uid, "root": a.root, "validated_live": True, "t": time.time()}
+    report = {"status": None, "problems": [], "boot_identity_ok": False, "uid": a.uid, "root": a.root, "timing_authorized": False, "note": "boot identity only; task gates and parity are still required before any timing", "validated_live": True, "t": time.time()}
     os.makedirs(a.out, exist_ok=True)
 
     def finish(status):
@@ -64,7 +64,7 @@ def run(a, deps=None):
         report["problems"] = found["problems"]
         return finish("ABORT_ROOT")  # nothing was created or mounted
     from envd_linux.session import Supervisor
-    sup = (d.get("supervisor") or Supervisor)(a.state, a.overlay, root_mode="full", base_root=a.root, osworld_real_kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user,
+    sup = (d.get("supervisor") or Supervisor)(a.state, a.overlay, root_mode="full", base_root=a.root, home=a.home, osworld_real_kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user,
                                               server_mode="module", netns=True, osworld_port=0, ready_timeout=180)
     try:
         info = sup.create(0)
@@ -91,8 +91,8 @@ def run(a, deps=None):
             sup.close()
         except Exception as e:
             report["problems"].append(f"cleanup: {type(e).__name__}: {e}")
-    report["timing_allowed"] = not report["problems"]
-    return finish("BOOT_OK" if report["timing_allowed"] else "BOOT_MISMATCH")
+    report["boot_identity_ok"] = not report["problems"]
+    return finish("BOOT_OK" if report["boot_identity_ok"] else "BOOT_MISMATCH")
 
 
 def main(argv=None):
@@ -105,13 +105,14 @@ def main(argv=None):
     ap.add_argument("--uid", type=int, default=1000)
     ap.add_argument("--gid", type=int, default=1000)
     ap.add_argument("--user", default="user")
+    ap.add_argument("--home", default="/home/user")  # the image's user home; the Supervisor default is /home/drums
     a = ap.parse_args(argv)
     if os.geteuid() != 0:
         print("REFUSED: run as root", file=sys.stderr)
         return 2
     r = run(a)
-    print(json.dumps({k: r[k] for k in ("status", "problems", "timing_allowed")}, indent=1))
-    return 0 if r["timing_allowed"] else 1
+    print(json.dumps({k: r[k] for k in ("status", "problems", "boot_identity_ok", "timing_authorized")}, indent=1))
+    return 0 if r["boot_identity_ok"] else 1
 
 
 if __name__ == "__main__":
