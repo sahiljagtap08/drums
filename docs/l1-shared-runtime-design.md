@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 22 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 23 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -909,3 +909,56 @@ The matched run needs an incumbent arm with the same reuse as the Drums arm. Con
 2. **The OSWorld VM images are on `huggingface.co`** (`xlangai/ubuntu_osworld`: `Ubuntu.qcow2.zip` for the docker provider, `Ubuntu-x86.zip` for VMware), which is unreachable from this sandbox, and **the licence of the image has not been checked**. The no-unresolved-licence rule applies: it must be resolved before the image is used.
 3. **The provider decides what "equivalent reuse" means.** With the `docker` provider the incumbent has NO snapshot (`save_state` raises), so its reuse would be container reuse only, not a post-setup snapshot. A live-state post-setup snapshot exists only on `vmware` (proprietary VMware Workstation or Fusion: its licence and availability on the chosen host must be checked) and `virtualbox`. On `aws` the snapshot is a disk image (a launched application is not preserved). The run specification must therefore state which provider is the "tuned incumbent" and what its reuse preserves; the comparison is meaningful only against a provider that offers live-state snapshots, or it must be labelled disk-level.
 4. **The first concrete step that needs no spend:** verify, from the public provider code and documentation, whether the `virtualbox` provider can be run on a nested-virtualization instance type and what its revert latency would be to measure; this is a desk check followed by a user approval package, not a run.
+
+
+### 21.5 Scope statements corrected after review (how V2 was actually run)
+
+The 20.3 registration speaks of "three siblings restored from it". As run: **A and B are two CONCURRENT siblings** (A is the original environment carried on in place after the save, B a second environment restored from the same saved state), and they are what the sharing audit and the divergence checks compare. **C is NOT a third concurrent sibling:** it is B reverted to the same saved state and run again, SEQUENTIALLY, after A and B had finished; it shows that the saved state is unharmed by the earlier continuations, not that three siblings coexist. Anything in this document or the README that reads as three concurrent siblings means this. The V2 continuations share a prefix and are `agent_prefix` state, never independent training samples.
+
+### 21.6 A further product finding: checkpointing a RESTORED session destroyed the kept layer (chained checkpoints), fixed
+
+Found by the chained-checkpoint test added after the review (raw: `docs/data/l1-criu/matched_reuse/chained_checkpoint_whiteout_finding.txt`). Restoring from a checkpoint taken of a session that was itself restored failed in CRIU's mount restore. Cause: the kept layer was filled with whiteouts, because the slot directory was removed with `rmtree` while the restored session's overlay root was still mounted inside it, so the walk deleted the tree through the overlay. Every earlier test had only checkpointed cold sessions. Fixed (the restored root is unmounted first); regression test `tests/test_criu_restore.py::test_chained_checkpoints_keep_each_layers_state_and_repeated_reverts_leak_nothing` (a second-level checkpoint sees both changes, the first checkpoint is unharmed, 25 restore-and-destroy cycles leave no extra mounts, links or processes; the test waits for the asynchronous removal of the old veth before comparing). Mid-task branching of a state that was itself reached by a restore is therefore supported only since this fix.
+
+## 23. Incumbent image, licence and provider semantics: desk research from primary sources (no authentication, spend, quota change or merge; read-only web)
+
+**Status: DESK RESEARCH, fetched on the date of this commit; nothing was downloaded, provisioned or authenticated. The sandbox cannot reach `huggingface.co`; one unreachable source is not proof that no route exists, so each route below is classified by what a primary source says.**
+
+### 23.1 The OSWorld VM image: sources and licence
+
+- **Official image, Hugging Face:** `https://huggingface.co/datasets/xlangai/ubuntu_osworld` (card: "virtual machine snapshots ... loaded by VMware/VirtualBox", total size 84.2 GB; `Ubuntu.qcow2.zip` is what the `docker` provider downloads, `Ubuntu-x86.zip` what `vmware` downloads: `desktop_env/providers/docker/manager.py`, `.../vmware/manager.py`). **The dataset card's License field is empty, so the image licence is UNRESOLVED;** the OSWorld code is Apache-2.0 (`https://github.com/xlang-ai/OSWorld/blob/main/LICENSE`), which does not by itself license the image. The manager code also supports `hf-mirror.com` as a substitute host for the same files; that is a mirror of the same unlicensed artefact, not a licence.
+- **Official AWS image route (owner-supplied image, no Hugging Face download, no nested virtualization):** the AWS guideline states `IMAGE_ID_MAP` "already set ... the official OSWorld image of Ubuntu supported by us", `"us-east-1": "ami-0d23263edb96951d8"` (`https://github.com/xlang-ai/OSWorld/blob/main/desktop_env/providers/aws/AWS_GUIDELINE.md`). Each OSWorld environment is then an EC2 instance launched from that AMI. Whether the AMI is public to an arbitrary account, and under what terms, is NOT verifiable without an AWS API call, which this task excludes; it is a remaining check. This route's snapshot semantics are disk-level (23.3).
+- **Official build-from-source route (licence-clean in principle):** `https://github.com/xlang-ai/OSWorld/blob/main/desktop_env/server/README.md` ("Server setup ... useful if you want to set up your own machine for the environment"; "not yet finished"): install an Ubuntu ISO, create the `user`/`password` account, auto-login, VNC, dummy display, install the Apache-2.0 guest server and the listed software. This yields an image whose own content is Ubuntu plus Apache-2.0 code plus whatever applications are installed, each under its own licence, which is a licence position this project can document. **Equivalence caveat:** the self-built image is not the official image, the README is incomplete, and published benchmark numbers (and the baseline run specification) are not transferable to it; a matched run would compare both arms on the SAME self-built or owner-supplied image and say so.
+- **Other providers' images:** `daytona` runs the sandbox AS the desktop on a Debian 13 XFCE snapshot that the provider builds ("not Ubuntu with GNOME like the upstream OSWorld image", `desktop_env/providers/daytona/DAYTONA_GUIDELINE.md`), needs a Daytona account and API key, and `modal` needs a Modal account; both are services with authentication and spend, outside this task, and their guests are not equivalent to the Ubuntu image.
+
+### 23.2 Hypervisor software and licences
+
+- **VMware Workstation Pro:** free for personal, educational and commercial use since the versions 17.5.2 (Workstation) and 13.5.2 (Fusion), no licence key (`https://www.vmware.com/docs/desktop-hypervisor-faqs`, `https://knowledge.broadcom.com/external/article/368667`, `https://techdocs.broadcom.com/us/en/vmware-cis/desktop-hypervisors/workstation-pro/17-0/release-notes/vmware-workstation-1763-pro-release-notes.html`). The download requires a Broadcom account with a trade-compliance profile (the KB article says so): creating it is an account action for the owner, not done here. Features include snapshots.
+- **VirtualBox:** its own manual describes nested VT-x/AMD-V as a setting for guests that run hypervisors (`https://www.virtualbox.org/manual/ch03.html`; an older manual notes it is available on AMD hosts and greyed out for Intel, `https://docs.oracle.com/en/virtualization/virtualbox/6.0/user/settings-system.html`); the current manual warns not to run other hypervisors together with VirtualBox (`https://www.virtualbox.org/manual/UserManual.html`). Licence terms (GPL for the base package, a separate licence for the Extension Pack) were not re-checked in this pass and remain a remaining check.
+
+### 23.3 What each provider's snapshot preserves (from the public provider sources in the checkout `04718ea` and the OSWorld docs)
+
+| Provider | `save_state` / revert | Preserves live application state? |
+|---|---|---|
+| `vmware` | `vmrun snapshot` / `revertToSnapshot` of a running VM | yes (running-VM snapshot); the exact memory-state behaviour is VMware's and was not verified on a host |
+| `virtualbox` | `VBoxManage snapshot take` / restore | likewise, not verified on a host |
+| `docker` (QEMU in a container, needs KVM) | `save_state` raises "Snapshots not available for Docker provider" | no snapshot at all |
+| `aws` | `create_image` (an AMI); revert launches a new instance from it | disk image only: a launched application is NOT in it |
+| `daytona` | snapshot of a sandbox; each launch restores a built snapshot | snapshot semantics (live or filesystem) not established from the docs read; account and spend required |
+| `modal` | `save_state` raises (TODO); revert tears down and starts fresh | no |
+So a "tuned incumbent with a post-setup snapshot of live state" exists off the shelf only on `vmware` and `virtualbox`. QEMU itself can snapshot a running guest, but using it from `docker` would be a custom provider written for this comparison, i.e. extra engineering that would have to be disclosed as a tuning of the incumbent.
+
+### 23.4 Hosts: nested-virtualization support is one question, a given hypervisor working on it is another
+
+- **AWS, virtual instances:** nested virtualization is documented as supported on specific families only (C7i/M7i/R7i, their `-flex` variants, C8i/M8i/R8i and `id` variants, I7i, I7ie, X8i, queried per region with `describe-instance-types`), **with KVM and Hyper-V as the supported L1 hypervisors**, "no additional cost", with a performance caveat and a recommendation to evaluate bare metal for performance-sensitive work (`https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html`; announcements `https://aws.amazon.com/about-aws/whats-new/2026/02/amazon-ec2-nested-virtualization-on-virtual/` and `https://aws.amazon.com/about-aws/whats-new/2026/06/nested-virtualization-intel-us-gov-cloud/`). VMware Workstation and VirtualBox are NOT listed as supported L1 hypervisors there.
+- **Google Compute Engine:** nested virtualization supported with "the only hypervisor supported in an L1 VM is Linux KVM"; E2, memory-optimized and Arm VMs excluded; expect 10% or more performance loss (`https://cloud.google.com/compute/docs/instances/nested-virtualization/overview`).
+- **OSWorld's own guidance:** VMware/VirtualBox on a non-virtualized machine (desktop, laptop, bare metal); on a virtualized platform use the Docker provider, which needs KVM (`https://github.com/xlang-ai/OSWorld/blob/main/README.md`).
+- **Conclusion from the sources, no guessing:** the documented-supported way to run VMware or VirtualBox is a non-virtualized host (bare metal, which AWS offers as `.metal` instance types and which the owner may already own); nested virtualization on the clouds above is documented for KVM and, on AWS, Hyper-V. Whether VirtualBox or VMware works inside a nested EC2 or GCE instance is therefore **undocumented and must be tested before any price or plan is built on it**; no price is stated here because none was verified.
+
+### 23.5 Remaining checks (each needs the owner or a host; none was attempted)
+
+1. Licence of the official image (the Hugging Face card is blank): ask the maintainers (contact in the OSWorld README) or adopt the self-built route and document its licence composition.
+2. Whether `ami-0d23263edb96951d8` is public/shareable to another account and under what terms (needs an AWS API call: excluded here).
+3. Which host the owner can supply (an existing machine with hardware virtualization) or approves renting (bare metal, or a nested-capable instance with KVM), including whether VMware or VirtualBox is allowed and works on it.
+4. On that host: a live-state snapshot test of the chosen incumbent provider (does a launched application survive revert, and how long does revert take), the same test that was run on the Drums arm.
+5. The licence terms of VirtualBox's Extension Pack if VirtualBox is chosen, and the Broadcom account step if VMware is.
+6. The matched run specification: the same image on both arms, the same task sequence and agent, prices from the owner's own price sheet.

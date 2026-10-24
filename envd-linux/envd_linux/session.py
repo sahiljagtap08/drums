@@ -309,6 +309,9 @@ class Supervisor:
             raise SessionError(f"criu dump failed: {res['log'][-3:]}")
         proc = self._procs.pop(slot, None)
         d = self._dir(slot)
+        root = self._restored.pop(slot, None)
+        if root is not None:  # a restored session's overlay root must be unmounted BEFORE anything walks its directory: removing the slot directory through it
+            self._umount(root)  # would delete the whole tree via the overlay and fill the layer being kept with whiteouts (found by a chained checkpoint)
         from . import sweep as sw
         layer = os.path.join(path, "layer")
         os.makedirs(layer, exist_ok=True)

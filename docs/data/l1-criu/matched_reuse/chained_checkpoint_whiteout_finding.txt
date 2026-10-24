@@ -1,0 +1,19 @@
+FINDING (found by the chained-checkpoint test, tests/test_criu_restore.py::test_chained_checkpoints_keep_each_layers_state_and_repeated_reverts_leak_nothing)
+
+Symptom: restoring from a checkpoint taken of a session that was itself RESTORED failed:
+  criu restore failed: [..., "(00.087828) 1: Error (criu/mount-v2.c:634): mnt-v2: Can't stat mountpoint /tmp/.criu.mntns.<id>/mnt-0000000113/proc: No such file or directory", ...]
+
+Diagnosis (hand-mounted the second-level overlay and listed the kept layer):
+  c2 layers ['<ck2>/layer/upper', '<ck1>/layer/upper'], lower <tplfs>
+  `ls -la <ck2>/layer/upper` showed EVERY top-level entry (bin, boot, dev, etc, home, lib, proc, root, run, sys, tmp, usr, var, ...) as a whiteout
+  (character device 0,0), so the stacked overlay's root had no /proc and the restore could not make its mountpoint.
+  While the session was live its upper held only `etc` and `home`.
+
+Cause: Supervisor.checkpoint() removed the slot directory with shutil.rmtree AFTER keeping the stage tmpfs as the checkpoint layer, but a restored session's
+`root` subdirectory is still a MOUNTED overlay at that moment; rmtree walked into it and deleted the whole tree through the overlay, which wrote whiteouts into
+the very upper layer being kept. (It could not touch the host root: that is a read-only lower layer.) A first-level checkpoint of a cold session has no such
+mount, which is why every earlier test passed.
+
+Fix: unmount the restored root (processes are already dead after the dump) before anything walks the slot directory.
+Regression test: the chained test above (restore from the second checkpoint sees both changes, from the first only the first, and 25 restore/destroy cycles
+leave no extra mounts, links or processes).

@@ -210,3 +210,47 @@ def test_product_findings_a_lower_layer_directory_renames_and_sudo_does_not_stal
         assert rc == 0 and t < 5, (t, out)  # (2) the reseeded hostname resolves too
     finally:
         sup.close()
+
+
+@pytest.mark.skipif(_prereqs() is not None, reason=str(_prereqs()))
+def test_chained_checkpoints_keep_each_layers_state_and_repeated_reverts_leak_nothing(tmp_path):
+    """A checkpoint of a RESTORED session stacks its layer on the first one's. Restoring from the second sees both changes, from the first only the first,
+    and 25 repeated restore-and-destroy cycles from one checkpoint leave no extra mounts, links, processes or directories."""
+    kit = realkit.DEFAULT_KIT
+    tpl = tmp_path / "tpl"
+    build_home_template(str(tpl / "home" / "drums"))
+    sup = Supervisor(str(tmp_path / "state"), str(tpl), root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
+                     init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120,
+                     criu_friendly=True, criu=cr.Criu(HOME), sweep_dir=str(tmp_path / "led"))
+
+    def ls(info):
+        return _in(info, "ls /root | sort | tr '\\n' ' '")[2]
+
+    def counts():
+        end = time.time() + 8  # a destroyed session's veth goes away asynchronously: sample once it has settled
+        while time.time() < end and [n for n in os.listdir("/sys/class/net") if n.startswith("dvh")]:
+            time.sleep(0.1)
+        mounts = sum(1 for ln in open("/proc/self/mounts") if str(tmp_path) in ln)
+        return mounts, len([n for n in os.listdir("/sys/class/net") if n.startswith("dvh")]), len(_session_inits())
+    try:
+        a = sup.create(0)
+        _in(a, "touch /root/one")
+        c1 = sup.checkpoint(0, str(tmp_path / "c1"), clean=True)
+        b = sup.create(1, from_checkpoint=c1)
+        assert "one" in ls(b)
+        _in(b, "touch /root/two")
+        c2 = sup.checkpoint(1, str(tmp_path / "c2"), clean=True)  # a checkpoint of a restored session
+        d = sup.create(2, from_checkpoint=c2)
+        assert "one" in ls(d) and "two" in ls(d), ls(d)
+        e = sup.create(3, from_checkpoint=c1)
+        assert "one" in ls(e) and "two" not in ls(e), ls(e)  # the first checkpoint is unharmed by the second
+        for s in (2, 3):
+            sup.destroy(s)
+        base = counts()
+        for i in range(25):
+            sup.create(4, from_checkpoint=c1)
+            sup.destroy(4)
+        assert _no_session_processes()
+        assert counts() == base, (counts(), base)
+    finally:
+        sup.close()

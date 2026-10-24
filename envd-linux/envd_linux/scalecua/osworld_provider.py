@@ -27,14 +27,18 @@ wraps the factory in `desktop_env.desktop_env` and selects Drums by `region == "
 caller passes `provider_name="docker"` to get through the fixed name check (that name also gives the
 "clean until used" revert behaviour Drums wants). It does not change what "docker" does for any other region.
 
-SEMANTICS. A session is rebuilt per attempt: `revert_to_snapshot` ends the session and returns the same
-path, then DesktopEnv's own `_start_emulator` calls `start_emulator` again, which takes a fresh session.
-`save_state` is not supported (there is no snapshot to save; raises NotImplementedError).
+SEMANTICS. By default a session is rebuilt per attempt: `revert_to_snapshot` for an unknown name (including DesktopEnv's generic
+"init_state") ends the session and returns the same path, then DesktopEnv's own `_start_emulator` takes a fresh session.
+With a pool whose backend can checkpoint (a `Supervisor` with `criu_friendly=True` and a private CRIU, PROTOTYPE of mechanism C, docs/l1-shared-runtime-design.md
+sections 14 to 21): `save_state(path, name)` checkpoints the running session's LIVE state with CRIU and carries on from it in place (same slot, same address;
+the checkpoint is declared NOT clean, so a task's browser state is preserved, never reset), and `revert_to_snapshot(path, name)` replaces the session's state with
+that named checkpoint. Without a checkpoint-capable backend `save_state` raises NotImplementedError. Snapshots are per provider instance, in this process.
 
-NOT PROVEN: no real `desktop_env` package is installed in this sandbox, so this was tested against local
-stand-ins written from the public abstract classes and a replica of the public `_start_emulator` parsing;
-and the session behind it answers with the OSWorld guest-server STUB (accessibility tree, terminal empty,
-pyautogui absent), not the real server. That is claim (b); actual OSWorld compatibility (c) is open."""
+TESTED, and how far. Against the REAL public `desktop_env` (PyPI 1.0.2 and OSWorld main `04718ea`) and the REAL unmodified OSWorld guest server in real
+sessions: `tests/test_osworld_provider.py`, the matched-runner dry run, and `tests/test_matched_reuse_real.py` (setup-only reuse through this provider's
+snapshot API, and a mid-task branch scored by the real local evaluator). All of that is ONE public task (e0df059f) on one host. NOT PROVEN: compatibility with
+the rest of the benchmark (tasks with downloads, logins, other applications), and any comparison with an incumbent provider (no hypervisor host here).
+Disclosure unchanged: a provider written against the public API is not a ScaleCUA or incumbent port, and the quarantined provider stays unloaded."""
 
 import itertools
 import threading
