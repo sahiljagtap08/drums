@@ -34,8 +34,11 @@ def setup_full_root(a):
     for d in ("upper", "work", "merged"):
         os.makedirs(f"{stage}/{d}")
     lower = f"{a.lower}:/" if a.lower else "/"
+    upper, work = f"{stage}/upper", f"{stage}/work"
+    if a.criu_friendly:  # the upper must live where the host can copy it (a checkpoint of the processes is not a checkpoint of the files)
+        upper, work = a.upper, a.work
     sh("mount", "-t", "overlay", "overlay", "-o",
-       f"lowerdir={lower},upperdir={stage}/upper,workdir={stage}/work", f"{stage}/merged")
+       f"lowerdir={lower},upperdir={upper},workdir={work}", f"{stage}/merged")
     m = f"{stage}/merged"
     sh("mount", "-t", "proc", "proc", f"{m}/proc")
     sh("mount", "--rbind", "/sys", f"{m}/sys")
@@ -195,8 +198,14 @@ def main(argv=None):
     # PROTOTYPE of mechanism K (docs/l1-shared-runtime-design.md section 12): page merging across sessions
     ap.add_argument("--ksm", action="store_true", help="prctl(PR_SET_MEMORY_MERGE): the whole session's memory may be merged by KSM")
     ap.add_argument("--no-aslr", action="store_true", help="personality(ADDR_NO_RANDOMIZE) for every process exec'd in this session")
+    # PROTOTYPE of mechanism C (docs/l1-shared-runtime-design.md section 14): a session whose processes CRIU can dump. After the pivot the init
+    # re-execs itself (its interpreter mapping belonged to the detached old root) and drops every fd that points outside the new root.
+    ap.add_argument("--criu-friendly", action="store_true")
+    ap.add_argument("--stage2", action="store_true")
+    ap.add_argument("--ready-fd", type=int, default=-1)
     ap.add_argument("--cgroup-procs", action="append", default=[])  # cgroup.procs files to join, before forking anything
     ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
+    argv = list(sys.argv[1:] if argv is None else argv)
     a = ap.parse_args(argv)
 
     for f in a.cgroup_procs:  # first act: join the session's cgroup ("0" = self), so every descendant inherits it
@@ -210,15 +219,43 @@ def main(argv=None):
             libc.personality(cur | 0x0040000)  # ADDR_NO_RANDOMIZE: inherited across fork and exec
         if a.ksm:
             libc.prctl(67, 1, 0, 0, 0)  # PR_SET_MEMORY_MERGE
-    if a.timing:
+    if a.timing and not a.stage2:
         TIMING["f"] = open(a.timing, "a")
     mark("init_start")
-    socket.sethostname(f"drums-s{a.display}")
-    xlog = open(a.xlog, "wb")
-    ready = open(a.ready, "w")
-    if a.root == "full":
-        setup_full_root(a)
+    if a.criu_friendly and not a.stage2:
+        import ctypes
+        ctypes.CDLL(None).prctl(1, 0, 0, 0, 0)  # PR_SET_PDEATHSIG off: `unshare --kill-child` armed SIGKILL-on-parent-exit, which a restore would trigger at once
+        try:
+            os.setsid()  # CRIU: a session leader must lie inside the dumped pid namespace
+        except OSError:
+            pass
+    if a.stage2:
+        for fd in range(3):  # stdio onto the new root, never the supervisor's files
+            os.close(fd)
+        os.open("/dev/null", os.O_RDONLY)
+        log = os.open("/tmp/init.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+        os.dup2(log, 1)
+        os.dup2(log, 2)
+        for name in os.listdir("/proc/self/fd"):
+            if int(name) > 2 and int(name) not in (a.ready_fd, log):
+                try:
+                    os.close(int(name))
+                except OSError:
+                    pass
+        xlog = open("/tmp/xvfb.log", "wb")
+        ready = os.fdopen(a.ready_fd, "w")
     else:
+        socket.sethostname(f"drums-s{a.display}")
+        xlog = open(a.xlog, "wb")
+        ready = open(a.ready, "w")
+    if a.root == "full" and not a.stage2:
+        setup_full_root(a)
+        if a.criu_friendly:
+            os.set_inheritable(ready.fileno(), True)
+            os.execv(sys.executable, [sys.executable, "-m", "envd_linux.session_init", *argv, "--stage2", "--ready-fd", str(ready.fileno())])
+    elif a.stage2:
+        pass
+    if a.root != "full":
         # Everything under the state directory may live in /tmp on the host, and this namespace is
         # about to get its own /tmp. So open the files we still need, and mount the overlay and the
         # X socket directory, before /tmp is replaced.

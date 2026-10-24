@@ -1,0 +1,96 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "criu": "Version: 4.2",
+ "args": {
+  "out": "/tmp/claude-0/scratch/criu_probe_dropcache.json",
+  "task": "",
+  "starts": 10,
+  "trials": 3,
+  "max_n": 20,
+  "skip_memory": true,
+  "skip_correctness": true,
+  "drop_caches": true
+ },
+ "stages": {
+  "R1_criu_check": {
+   "ok": true,
+   "seconds": 0.06788825988769531,
+   "pass": true,
+   "detail": "u: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n/tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n"
+  },
+  "R3_server_only_dump": {
+   "ok": true,
+   "seconds": 4.209692478179932,
+   "dump_seconds": 0.25736451148986816,
+   "image_mib": 74.8210678100586
+  },
+  "R4_chromium_dump": {
+   "ok": true,
+   "seconds": 5.227216958999634,
+   "dump_seconds": 1.132904291152954,
+   "image_mib": 254.25912380218506
+  }
+ },
+ "latency": {
+  "COLD": {
+   "n": 10,
+   "p50": 2.5869669914245605,
+   "p95": 2.735858869552612,
+   "mean": 2.6105438232421876,
+   "all": [
+    2.6006221771240234,
+    2.5914478302001953,
+    2.790219306945801,
+    2.6694183349609375,
+    2.5740315914154053,
+    2.5739786624908447,
+    2.663609504699707,
+    2.536170482635498,
+    2.582486152648926,
+    2.523454189300537
+   ]
+  },
+  "RESTORE_FULL": {
+   "n": 10,
+   "p50": 1.3802155256271362,
+   "p95": 1.4719196915626525,
+   "mean": 1.378995156288147,
+   "all": [
+    1.37896728515625,
+    1.4193096160888672,
+    1.4993171691894531,
+    1.3814773559570312,
+    1.2750120162963867,
+    1.4384338855743408,
+    1.3814637660980225,
+    1.360130786895752,
+    1.3092505931854248,
+    1.3465890884399414
+   ]
+  },
+  "RESTORE_SERVER_ONLY": {
+   "n": 10,
+   "p50": 1.667188286781311,
+   "p95": 1.7768559098243712,
+   "mean": 1.6790843248367309,
+   "all": [
+    1.6099121570587158,
+    1.6203415393829346,
+    1.77659273147583,
+    1.6806135177612305,
+    1.7148213386535645,
+    1.733851671218872,
+    1.777071237564087,
+    1.5835316181182861,
+    1.6403443813323975,
+    1.6537630558013916
+   ]
+  },
+  "ratio_cold_over_restore_full_p50": 1.8743210342088463,
+  "ratio_cold_over_restore_server_only_p50": 1.551694557798857
+ },
+ "latency_faults": []
+}

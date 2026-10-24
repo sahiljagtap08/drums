@@ -57,6 +57,49 @@ def setup(slot, init_pid, python=sys.executable, base="10.200", firewall=False, 
     return {"ip": ip, "gw": gw, "host_if": host_if}
 
 
+ADOPT_CODE = """
+import sys
+from pyroute2 import IPRoute
+ifname, ip, gw = sys.argv[1:4]
+ipr = IPRoute()
+i = ipr.link_lookup(ifname=ifname)[0]
+for a in ipr.get_addr(index=i):
+    ipr.addr("del", index=i, address=a.get_attr("IFA_ADDRESS"), prefixlen=a["prefixlen"])
+ipr.addr("add", index=i, address=ip, prefixlen=30)
+ipr.link("set", index=i, state="up")
+try:
+    ipr.route("del", dst="default")
+except Exception:
+    pass
+ipr.route("add", dst="default", gateway=gw)
+"""
+
+
+def adopt(slot, init_pid, inner_if, python=sys.executable, base="10.200", firewall=False, tag="", table="drums"):
+    """PROTOTYPE of mechanism C: configure a session whose veth was recreated by CRIU (host end already named dvh<slot>, inner end
+    keeping the name it had when checkpointed). Re-addresses the inner end for THIS slot, so siblings restored from one checkpoint get
+    distinct addresses."""
+    from pyroute2 import IPRoute
+    gw, ip = addresses(slot, base)
+    host_if = f"dvh{slot}"
+    if firewall:
+        from . import firewall as fw
+        fw.add_slot(slot, base, table)
+    ipr = IPRoute()
+    try:
+        idx = ipr.link_lookup(ifname=host_if)[0]
+        if tag:
+            ipr.link("set", index=idx, ifalias=tag)
+        ipr.addr("add", index=idx, address=gw, prefixlen=30)
+        ipr.link("set", index=idx, state="up")
+    finally:
+        ipr.close()
+    r = subprocess.run(["nsenter", "-t", str(init_pid), "-n", python, "-c", ADOPT_CODE, inner_if, ip, gw], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"session-side re-addressing failed: {r.stderr[-300:]}")
+    return {"ip": ip, "gw": gw, "host_if": host_if}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--slot", type=int, required=True)
@@ -65,7 +108,11 @@ def main(argv=None):
     ap.add_argument("--firewall", action="store_true")
     ap.add_argument("--tag", default="")
     ap.add_argument("--table", default="drums")
+    ap.add_argument("--adopt", default="", help="inner interface name: the veth was recreated by CRIU; re-address it instead of creating one")
     a = ap.parse_args(argv)
+    if a.adopt:
+        print(json.dumps(adopt(a.slot, a.pid, a.adopt, base=a.base, firewall=a.firewall, tag=a.tag, table=a.table)))
+        return
     print(json.dumps(setup(a.slot, a.pid, base=a.base, firewall=a.firewall, tag=a.tag, table=a.table)))
 
 

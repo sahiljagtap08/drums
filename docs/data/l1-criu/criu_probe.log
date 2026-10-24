@@ -1,0 +1,46 @@
+stage R1_criu_check ok
+stage R3_server_only_dump ok
+stage R4_chromium_dump ok
+stage R3_server_only_restore ok
+stage R4_chromium_restore ok
+stage C2_screenshot_shows_browser ok
+stage C3_sibling_audit ok
+/tmp/claude-0/scratch/osw-venv/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+Failed to load proxies from evaluation_examples/settings/proxy/dataimpulse.json: [Errno 2] No such file or directory: 'evaluation_examples/settings/proxy/dataimpulse.json'
+{'error': '', 'output': 'Directory does not exist.\n', 'returncode': 0, 'status': 'success'}
+Directory does not exist.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+stage C1_public_task_from_restored_session ok
+latency rep 0: COLD=2.18 RESTORE_FULL=1.43 RESTORE_SERVER_ONLY=1.22
+latency rep 1: COLD=2.18 RESTORE_FULL=0.93 RESTORE_SERVER_ONLY=1.25
+latency rep 2: COLD=2.00 RESTORE_FULL=1.02 RESTORE_SERVER_ONLY=1.24
+latency rep 3: COLD=2.02 RESTORE_FULL=0.97 RESTORE_SERVER_ONLY=1.22
+latency rep 4: COLD=2.03 RESTORE_FULL=1.08 RESTORE_SERVER_ONLY=1.14
+latency rep 5: COLD=2.06 RESTORE_FULL=1.18 RESTORE_SERVER_ONLY=1.18
+latency rep 6: COLD=2.01 RESTORE_FULL=0.99 RESTORE_SERVER_ONLY=1.27
+latency rep 7: COLD=2.08 RESTORE_FULL=1.06 RESTORE_SERVER_ONLY=1.27
+latency rep 8: COLD=2.27 RESTORE_FULL=1.21 RESTORE_SERVER_ONLY=1.22
+latency rep 9: COLD=2.10 RESTORE_FULL=0.99 RESTORE_SERVER_ONLY=1.21
+latency rep 10: COLD=2.02 RESTORE_FULL=0.95 RESTORE_SERVER_ONLY=1.19
+latency rep 11: COLD=2.03 RESTORE_FULL=0.97 RESTORE_SERVER_ONLY=1.15
+latency rep 12: COLD=2.03 RESTORE_FULL=0.98 RESTORE_SERVER_ONLY=1.35
+latency rep 13: COLD=2.08 RESTORE_FULL=0.99 RESTORE_SERVER_ONLY=1.28
+latency rep 14: COLD=2.10 RESTORE_FULL=0.87 RESTORE_SERVER_ONLY=1.19
+latency rep 15: COLD=1.95 RESTORE_FULL=0.98 RESTORE_SERVER_ONLY=1.13
+latency rep 16: COLD=2.02 RESTORE_FULL=0.88 RESTORE_SERVER_ONLY=1.13
+latency rep 17: COLD=2.07 RESTORE_FULL=0.97 RESTORE_SERVER_ONLY=1.14
+latency rep 18: COLD=2.00 RESTORE_FULL=0.93 RESTORE_SERVER_ONLY=1.23
+latency rep 19: COLD=2.15 RESTORE_FULL=0.96 RESTORE_SERVER_ONLY=1.18
+memory trial=0 COLD slope=228.1 MiB/session
+memory trial=0 RESTORE slope=222.4 MiB/session
+memory trial=1 RESTORE slope=220.8 MiB/session
+memory trial=1 COLD slope=230.8 MiB/session
+memory trial=2 COLD slope=229.3 MiB/session
+memory trial=2 RESTORE slope=222.5 MiB/session
+wrote /tmp/claude-0/scratch/criu_probe.json

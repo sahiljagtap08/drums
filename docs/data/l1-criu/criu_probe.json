@@ -1,0 +1,400 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "criu": "Version: 4.2",
+ "args": {
+  "out": "/tmp/claude-0/scratch/criu_probe.json",
+  "task": "/tmp/claude-0/scratch/osw-main/evaluation_examples/examples/os/e0df059f-28a6-4169-924f-b9623e7184cc.json",
+  "starts": 20,
+  "trials": 3,
+  "max_n": 20,
+  "skip_memory": false
+ },
+ "stages": {
+  "R1_criu_check": {
+   "ok": true,
+   "seconds": 0.04902482032775879,
+   "pass": true,
+   "detail": "u: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n/tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu: /tmp/claude-0/scratch/criu-dl/libs/usr/lib/x86_64-linux-gnu/libnl-3.so.200: no version information available (required by /tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu)\n"
+  },
+  "R3_server_only_dump": {
+   "ok": true,
+   "seconds": 3.7983322143554688,
+   "dump_seconds": 0.21014952659606934,
+   "image_mib": 74.78158950805664
+  },
+  "R4_chromium_dump": {
+   "ok": true,
+   "seconds": 4.7449846267700195,
+   "dump_seconds": 0.8059055805206299,
+   "image_mib": 253.09124565124512
+  },
+  "R3_server_only_restore": {
+   "ok": true,
+   "seconds": 0.695636510848999,
+   "restore_total_s": 0.6588406562805176,
+   "criu_restore_s": 0.21895241737365723,
+   "screenshot_bytes": 3391
+  },
+  "R4_chromium_restore": {
+   "ok": true,
+   "seconds": 0.854945182800293,
+   "restore_total_s": 0.7629880905151367,
+   "criu_restore_s": 0.3185727596282959,
+   "browser_titles": [
+    "drums-ready"
+   ]
+  },
+  "C2_screenshot_shows_browser": {
+   "ok": true,
+   "seconds": 0.31963181495666504,
+   "ready_extra_s": 0.17337775230407715,
+   "changed_fraction_vs_blank": 0.9974453125,
+   "titles": [
+    "drums-ready"
+   ],
+   "PASS": true
+  },
+  "C3_sibling_audit": {
+   "ok": true,
+   "seconds": 8.768195152282715,
+   "processes": {
+    "a": 19,
+    "b": 19
+   },
+   "pid_sets_disjoint": true,
+   "distinct_namespaces": {
+    "pid": true,
+    "mnt": true,
+    "net": true,
+    "ipc": true,
+    "uts": true
+   },
+   "shared_pipe_or_socket_inodes": [],
+   "shared_regular_files_readonly": [],
+   "shared_regular_files_writable": [],
+   "shared_character_devices": [
+    "chr:6:3:/dev/null",
+    "chr:6:7:/dev/urandom"
+   ],
+   "shared_lock_entries": [],
+   "xvfb_socket_inodes_differ": true,
+   "addresses_differ": true,
+   "write_in_a_visible_in_b": false,
+   "PASS_ignoring_devices": true,
+   "cold_pair_control": {
+    "shared_pipe_or_socket_inodes": [],
+    "shared_regular_files_writable": [],
+    "shared_character_devices": [
+     "chr:6:3:/dev/null",
+     "chr:6:7:/dev/urandom"
+    ],
+    "shared_lock_entries": [],
+    "PASS_ignoring_devices": true
+   },
+   "PASS_literal": false,
+   "introduced_by_restore": {
+    "character_devices": [],
+    "writable_files": [],
+    "locks": []
+   },
+   "PASS_vs_cold_control": true
+  },
+  "C1_public_task_from_restored_session": {
+   "ok": true,
+   "seconds": 34.02088403701782,
+   "score_before": 0.0,
+   "score_after": 1.0,
+   "sessions_were_restored": true,
+   "PASS": true
+  }
+ },
+ "latency": {
+  "COLD": {
+   "n": 20,
+   "p50": 2.0455832481384277,
+   "p95": 2.1892459988594055,
+   "mean": 2.0688012838363647,
+   "all": [
+    2.1766867637634277,
+    2.1848742961883545,
+    2.002959966659546,
+    2.0150744915008545,
+    2.028874158859253,
+    2.062084197998047,
+    2.010634183883667,
+    2.082723617553711,
+    2.272308349609375,
+    2.1034202575683594,
+    2.0208017826080322,
+    2.0290822982788086,
+    2.026761054992676,
+    2.078181743621826,
+    2.09869647026062,
+    1.9479007720947266,
+    2.022233486175537,
+    2.065981149673462,
+    2.000497341156006,
+    2.146249294281006
+   ]
+  },
+  "RESTORE_FULL": {
+   "n": 20,
+   "p50": 0.9799004793167114,
+   "p95": 1.2198342680931094,
+   "mean": 1.017073154449463,
+   "all": [
+    1.4344396591186523,
+    0.9303534030914307,
+    1.0210964679718018,
+    0.9700183868408203,
+    1.0785400867462158,
+    1.1760292053222656,
+    0.9912436008453369,
+    1.05735182762146,
+    1.2085392475128174,
+    0.9913666248321533,
+    0.9499039649963379,
+    0.9745843410491943,
+    0.9798603057861328,
+    0.9875164031982422,
+    0.8743875026702881,
+    0.97994065284729,
+    0.8804996013641357,
+    0.9659922122955322,
+    0.9331934452056885,
+    0.9566061496734619
+   ]
+  },
+  "RESTORE_SERVER_ONLY": {
+   "n": 20,
+   "p50": 1.21540105342865,
+   "p95": 1.2824517965316773,
+   "mean": 1.2099442601203918,
+   "all": [
+    1.2195842266082764,
+    1.2483265399932861,
+    1.2378685474395752,
+    1.2200119495391846,
+    1.1369719505310059,
+    1.1838912963867188,
+    1.272416591644287,
+    1.274620771408081,
+    1.2206900119781494,
+    1.2112178802490234,
+    1.1944544315338135,
+    1.1517393589019775,
+    1.3504676818847656,
+    1.278872013092041,
+    1.1908257007598877,
+    1.128218412399292,
+    1.1321756839752197,
+    1.1424987316131592,
+    1.2272026538848877,
+    1.176830768585205
+   ]
+  },
+  "ratio_cold_over_restore_full_p50": 2.08754183849856,
+  "ratio_cold_over_restore_server_only_p50": 1.68305206118411
+ },
+ "latency_faults": [],
+ "memory": [
+  {
+   "arm": "COLD",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 184152
+    },
+    {
+     "n": 4,
+     "delta_kib": 874224
+    },
+    {
+     "n": 8,
+     "delta_kib": 1776676
+    },
+    {
+     "n": 12,
+     "delta_kib": 2710404
+    },
+    {
+     "n": 16,
+     "delta_kib": 3688568
+    },
+    {
+     "n": 20,
+     "delta_kib": 4614220
+    }
+   ],
+   "slope_mib_per_session": 228.12366962859429
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 268700
+    },
+    {
+     "n": 4,
+     "delta_kib": 941776
+    },
+    {
+     "n": 8,
+     "delta_kib": 1836960
+    },
+    {
+     "n": 12,
+     "delta_kib": 2749756
+    },
+    {
+     "n": 16,
+     "delta_kib": 3672152
+    },
+    {
+     "n": 20,
+     "delta_kib": 4595376
+    }
+   ],
+   "slope_mib_per_session": 222.39112919329074
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 74356
+    },
+    {
+     "n": 4,
+     "delta_kib": 755300
+    },
+    {
+     "n": 8,
+     "delta_kib": 1665976
+    },
+    {
+     "n": 12,
+     "delta_kib": 2557924
+    },
+    {
+     "n": 16,
+     "delta_kib": 3454692
+    },
+    {
+     "n": 20,
+     "delta_kib": 4381228
+    }
+   ],
+   "slope_mib_per_session": 220.80325728833867
+  },
+  {
+   "arm": "COLD",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 121636
+    },
+    {
+     "n": 4,
+     "delta_kib": 811332
+    },
+    {
+     "n": 8,
+     "delta_kib": 1749160
+    },
+    {
+     "n": 12,
+     "delta_kib": 2718356
+    },
+    {
+     "n": 16,
+     "delta_kib": 3674760
+    },
+    {
+     "n": 20,
+     "delta_kib": 4588556
+    }
+   ],
+   "slope_mib_per_session": 230.75265575079874
+  },
+  {
+   "arm": "COLD",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 144160
+    },
+    {
+     "n": 4,
+     "delta_kib": 857696
+    },
+    {
+     "n": 8,
+     "delta_kib": 1785140
+    },
+    {
+     "n": 12,
+     "delta_kib": 2766268
+    },
+    {
+     "n": 16,
+     "delta_kib": 3669828
+    },
+    {
+     "n": 20,
+     "delta_kib": 4601552
+    }
+   ],
+   "slope_mib_per_session": 229.31692042731632
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 124272
+    },
+    {
+     "n": 4,
+     "delta_kib": 817164
+    },
+    {
+     "n": 8,
+     "delta_kib": 1735172
+    },
+    {
+     "n": 12,
+     "delta_kib": 2630084
+    },
+    {
+     "n": 16,
+     "delta_kib": 3542440
+    },
+    {
+     "n": 20,
+     "delta_kib": 4461232
+    }
+   ],
+   "slope_mib_per_session": 222.45766024361023
+  }
+ ],
+ "memory_summary": {
+  "COLD": 229.39774860223645,
+  "RESTORE": 221.88401557507987,
+  "restore_over_cold": 0.967245829250988,
+  "cold_minus_restore_ci95": [
+   6.085936667997885,
+   8.941529386315239
+  ]
+ }
+}

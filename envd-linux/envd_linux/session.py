@@ -60,7 +60,7 @@ class Supervisor:
                  firewall=None, nat=False, block_private_egress=True,
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
-                 ksm=False, no_aslr=False, limits=None, cgroup_root=None):
+                 ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -81,6 +81,9 @@ class Supervisor:
                              "DRUMS_ALLOW_SYSTEMD_PROBE=1, and still writes into the host cgroup hierarchy")
         # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8): sessions forked from a zygote
         self.zygote, self.server_mode, self.workload = zygote, server_mode, workload
+        self._ckpt_layers = []
+        self.criu, self.restore_from, self._restored = criu, restore_from, {}  # restore_from: a criu.Checkpoint; create() then restores it
+        self.criu_friendly = criu_friendly or restore_from is not None  # PROTOTYPE of mechanism C (section 14): a session CRIU can dump
         self.limits, self.cgroup_root, self._cgroups = limits, cgroup_root, {}  # READINESS: per-session cgroup limits (limits.py)
         self.ksm, self.no_aslr = ksm, no_aslr  # PROTOTYPE of mechanism K (page merging); see l1-shared-runtime-design.md section 12
         self.init_python, self.ready_timeout = init_python or python, ready_timeout
@@ -130,6 +133,9 @@ class Supervisor:
     def close(self):
         for slot in list(self._procs):
             self.destroy(slot)
+        for layer in self._ckpt_layers:
+            self._umount(layer)
+        self._ckpt_layers = []
         if self._tplfs:
             # Sessions are gone, so the template can normally be unmounted at once; fall back to a lazy
             # unmount if something still holds it. A leftover mount would block removing the state dir.
@@ -167,6 +173,8 @@ class Supervisor:
         d = self._dir(slot)
         if slot in self._procs:
             raise SessionError(f"slot {slot} already running")
+        if self.restore_from is not None:
+            return self._restore(slot)
         shutil.rmtree(d, ignore_errors=True)
         for sub in ("upper", "work", "x11"):
             os.makedirs(os.path.join(d, sub))
@@ -192,14 +200,18 @@ class Supervisor:
         env = dict(os.environ, PYTHONPATH=PKG_DIR)
         initlog = open(os.path.join(d, "init.log"), "wb")
         timing = os.path.join(d, "timing.jsonl")
-        sargs = ["--lower", self.lower, "--upper", os.path.join(d, "upper"), "--work", os.path.join(d, "work"),
+        upper, work = os.path.join(d, "upper"), os.path.join(d, "work")
+        if self.criu_friendly:  # PROTOTYPE C: the overlay's upper sits on a tmpfs the host can see (and a checkpoint can keep)
+            upper, work = self._stage(d)
+        sargs = ["--lower", self.lower, "--upper", upper, "--work", work,
                  "--home", HOME, "--x11dir", os.path.join(d, "x11"), "--display", str(n), "--size", self.size,
                  "--xvfb", self.xvfb, "--ready", ready, "--xlog", os.path.join(d, "xvfb.log"),
                  "--root", self.root_mode, "--osworld-port", str(self.osworld_port), "--pkg", PKG_DIR,
                  "--python", self.python, "--tag", self.tag,
                  *(["--osworld-real", self.osworld_real_kit] if self.osworld_real_kit else []),
                  *(["--exec-systemd"] if self.exec_systemd else []),
-                 *(["--server-mode", self.server_mode, "--timing", timing] if self.osworld_real_kit else []),
+                 *(["--server-mode", self.server_mode] + ([] if self.criu_friendly else ["--timing", timing]) if self.osworld_real_kit else []),
+                 *(["--criu-friendly"] if self.criu_friendly else []),
                  *(["--workload", self.workload] if self.workload else []),
                  *(["--ksm"] if self.ksm else []), *(["--no-aslr"] if self.no_aslr else [])]
         cg = None
@@ -262,6 +274,123 @@ class Supervisor:
         os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))
         return info
 
+    def _stage(self, d):
+        """Mount a tmpfs at <d>/stage (ledgered first) and make upper/ and work/ in it. Returns (upper, work)."""
+        from . import sweep as sw
+        stage = os.path.join(d, "stage")
+        os.makedirs(stage, exist_ok=True)
+        sw.record(self._ledger, "mounts", stage)
+        subprocess.run(["mount", "-t", "tmpfs", "tmpfs", stage], check=True)
+        os.makedirs(os.path.join(stage, "upper"))
+        os.makedirs(os.path.join(stage, "work"))
+        return os.path.join(stage, "upper"), os.path.join(stage, "work")
+
+    def _umount(self, path):
+        for _ in range(20):
+            if subprocess.run(["umount", path], capture_output=True).returncode == 0:
+                return
+            time.sleep(0.1)
+        subprocess.run(["umount", "-l", path], capture_output=True)
+
+    def checkpoint(self, slot, path):
+        """PROTOTYPE of mechanism C: CRIU-dump the running session in `slot` (its processes die), keep its overlay upper as the
+        checkpoint's read-only layer, release the slot. Returns the criu.Checkpoint."""
+        from . import criu as cr
+        ck = cr.Checkpoint(path)
+        os.makedirs(path, exist_ok=True)
+        info = self.info(slot)
+        res = cr.dump(self.criu, info["init_pid"], ck.img, inner_if=f"dvs{slot}")
+        if res["rc"] != 0:
+            raise SessionError(f"criu dump failed: {res['log'][-3:]}")
+        proc = self._procs.pop(slot, None)
+        d = self._dir(slot)
+        from . import sweep as sw
+        layer = os.path.join(path, "layer")
+        os.makedirs(layer, exist_ok=True)
+        sw.record(self._ledger, "mounts", layer)
+        subprocess.run(["mount", "--bind", os.path.join(d, "stage"), layer], check=True)  # the tmpfs outlives the slot: it IS the layer
+        self._ckpt_layers.append(layer)
+        self._umount(os.path.join(d, "stage"))
+        link = f"/tmp/.X11-unix/X{self.display(slot)}"
+        if os.path.islink(link):
+            os.unlink(link)
+        shutil.rmtree(d, ignore_errors=True)
+        ck.write_meta(inner_if=f"dvs{slot}", display=info["display"], lower=self.lower, root_mode=self.root_mode, dump_seconds=res["seconds"],
+                      source_ip=info.get("ip"), image_bytes=sum(os.path.getsize(os.path.join(ck.img, f)) for f in os.listdir(ck.img)))
+        del proc
+        return ck
+
+    def _restore(self, slot):
+        from . import criu as cr
+        from . import sweep as sw
+        ck, meta, d = self.restore_from, self.restore_from.meta(), self._dir(slot)
+        shutil.rmtree(d, ignore_errors=True)
+        for sub in ("x11", "root"):
+            os.makedirs(os.path.join(d, sub))
+        upper, work = self._stage(d)
+        root, x11 = os.path.join(d, "root"), os.path.join(d, "x11")
+        host_link = f"/tmp/.X11-unix/X{self.display(slot)}"
+        os.makedirs("/tmp/.X11-unix", exist_ok=True)
+        if os.path.lexists(host_link):
+            target = os.readlink(host_link) if os.path.islink(host_link) else None
+            if target is None or (os.path.exists(host_link) and not target.startswith(self.state_dir + "/")):
+                raise SessionError(f"{host_link} exists and is not a Drums link; refusing to replace it")
+            os.unlink(host_link)
+        sw.record(self._ledger, "x11_links", host_link)
+        os.symlink(os.path.join(x11, f"X{meta['display']}"), host_link)
+        sw.record(self._ledger, "mounts", root)  # recorded before the mount exists
+        t0 = time.time()
+        subprocess.run(["mount", "-t", "overlay", "overlay", "-o",
+                        f"lowerdir={os.path.join(ck.path, 'layer', 'upper')}:{meta['lower']}:/,upperdir={upper},workdir={work}", root],
+                       check=True)
+        sw.record(self._ledger, "links", f"dvh{slot}")  # CRIU creates the host end; recorded first
+        pidfile = os.path.join(d, "pid")
+        res = cr.restore(self.criu, ck.img, root, x11, f"dvh{slot}", pidfile, inner_if=meta["inner_if"])
+        if res["rc"] != 0:
+            self._umount(root)
+            self._umount(os.path.join(d, "stage"))
+            if os.path.islink(host_link):
+                os.unlink(host_link)
+            raise SessionError(f"criu restore failed: {res['log'][-3:]}")
+        with open(pidfile) as f:
+            pid = int(f.read())
+        proc = _ForkedProc(pid)
+        try:
+            r = subprocess.run([self.python, "-m", "envd_linux.netsetup", "--slot", str(slot), "--pid", str(pid), "--adopt", meta["inner_if"],
+                                *(["--firewall", "--table", self.table] if self.firewall else []), "--tag", self.tag],
+                               capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=PKG_DIR))
+            if r.returncode != 0:
+                raise RuntimeError(r.stderr[-300:])
+            net = json.loads(r.stdout)
+        except Exception as e:
+            proc.kill()
+            proc.wait(5)
+            self._umount(root)
+            self._umount(os.path.join(d, "stage"))
+            raise SessionError(f"restored session network setup failed: {e}") from e
+        self._procs[slot] = proc
+        self._restored[slot] = root
+        self._epochs[slot] = self._epochs.get(slot, 0) + 1
+        info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": HOME, "unshare_pid": pid,
+                "created": time.time(), "root_mode": self.root_mode, "netns": True, "osworld_port": self.osworld_port,
+                "restored": True, "criu_restore_s": res["seconds"], "restore_total_s": time.time() - t0, **net}
+        deadline = time.time() + self.ready_timeout
+        import urllib.request
+        while True:  # ready = the real guest server answers at this slot's address
+            try:
+                urllib.request.urlopen(f"http://{net['ip']}:{self.osworld_port or 5000}/platform", timeout=1).read()
+                break
+            except Exception:
+                if time.time() > deadline or proc.poll() is not None:
+                    self.destroy(slot)
+                    raise SessionError("restored session's guest server did not answer")
+                time.sleep(0.02)
+        info["ready_s"] = time.time() - t0
+        with open(os.path.join(d, "session.json.tmp"), "w") as f:
+            json.dump(info, f)
+        os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))
+        return info
+
     def set_host_knob(self, path, value):
         """Write a sysfs/proc knob with a ledger record first; undone by close() (and by the sweep after a crash)."""
         from . import sweep as sw
@@ -279,6 +408,8 @@ class Supervisor:
             os.kill(info["init_pid"], signal.SIGKILL)  # killing PID 1 of the namespace kills all of it
         except (OSError, FileNotFoundError, KeyError, ValueError):
             pass
+        if isinstance(proc, _ForkedProc):
+            proc.wait(10)  # a restored session's mount can be released only after its processes are gone
         if proc is not None and not isinstance(proc, _ForkedProc):
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -291,6 +422,12 @@ class Supervisor:
         link = f"/tmp/.X11-unix/X{self.display(slot)}"
         if os.path.islink(link):
             os.unlink(link)
+        root = self._restored.pop(slot, None)
+        if root is not None:  # a restored session's overlay root was mounted on the host by us
+            self._umount(root)
+        stage = os.path.join(d, "stage")
+        if os.path.ismount(stage):
+            self._umount(stage)
         cg = self._cgroups.pop(slot, None)
         if cg is not None:
             for _ in range(20):  # the killed processes leave the cgroup asynchronously

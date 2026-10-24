@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 14 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 15 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -577,3 +577,69 @@ the sweep ledger before they are made and restored on close, like the KSM knobs.
   browser start, and restoring a multi-process browser's memory image is not free.
 - RESTORE-SERVER-ONLY: expected latency ratio about 1.0 (a cold guest server is already about 2 s, and restore overhead is comparable), so it is expected to LOSE on latency even when correct.
 - Most likely overall result: the probe stops at a failed rung in the ladder, which is documented as the result.
+
+
+## 15. Mechanism C results (MEASURED; raw data in `docs/data/l1-criu/`)
+
+**Status: MEASURED on one 4-vCPU host (kernel 6.18), scored against the thresholds committed in `8f5ed06`. PROTOTYPE. `drums_level` stays L0.**
+In plain terms: a full running desktop session, browser included, CAN be checkpointed with CRIU and restored as isolated siblings, which I did not
+expect; it starts about 2.1 times faster than a cold L0 session and costs no more memory. The margin on the speed target is thin and it disappears
+if the page cache is cold. The absolute saving is about one second per start, so its effect on valid rollouts per hour depends entirely on rollout length. No
+increment over any incumbent was measured or can be measured here (no KVM).
+
+### Probe ladder (the registered rungs; each is a pass or a recorded failure)
+
+| Rung | Result |
+|---|---|
+| 1. `criu check` on this kernel | PASS with CRIU 4.2. **CRIU 4.1.1 FAILED** on this kernel: it cannot read the socket options of a TCP socket (`getsockopt` of `SO_PASSCRED` and `SO_PASSSEC` returns EOPNOTSUPP on kernel 6.18), so any session with a listening TCP socket would not dump. 4.2 handles it. Both were run from private extracts of Ubuntu archive packages, not installed system-wide |
+| 2. trivial tree in its own PID namespace | NOT run as a separate rung: the first attempt failed on host mounts this sandbox has (`/mnt/skills/*`), which showed the general constraint below, and I moved to the real session |
+| 3. session with only the real guest server and Xvfb (+ AT-SPI, openbox, D-Bus) | **PASS**: dump 0.21 s, image 74.8 MiB, restore in 0.66 s, the real OSWorld server answers at the new address |
+| 4. add Chromium | **PASS**: dump 0.81 s, image 253 MiB, restore in 0.76 s, the browser's page is alive with its title. Chromium was started with `--no-sandbox` as in the K bench; a sandboxed Chromium was NOT tested |
+| 5. restore into a fresh network and mount namespace | **PASS** after four fixes described below |
+
+What had to change to make a session dumpable (each was a failure first, so each is a finding):
+1. **Every fd and mapped file must belong to a mount that exists in the dumped mount namespace.** The session init exec'd its interpreter before the pivot into the overlay root, so its mappings and stdio pointed into the detached old root. The init now re-execs itself after the pivot, moves stdio into the new root, closes inherited fds and becomes its own session leader (`criu_friendly`).
+2. **`unshare --kill-child` arms SIGKILL-on-parent-exit**, which fires at once when the restoring CRIU exits. Friendly mode clears it. Cost: if the Supervisor dies, friendly sessions are no longer killed by the kernel; the ownership sweep is the only cleanup.
+3. **The overlay's upper layer must be where the host can keep it.** It now sits on a host-visible tmpfs; the checkpoint keeps that tmpfs as a read-only layer and each sibling mounts `[checkpoint layer, template, host root]` under its own empty tmpfs upper. Overlay refuses layers that overlap, so the upper cannot sit on the host root's own filesystem.
+4. **CRIU needs help with:** inotify handles on overlay files (`--force-irmap` and scan paths), deleted shared-memory files Chromium maps (`--ghost-limit`), file locks Chromium holds (`--file-locks`), the veth (`--external veth[...]`, then re-addressed per sibling), the X11 socket directory and the six `/dev` bind mounts (external mounts). CRIU also needed `ip`, from a private copy of iproute2.
+
+### Thresholds (fixed in section 14), in order
+
+**CORRECTNESS**
+
+| Check | Result | Verdict |
+|---|---|---|
+| C1 public task `e0df059f` through the real evaluator from a restored session | score 0.0 before, 1.0 after the hand-written step; the sessions were restored (checked) | **PASS** (one task, hand-written step) |
+| C2 screenshot shows the browser | 99.7% of pixels differ from a blank desktop (threshold 10%); the page title is the loaded page's | **PASS** |
+| C3 audit, two siblings restored from ONE checkpoint, running together | 19 processes each; distinct PID, mount, network, IPC and UTS namespaces; no shared pipe, socket or eventfd inode; no shared lock entry; no shared writable regular file; distinct Xvfb socket inodes and addresses; a file written in one sibling is invisible to the other. **Two shared character devices: `/dev/null` and `/dev/urandom`** (the host's device nodes, bind-mounted into every session) | **FAIL by the literal wording** ("any shared writable object fails"), **PASS against a control**: the same audit on two COLD sessions finds the same two devices, so restore introduced no sharing. I did not relax the registered rule; the wording and the control are both reported |
+
+So correctness is NOT unconditionally passed: whether host device nodes shared by every L0 session are acceptable is a design decision about L0, not something restore changed.
+
+**LATENCY** (time to agent-ready: a screenshot that differs from blank by more than 10% pixels AND the browser page title is the loaded page's; 20 starts per arm, interleaved, page cache warm)
+
+| Arm | p50 | p95 | vs COLD (p50) |
+|---|---|---|---|
+| COLD (create, launch browser, load page) | 2.05 s | 2.19 s | |
+| RESTORE (full) | 0.98 s | 1.22 s | **2.09x** (bootstrap 95% interval 1.99 to 2.15) |
+| RESTORE-SERVER-ONLY (**PARTIAL**: restore, then cold-start the browser) | 1.22 s | 1.28 s | 1.68x |
+
+- RESTORE (full): p50 <= 0.50 x COLD and p95 not worse: **PASS by the registered point rule**, with a margin inside the noise (the interval's lower bound is 1.99).
+- RESTORE-SERVER-ONLY: below the 2x target, **FAIL**, as predicted. It is a partial arm (the browser stays cold), not the mechanism, and it works only because the full arm also works.
+- **NOT pre-registered robustness check, labelled as such:** dropping the page cache before every start (10 starts per arm): COLD 2.59 s, RESTORE 1.38 s, ratio **1.87x** (interval 1.81 to 1.96), server-only 1.55x. With the 253 MiB images read from disk the 2x target is **not met**. This sandbox's disk is a virtual device and a real host's would differ; I did not measure one. The drop-cache write is a host-level action that has no state to restore.
+- The restore time is not all CRIU: of the 0.98 s p50, the CRIU restore itself is about 0.32 s and the restore call as a whole (overlay mount, tmpfs, re-addressing the veth, waiting for the server) about 0.76 s; the rest is the readiness check (screenshot, browser title). The one-time checkpoint costs 0.8 to 1.9 s and 253 MiB per checkpoint.
+
+**MEMORY** (host memory per additional session, 3 trials, 6 points each, with the browser in both): COLD 229.4 MiB, RESTORE 221.9 MiB, ratio **0.967** (cold minus restore 6.1 to 8.9 MiB, 95% interval over trials) against the threshold <= 1.05: **PASS**. A 3% saving, real but small.
+
+**Host-level effects.** A before and after snapshot of 793 non-volatile `/proc/sys` entries showed no difference. What CRIU needed on the host: the private binary and libraries, a private `ip`, the host-side veth (created by CRIU, ledgered by name before the restore), the overlay root mounts and tmpfs mounts (ledgered), and the X11 link (ledgered). I also ran `apt-get update` (the package index changed) and `apt-get download` into a scratch directory to obtain the packages; nothing was installed system-wide.
+
+### What the registered expectations got wrong, stated plainly
+
+I put the chance that Chromium checkpoints cleanly at about 30% and said the most likely result was a probe that stops at a failed rung. It did not stop: every rung passed after the four fixes above. I put the chance of a 2x speedup given correctness at about 25%; it came out at 2.09x, narrowly. The server-only arm lost on latency as predicted.
+
+### What is NOT established
+
+- **No increment over an incumbent.** The comparison is restore against OUR cold L0 start (2 s, already fast). A tuned incumbent's snapshot-revert latency was not measured (no KVM). VM snapshot resume is prior art.
+- **Throughput effect is small unless rollouts are short.** Saving about 1.07 s per start changes valid rollouts per hour by about (1.07 s / rollout length): about 1.8% for a 60 s rollout and 0.2% for a 600 s one. This is arithmetic from the measured saving, not a measured throughput result; the matched runner is where it would be measured.
+- **Restored siblings are clones.** They start with identical in-process state: random-number generator state, in-memory tokens, browser profile contents and the same hostname. Whether that contaminates rollouts was not tested. Clock behaviour of restored processes was not tested.
+- **Portability.** CRIU images depend on the kernel and CPU; restore on another host was not tested. A checkpoint also records the template's mount path and the host's tag baked into the session command line, so a checkpoint cannot yet be reused across supervisor runs.
+- **Tested scope:** one host, one kernel, no GPU, `--no-sandbox` Chromium, one task, one checkpoint image per arm.
