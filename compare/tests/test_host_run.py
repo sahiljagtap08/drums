@@ -585,7 +585,7 @@ def test_a_custom_base_root_that_cannot_run_the_session_is_refused_by_check_with
     img.mkdir()
     for dname in ("bin", "sbin", "lib", "lib64"):
         os.symlink("usr/" + dname, img / dname)
-    for f in ("/usr/lib64/ld-linux-x86-64.so.2", "/usr/bin/python3.10", "/usr/bin/dbus-daemon", "/usr/libexec/at-spi-bus-launcher"):
+    for f in ("/usr/lib64/ld-linux-x86-64.so.2", "/usr/bin/python3.10", "/usr/bin/dbus-daemon", "/usr/libexec/at-spi-bus-launcher", "/usr/bin/umount", "/usr/bin/Xvfb"):
         _tree(str(img), f)
     cfg, deps = setup(tmp_path, incumbent="docker_kvm", cfg={"drums_base_root": str(img), "kit": "/opt/drums-osworld-real"})
     deps["rootcheck"] = _real_rootcheck_for_tests()

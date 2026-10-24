@@ -7,6 +7,7 @@ synthetic trees only. The required programs are read from `session_init.start_re
 import ast
 import os
 import re
+import struct
 
 PATH_DIRS = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
 LOADER = "/lib64/ld-linux-x86-64.so.2"
@@ -42,6 +43,18 @@ def desktop_programs(source=None, desktop="openbox"):
         if isinstance(n, ast.FunctionDef) and n.name == "start_real_desktop":
             return sorted(set(_call_first_literals(n)) | set(extra))
     raise ValueError("start_real_desktop not found")
+
+
+def post_pivot_setup_programs(source=None):
+    """Programs `setup_full_root` runs through `sh(...)` AFTER its `pivot_root` call (read from the source, in order): they execute from the NEW root (for example the final `umount -l`)."""
+    if source is None:
+        source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_init.py")).read()
+    for n in ast.parse(source).body:
+        if isinstance(n, ast.FunctionDef) and n.name == "setup_full_root":
+            calls = sorted((c for c in ast.walk(n) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "sh" and c.args and isinstance(c.args[0], ast.Constant)), key=lambda c: (c.lineno, c.col_offset))
+            names = [c.args[0].value for c in calls]
+            return sorted(set(names[names.index("pivot_root") + 1:])) if "pivot_root" in names else []
+    return []
 
 
 def server_programs(main_py_source):
@@ -86,6 +99,90 @@ def resolve(path, layers, max_links=40):
     return (hit, final) if hit else None
 
 
+LIB_DIRS = ("/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib64", "/usr/lib64", "/lib", "/usr/lib", "/usr/local/lib")
+
+
+def elf_needed(path):
+    """DT_NEEDED sonames of an ELF64 little-endian file, read WITHOUT executing it; [] for anything that is not such an ELF (scripts, static binaries)."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(64)
+            if h[:4] != b"\x7fELF" or h[4] != 2 or h[5] != 1:
+                return []
+            phoff, phentsize, phnum = struct.unpack_from("<Q", h, 32)[0], struct.unpack_from("<H", h, 54)[0], struct.unpack_from("<H", h, 56)[0]
+            loads, dyn = [], None
+            for i in range(phnum):
+                f.seek(phoff + i * phentsize)
+                ptype, _, off, vaddr, _, filesz, _, _ = struct.unpack("<IIQQQQQQ", f.read(56))
+                if ptype == 1:
+                    loads.append((vaddr, off, filesz))
+                elif ptype == 2:
+                    dyn = (off, filesz)
+            if dyn is None:
+                return []
+            f.seek(dyn[0])
+            data = f.read(dyn[1])
+            needed, strtab = [], None
+            for i in range(0, len(data) - 15, 16):
+                tag, val = struct.unpack_from("<qQ", data, i)
+                if tag == 0:
+                    break
+                if tag == 1:
+                    needed.append(val)
+                elif tag == 5:
+                    strtab = val
+            if strtab is None:
+                return []
+            base = next((off + (strtab - va) for va, off, sz in loads if va <= strtab < va + max(sz, 1)), None)
+            if base is None:
+                return []
+            out = []
+            for o in needed:
+                f.seek(base + o)
+                buf = b""
+                while not buf.endswith(b"\0"):
+                    c = f.read(64)
+                    if not c:
+                        break
+                    buf += c
+                out.append(buf.split(b"\0")[0].decode(errors="replace"))
+            return out
+    except (OSError, struct.error):
+        return []
+
+
+def lib_search_dirs(layers):
+    dirs = list(LIB_DIRS)
+    confd = resolve("/etc/ld.so.conf.d", layers)
+    if confd:
+        for L in layers:
+            d = os.path.join(L, "etc/ld.so.conf.d")
+            for fn in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+                try:
+                    dirs += [l.strip() for l in open(os.path.join(d, fn)) if l.strip().startswith("/")]
+                except OSError:
+                    pass
+    return dirs
+
+
+def missing_libraries(real_path, layers, seen=None):
+    """Sonames in the shared-library closure of the file at `real_path` that are found in NO library directory of the union (ld.so.conf.d entries included; ld.so.cache is not read, so this can
+    flag a library that lives in an unlisted directory). Libraries are searched through the union, never the host."""
+    seen = set() if seen is None else seen
+    out = []
+    dirs = lib_search_dirs(layers)
+    for so in elf_needed(real_path):
+        if so in seen:
+            continue
+        seen.add(so)
+        hit = next((r for d in dirs for r in [resolve(f"{d}/{so}", layers)] if r), None)
+        if hit is None:
+            out.append(so)
+        else:
+            out += missing_libraries(os.path.join(hit[0], hit[1].lstrip("/")), layers, seen)
+    return out
+
+
 def find_program(name, layers):
     cands = [name] if name.startswith("/") else [f"{d}/{name}" for d in PATH_DIRS]
     for c in cands:
@@ -122,7 +219,7 @@ def _python_minor_problems(kit, layers, interp):
     return out
 
 
-def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox"):
+def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None):
     """{"problems": [...], "warnings": [...]}. Problems are things the session needs at start-up and would not find; warnings are per-task needs."""
     layers = [L for L in layers if L and os.path.isdir(L)]
     problems, warnings = [], []
@@ -130,9 +227,24 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
         return {"problems": ["no layer to look in"], "warnings": []}
     if resolve(LOADER, layers) is None:
         problems.append(f"the dynamic loader {LOADER} is not in the new root: no dynamically linked program can start")
-    for prog in (programs if programs is not None else desktop_programs(desktop=desktop)):
-        if find_program(prog, layers) is None:
-            problems.append(f"{prog} is not an executable in the new root (the session starts it after the pivot); add it deliberately or use a different base root")
+    # EVERYTHING that runs after the pivot_root: the desktop programs (read from start_real_desktop), what setup_full_root runs after its pivot (the final `umount`), and the X server, which is
+    # started from this root too and whose name is a runtime argument the AST cannot see. The init's own python (mapped from the host) is covered by session_init pre-importing its lazy modules.
+    wanted = list(programs if programs is not None else desktop_programs(desktop=desktop))
+    wanted += [p for p in (post_pivot if post_pivot is not None else post_pivot_setup_programs()) if p not in wanted]
+    if xvfb not in wanted:
+        wanted.append(xvfb)
+    seen_libs = set()
+    for prog in wanted:
+        found = find_program(prog, layers)
+        if found is None:
+            problems.append(f"{prog} is not an executable in the new root (the session starts it after the pivot); add it deliberately or use a different base root"
+                            + (" (an X server: the image has none unless it is added to the writable layer; a 24.04 host Xvfb is NOT copied in)" if prog == xvfb else ""))
+            continue
+        r = resolve(found, layers)
+        gone = [so for so in missing_libraries(os.path.join(r[0], r[1].lstrip("/")), layers) if so not in seen_libs]
+        seen_libs.update(gone)
+        if gone:
+            problems.append(f"{prog} needs shared libraries that are not in the new root: {', '.join(gone)}")
     if kit:
         if resolve(f"{kit}/server/main.py", layers) is None:
             problems.append(f"the kit's server ({kit}/server/main.py) is not visible in the new root: after the pivot the HOST's {kit} is gone unless it is placed in the template layer")

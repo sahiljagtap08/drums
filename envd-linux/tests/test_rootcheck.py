@@ -28,7 +28,7 @@ def image_root(tmp_path, with_py312=False, programs=("dbus-daemon", "wmctrl"), u
     mk(r, "/usr/lib64/ld-linux-x86-64.so.2")
     mk(r, "/usr/bin/python3.10")
     mk(r, "/usr/libexec/at-spi-bus-launcher")
-    for p in programs:
+    for p in (*programs, "umount", "Xvfb"):  # the post-pivot `umount` and the X server are always required
         mk(r, f"/usr/bin/{p}")
     if with_py312:
         mk(r, "/usr/bin/python3.12")
@@ -164,3 +164,50 @@ def test_the_gnome_desktop_adds_its_own_programs_and_openbox_stays_the_default(t
     t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
     probs = rc.check_userland([t, r], kit=KIT, desktop="gnome")["problems"]
     assert any("gnome-session" in p for p in probs) and not any("openbox" in p for p in probs)
+
+
+def test_the_post_pivot_programs_are_read_from_setup_full_root_and_xvfb_is_always_required(tmp_path):
+    assert rc.post_pivot_setup_programs() == ["umount"]  # only the final `umount -l /.drums-old` runs after the pivot; the mounts before it ran from the host
+    assert rc.post_pivot_setup_programs("def setup_full_root(a):\n    sh('mount', 'x')\n    sh('pivot_root', 'a', 'b')\n    sh('umount', '-l', 'c')\n    sh('tool')\n") == ["tool", "umount"]
+    r = image_root(tmp_path, programs=("dbus-daemon", "openbox"))
+    os.remove(os.path.join(r, "usr/bin/Xvfb"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    probs = rc.check_userland([t, r], kit=KIT)["problems"]
+    assert any(p.startswith("Xvfb is not an executable") and "image has none" in p for p in probs), probs
+    os.remove(os.path.join(r, "usr/bin/umount"))
+    assert any(p.startswith("umount is not an executable") for p in rc.check_userland([t, r], kit=KIT)["problems"])
+    assert any(p.startswith("/opt/xvfb is not an executable") for p in rc.check_userland([t, r], kit=KIT, xvfb="/opt/xvfb")["problems"])  # a dynamic --xvfb argument is checked too
+
+
+def test_the_shared_library_closure_is_audited_inside_the_union_not_the_host(tmp_path):
+    import shutil
+    r = image_root(tmp_path, programs=("dbus-daemon", "openbox"))
+    shutil.copy("/usr/bin/true", os.path.join(r, "usr/bin/Xvfb"))  # a real dynamically linked ELF with no libraries around it
+    need = rc.elf_needed("/usr/bin/true")
+    assert "libc.so.6" in need
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    probs = rc.check_userland([t, r], kit=KIT)["problems"]
+    assert any(p.startswith("Xvfb needs shared libraries") and "libc.so.6" in p for p in probs), probs
+    mk(r, "/usr/lib/x86_64-linux-gnu/libc.so.6")  # a (non-ELF) stand-in satisfies the soname through the usr-merge symlinks
+    assert not any(p.startswith("Xvfb needs") for p in rc.check_userland([t, r], kit=KIT)["problems"])
+    assert rc.elf_needed(os.path.join(r, "usr/bin/python3.10")) == []  # a text file is not an ELF: never executed, never guessed
+    mk(r, "/etc/ld.so.conf.d/x.conf", "/opt/extra/lib\n")
+    os.remove(os.path.join(r, "usr/lib/x86_64-linux-gnu/libc.so.6"))
+    mk(r, "/opt/extra/lib/libc.so.6")
+    assert not any(p.startswith("Xvfb needs") for p in rc.check_userland([t, r], kit=KIT)["problems"])  # ld.so.conf.d directories are searched
+
+
+def test_every_lazy_import_on_the_init_path_is_preloaded_before_the_pivot():
+    import ast
+    import inspect
+    from envd_linux import session_init as SI
+    tree = ast.parse(inspect.getsource(SI))
+    lazy = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, ast.FunctionDef) and fn.name in ("main", "http_ok", "lo_up", "start_real_desktop", "start_server", "record_identity", "process_table"):
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Import):
+                    lazy |= {a.name for a in n.names}
+    allowed_elsewhere = {"ctypes", "main"}  # ctypes is also preloaded; `main` is the OSWorld server module of the fork arm (its own kit path, refused with a uid)
+    assert lazy - set(SI.PRELOAD) - allowed_elsewhere == set(), lazy - set(SI.PRELOAD)
+    SI.preload()

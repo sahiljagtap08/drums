@@ -272,6 +272,20 @@ def start_real_desktop(a):
         mark("chromium_ready")
 
 
+# Modules imported lazily on the main path AFTER the pivot would be searched in the (mapped host) python's stdlib directory, which does not exist in a different base root: import them BEFORE.
+PRELOAD = ("fcntl", "struct", "urllib.request", "urllib.error", "http.client", "ctypes", "ssl", "json", "re", "shutil", "tempfile")
+
+
+def preload():
+    import importlib
+    for m in PRELOAD:
+        try:
+            importlib.import_module(m)
+        except ImportError:
+            if m != "ssl":
+                raise
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--lower", required=True)
@@ -312,6 +326,7 @@ def main(argv=None):
     ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
     argv = list(sys.argv[1:] if argv is None else argv)
     a = ap.parse_args(argv)
+    preload()
 
     for f in a.cgroup_procs:  # first act: join the session's cgroup ("0" = self), so every descendant inherits it
         with open(f, "w") as fh:
