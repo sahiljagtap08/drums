@@ -291,7 +291,11 @@ class FakeEnv:
     def _post(self, payload, timeout):
         sc, s = payload["command"], self.s
         out, err, rc = "", "", 0
-        if "ENDPOINT_OK" in sc:
+        if "os.kill" in sc:  # the canary kill script
+            s.pop("cproc", None)
+        elif sc.startswith("rm -f /tmp/canary_"):
+            s.pop("cfile", None)
+        elif "ENDPOINT_OK" in sc:
             out = "ENDPOINT_OK"
         elif "oops" in sc:
             err, rc = "oops", 3
@@ -355,9 +359,11 @@ def test_run_live_executes_the_whole_path_with_fakes_and_writes_the_labelled_res
     assert res["label"] == "ARCHITECTURAL_NOT_FAIR_COMPARISON" and res["training_economics_claim"] is False and res["bus_problems"] == [] and "NOT captured here" in res["bus_scope"]
     assert res["scores"]["pass"] and res["reset_hygiene"]["pass"] and res["reset_hygiene"]["writer_running_before"] and res["two_session"]["pass"]
     assert all(x["pass"] for x in res["guest_exec_selftest"])  # the real guestexec parsed the fake /execute shape
-    assert res["state_bytes"] == {"s0_upper": 10, "s1_upper": 11}  # read through the Supervisor's own _dir layout
+    assert res["state_bytes"]["s0"]["bytes"] is None and "private tmpfs inside the session" in res["state_bytes"]["s0"]["why"]  # cold: unreachable, so null, never 0
+    rec = res["wall_reconciliation"]
+    assert rec["unattributed_s"] >= -1e-6 and abs(rec["wall_s"] - rec["sum_of_phases_s"] - rec["unattributed_s"]) < 1e-6
     c = res["clocks"]
-    assert c["cold_setup"] is not None and c["reset_setup"] is not None and c["task"] is not None and c["evaluation"] is not None and c["hygiene"] is not None
+    assert all(c[k] is not None for k in ("cold_setup", "initial_reset", "selftest", "parity_capture", "reset_setup", "task", "evaluation", "hygiene", "two_session_gate"))
     assert c["checkpoint_save"] is None and c["restore"] is None and "CRIU" in c["unavailable"]["restore"]
     assert all(e.closed for e in envs) and sup.closed and res["cleanup_errors"] == []
 
@@ -403,3 +409,78 @@ def test_run_live_fails_on_a_leaky_hygiene_or_a_bus_problem_and_uses_the_real_fa
     pool = object()
     om.drums_factory(pool, desktop_env_module=Mod, **stages.hr_kw(dict(GOOD, work_dir=str(tmp_path))))(0)
     assert seen["installed"] is pool and seen["provider_name"] == "docker" and seen["region"] == op.REGION and seen["action_space"] == "pyautogui" and seen["require_a11y_tree"] is False
+
+
+def test_state_bytes_are_null_with_a_reason_for_the_cold_upper_and_measured_for_the_criu_stage(tmp_path):
+    class Sup:
+        def _dir(self, i):
+            return str(tmp_path / f"s{i}")
+    cold = fg.state_bytes_report(Sup(), 0, criu_friendly=False)
+    assert cold["bytes"] is None and "unreachable from the host" in cold["why"]
+    assert fg.state_bytes_report(Sup(), 0, criu_friendly=True)["bytes"] is None  # no stage yet: null, with its own reason
+    (tmp_path / "s0" / "stage" / "upper").mkdir(parents=True)
+    (tmp_path / "s0" / "stage" / "upper" / "f").write_bytes(b"x" * 40)
+    r = fg.state_bytes_report(Sup(), 0, criu_friendly=True)
+    assert r["bytes"] == 40 and r["path"].endswith("s0/stage/upper")
+
+
+def test_the_hygiene_gate_is_clocked_once_as_a_whole_and_its_inner_calls_are_not_counted_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(fg.time, "sleep", lambda s: None)
+    monkeypatch.setattr(hr.time, "sleep", lambda s: None)
+    log = []
+
+    class LogClock(fg.PhaseClock):
+        def add(self, name, seconds):
+            log.append(name)
+            super().add(name, seconds)
+    d, envs, sup, built = live_deps(tmp_path)
+    d["clock"] = LogClock()
+    out = tmp_path / "o"
+    out.mkdir()
+    fg.run_live(dict(GOOD, work_dir=str(tmp_path / "w")), str(out), d)
+    assert log.count("hygiene") == 1 and log.count("initial_reset") == 1 and log.count("two_session_gate") == 1
+    assert log.count("reset_setup") == 2 and log.count("evaluation") == 3 and "cold_setup" in log  # the score gate alone: two resets, three evaluations (before, correct, wrong); the hygiene gate's calls are inside `hygiene`
+
+
+def test_the_canary_kill_verifies_the_start_time_in_the_guest_and_a_mismatch_kills_nothing(tmp_path):
+    tok = "k" + str(os.getpid())
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", f"canary_{tok}"])
+    try:
+        time.sleep(0.5)
+        (pid, start), = fg.parse_scan(subprocess.run(["sh", "-c", fg.scan_script(tok)], capture_output=True, text=True).stdout)
+        assert pid == p.pid
+        subprocess.run(["sh", "-c", fg.kill_script(pid, start + 1)])  # a recycled pid would have another start time
+        time.sleep(0.2)
+        assert p.poll() is None
+        subprocess.run(["sh", "-c", fg.kill_script(pid, start)])
+        assert p.wait(timeout=5) == -9
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+    subprocess.run(["sh", "-c", fg.kill_script(999999, 1)])  # a missing pid is not an error
+
+
+def test_cleanup_failures_fail_the_gate_and_the_file_is_always_removed(tmp_path, monkeypatch):
+    monkeypatch.setattr(fg.time, "sleep", lambda s: None)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+
+    class NoProcA(LocalGuest):
+        def step(self, code):
+            if "Popen" not in code:  # only the FILE canary is made; the process never starts
+                super().step(code)
+    r = fg.two_session_gate(NoProcA(str(tmp_path / "a")), LocalGuest(str(tmp_path / "b")), proc="/proc", proc_b=str(tmp_path / "b"))
+    assert not r["pass"] and not [f for f in os.listdir(tmp_path / "a") if f.startswith("canary_")]  # the file was removed although no process was ever found
+
+    class KillFails(LocalGuest):
+        def run(self, script):
+            if "os.kill" in script:
+                raise RuntimeError("endpoint died")
+            return super().run(script)
+    (tmp_path / "c").mkdir()
+    g = KillFails(str(tmp_path / "c"))
+    r2 = fg.two_session_gate(g, LocalGuest(str(tmp_path / "b")), proc="/proc", proc_b=str(tmp_path / "b"))
+    assert not r2["pass"] and any("kill" in e for e in r2["cleanup_error"]) and any("still alive" in e for e in r2["cleanup_error"])
+    for pid, _ in r2["canary_in_A"]:  # the test's own cleanup of the process the fake refused to kill
+        os.kill(pid, signal.SIGKILL)

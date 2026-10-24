@@ -160,18 +160,38 @@ def parse_scan(out):
     return rows
 
 
+KILL_CODE = """import os,sys
+pid,start=int(sys.argv[1]),sys.argv[2]
+try:
+    st=open("/proc/%d/stat"%pid).read().rsplit(")",1)[1].split()
+except OSError:
+    sys.exit(0)
+if st[19]==start and st[0]!="Z":
+    os.kill(pid,9)
+"""
+
+
+def kill_script(pid, start, proc="/proc"):
+    """Verify the process is STILL the canary (same start time, not a zombie) and kill it, in ONE in-guest process, so a recycled pid is never killed; a start-time mismatch kills nothing."""
+    import shlex
+    return f"python3 -c {shlex.quote(KILL_CODE)} {int(pid)} {int(start)}"
+
+
 def two_session_gate(a, b, proc="/proc", proc_b=None):
     """a, b: guests with .run(script) -> dict, .step(code), .reset(). A canary file and a live process (marked by an exact argv element) made in A must be invisible to B; the SAME process (pid and start time)
-    must still be alive in A after B's cold reset. The canary is killed at the end, by pid AND start time, whatever happened."""
+    must still be alive in A after B's cold reset. Cleanup is unconditional: every (pid, start) seen is killed through `kill_script` (start time re-verified in the guest), the file is ALWAYS removed, the
+    scan must then be empty, and any cleanup failure is `cleanup_error` and fails the gate."""
     token = uuid.uuid4().hex[:10]
     res = {"token": token}
     sc_a, sc_b = scan_script(token, proc), scan_script(token, proc_b or proc)
+    seen = set()
     try:
         a.step(f"open('/tmp/canary_{token}','w').write('A')")
         a.step(canary_step(token))
         found = []
         for _ in range(20):
             found = parse_scan(a.run(sc_a)["stdout"])
+            seen |= set(found)
             if found:
                 break
             time.sleep(0.25)
@@ -182,21 +202,43 @@ def two_session_gate(a, b, proc="/proc", proc_b=None):
         res.update({"canary_alive_in_A": len(found) == 1 and fa == "file", "canary_file_leaked_to_B": fb != "", "canary_process_leaked_to_B": bool(pb)})
         b.reset()
         after = parse_scan(a.run(sc_a)["stdout"])
+        seen |= set(after)
         res["canary_in_A_after_B_reset"] = after
         res["A_same_process_survives_B_reset"] = len(found) == 1 and after == found  # same pid AND start time: not a lookalike
         res["pass"] = (res["canary_alive_in_A"] and not res["canary_file_leaked_to_B"] and not res["canary_process_leaked_to_B"] and res["A_same_process_survives_B_reset"])
     finally:
+        errs = []
+        for guest, sc in ((a, sc_a),):
+            try:
+                seen |= set(parse_scan(guest.run(sc)["stdout"]))
+            except Exception as e:
+                errs.append(f"rescan: {type(e).__name__}: {str(e)[:150]}")
+        for pid, start in sorted(seen):
+            try:
+                a.run(kill_script(pid, start))
+            except Exception as e:
+                errs.append(f"kill {pid}: {type(e).__name__}: {str(e)[:150]}")
         try:
-            for pid, start in parse_scan(a.run(sc_a)["stdout"]):
-                a.run(f"kill {pid} 2>/dev/null; rm -f /tmp/canary_{token}")
+            a.run(f"rm -f /tmp/canary_{token}")  # always, whether or not a process was ever found
         except Exception as e:
-            res["cleanup_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            errs.append(f"unlink: {type(e).__name__}: {str(e)[:150]}")
+        try:
+            left = parse_scan(a.run(sc_a)["stdout"])
+            if left:
+                errs.append(f"canary still alive after cleanup: {left}")
+            if a.run(f"test -e /tmp/canary_{token} && echo file")["stdout"].strip():
+                errs.append("canary file still present after cleanup")
+        except Exception as e:
+            errs.append(f"verify: {type(e).__name__}: {str(e)[:150]}")
+        if errs:
+            res["cleanup_error"] = errs
+            res["pass"] = False
     return res
 
 
 class PhaseClock:
     """Separate MONOTONIC clocks per phase; `unavailable(name, why)` records null (not 0) for a phase this configuration really does not have."""
-    PHASES = ("cold_setup", "reset_setup", "task", "evaluation", "hygiene", "checkpoint_save", "restore")
+    PHASES = ("cold_setup", "initial_reset", "selftest", "parity_capture", "reset_setup", "task", "evaluation", "hygiene", "two_session_gate", "checkpoint_save", "restore")
 
     def __init__(self, clock=time.monotonic):
         self.clock, self.t, self.why = clock, {}, {}
@@ -253,6 +295,17 @@ def state_bytes(path):
             except OSError:
                 pass
     return tot
+
+
+def state_bytes_report(sup, slot, criu_friendly=False):
+    """Bytes of a session's writable layer, or a NULL with the reason. In the cold full-root configuration the upper is a private tmpfs INSIDE the session's mount namespace (`<stage>/upper` made by
+    setup_full_root before the pivot), unreachable from the host afterwards, and the root overlay reports the lower's size: nothing honest can be read, so it is null, never 0. With CRIU the upper is the
+    host-visible `<slot dir>/stage/upper`, which is measured."""
+    if criu_friendly:
+        path = os.path.join(sup._dir(slot), "stage", "upper")
+        b = state_bytes(path)
+        return {"bytes": b, "path": path, "why": None if b is not None else "the stage upper does not exist"}
+    return {"bytes": None, "path": None, "why": "cold full-root upper is a private tmpfs inside the session's mount namespace; unreachable from the host after the pivot (the root overlay reports the lower's size)"}
 
 
 def gate_applicability(cfg):
@@ -351,7 +404,8 @@ def run_live(cfg, out, deps=None):
     d = deps or {}
     work = cfg.get("work_dir", os.path.join(out, "work"))
     os.makedirs(work, exist_ok=True)
-    clock = PhaseClock()
+    clock = d.get("clock") or PhaseClock()
+    wall0 = time.monotonic()
     res = {"label": "ARCHITECTURAL_NOT_FAIR_COMPARISON", "training_economics_claim": False, "gaps": PARITY_GAPS, "applicability": gate_applicability(cfg), "config_sha256": hr.config_hash(cfg),
            "bus_scope": "NARROW: strict parse of two in-session captures (device+inode, mount namespace, bus ID, activation names). NOT captured here: the host socket before/after and the bus's child processes; no security pass is implied",
            "cleanup_errors": []}
@@ -371,30 +425,32 @@ def run_live(cfg, out, deps=None):
             guests = [_Guest(e, l, task) for e, l in zip(envs, raw)]
         res["drums_prep_s"] = prep_s
         from . import guestexec
-        res["guest_exec_selftest"] = [guestexec.selftest(lambda script, e=e: guestexec.guest_run(e, script)) for e in envs]
+        with clock.phase("selftest"):
+            res["guest_exec_selftest"] = [guestexec.selftest(lambda script, e=e: guestexec.guest_run(e, script)) for e in envs]
         if not all(x["pass"] for x in res["guest_exec_selftest"]):
             raise guestexec.GuestExecError(f"the probe helper failed its selftest: {res['guest_exec_selftest']}")
-        for g in guests:
-            g.reset()
-        res["parity_capture"] = [capture_parity(g.run) for g in guests]
+        with clock.phase("initial_reset"):
+            for g in guests:
+                g.reset()
+        with clock.phase("parity_capture"):
+            res["parity_capture"] = [capture_parity(g.run) for g in guests]
         res["parity_report_vm_not_captured"] = parity_report(None, res["parity_capture"][0])
         res["bus_problems"] = bus_problems(res["parity_capture"])
         sh_out = lambda script, g=guests[0]: g.run(script)["stdout"]
         step = lambda code, g=guests[0]: g.step(code)
-        leases[0].bucket = "hygiene"
-        res["reset_hygiene"] = hr.cold_isolation_gate(leases[0], task, sh_out, step)
-        leases[0].bucket = None
+        with clock.phase("hygiene"):  # the WHOLE gate once (resets, steps, probes and its sleeps) on the UNTIMED lease: nothing counted twice, nothing left out
+            res["reset_hygiene"] = hr.cold_isolation_gate(raw[0], task, sh_out, step)
         res["scores"] = hr.cold_score_gate(leases[0], task, stages.CORRECT, stages.WRONG)  # reset/step/evaluate are timed apart by TimedLease
-        res["two_session"] = two_session_gate(guests[0], guests[1])
+        with clock.phase("two_session_gate"):
+            res["two_session"] = two_session_gate(guests[0], guests[1])
         for ph in ("checkpoint_save", "restore"):
             clock.unavailable(ph, "no checkpoint/restore with an image base root in the cold configuration (CRIU assumes '/' as the lower layer)")
-        res["state_bytes"] = {f"s{i}_upper": state_bytes(os.path.join(sup._dir(i), "upper")) for i in range(2)}  # the Supervisor's own layout
+        res["state_bytes"] = {f"s{i}": state_bytes_report(sup, i, criu_friendly=bool(getattr(sup, "criu_friendly", False))) for i in range(2)}
         res["clocks"] = clock.report()
         res["all_ok"] = (not res["bus_problems"] and res["reset_hygiene"]["pass"] and res["scores"]["pass"] and res["two_session"]["pass"])
     except Exception as e:  # raw: a failed gate is a result
         res["error"] = f"{type(e).__name__}: {str(e)[:400]}"
         res["all_ok"] = False
-        res["clocks"] = clock.report()
     finally:
         for e in envs:
             try:
@@ -408,6 +464,13 @@ def run_live(cfg, out, deps=None):
                 res["cleanup_errors"].append(f"supervisor.close: {type(ce).__name__}: {str(ce)[:200]}")
         if res["cleanup_errors"]:
             res["all_ok"] = False
+    res["clocks"] = clock.report()
+    wall = time.monotonic() - wall0
+    attributed = sum(v for k, v in res["clocks"].items() if k != "unavailable" and v is not None)
+    res["wall_reconciliation"] = {"wall_s": wall, "sum_of_phases_s": attributed, "unattributed_s": wall - attributed,
+                                  "note": "unattributed = anything outside the named phases (bus parsing, supervisor/session teardown, result handling); reported, not hidden"}
+    if isinstance(res.get("two_session"), dict) and res["two_session"].get("cleanup_error"):
+        res["all_ok"] = False
     json.dump(res, open(os.path.join(out, "fullroot_gates.json"), "w"), indent=1, default=str)
     print("FULLROOT GATES " + ("PASS" if res["all_ok"] else "FAIL: see fullroot_gates.json") + " (ARCHITECTURAL_NOT_FAIR_COMPARISON; no timing claim)")
     return 0 if res["all_ok"] else 1
