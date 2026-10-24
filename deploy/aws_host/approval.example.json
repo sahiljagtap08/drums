@@ -1,0 +1,23 @@
+{
+  "_comment": "EXAMPLE ONLY, NOT APPROVED. approved is false; the owner fills every field and sets approved to true. Prices are the owner's inputs, taken from the AWS price list at approval time; none is verified here.",
+  "run_id": "OWNER: unique tag, e.g. drums-cmp-001",
+  "approved_by": "OWNER",
+  "approved": false,
+  "instance_type": "m7i.metal-24xl",
+  "region": "us-east-1",
+  "ceiling_hours": 4,
+  "stop_margin_hours": 0.5,
+  "budget_cap_usd": 0,
+  "hourly_usd": 4.8384,
+  "ebs_gb": 200,
+  "ebs_usd_per_gb_month": 0,
+  "public_ipv4_usd_per_hour": 0,
+  "transfer_out_gb": 20,
+  "transfer_usd_per_gb": 0,
+  "ssh_cidr": "OWNER: x.x.x.x/32",
+  "key_name": "OWNER",
+  "subnet_id": "OWNER",
+  "security_group_id": "OWNER",
+  "image_id": "OWNER: resolved Ubuntu 24.04 amd64 AMI id in us-east-1",
+  "profile": "OWNER: non-root AWS CLI profile"
+}

@@ -358,7 +358,7 @@ class _DesktopEnvLease(Lease):
         try:
             if a is not None and a.reuse == "post_setup":
                 key = (self.worker, task_config["id"])
-                name = f"post_setup:{task_config['id']}:w{self.worker}"
+                name = f"{a.name_prefix}post_setup-{task_config['id']}-w{self.worker}"
                 self.state_kind = "setup_only"
                 if key in a.saved:
                     obs = self._revert_reset(a.saved[key], task_config)
@@ -367,6 +367,7 @@ class _DesktopEnvLease(Lease):
                 obs = self.env.reset(task_config=task_config)
                 self.env._save_state(name)
                 a.saved[key] = name
+                a.snapshots_taken.append(name)
                 self.phase = "setup+save"
                 return obs
             return self.env.reset(task_config=task_config)
@@ -442,6 +443,8 @@ class DesktopEnvAdapter(Adapter):
         if reuse not in ("none", "post_setup"):
             raise ValueError(reuse)
         self.name, self.factory, self.envs, self.reuse, self.saved = name, factory, [], reuse, {}
+        self.name_prefix = ""  # set per block by a runner whose provider keeps every snapshot name (a VM): names must be unique across blocks
+        self.snapshots_taken = []  # every snapshot name this adapter saved, so the runner can delete them (and time that) between blocks
 
     def open(self, slots):
         self.envs = [self.factory(i) for i in range(slots)]

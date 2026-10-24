@@ -483,3 +483,24 @@ def test_a_per_environment_probe_is_recorded_for_its_arm_only_and_never_implies_
                            clock=clk, mem_reader=None, cpu_reader=None, env_probes={"A": Probe()})
     assert [b["block"] for b in s["arms"]["A"]["per_environment"]] == [1, 2] and s["arms"]["B"]["per_environment"] == "MISSING (no probe)"
     assert s["per_environment_resource_capture"]["B"] == "MISSING" and s["resource_parity_claimed"] is False
+
+
+def test_snapshot_names_are_unique_per_block_and_the_between_block_hook_is_timed(tmp_path):
+    from drums_compare import first_check as fc
+    clk = Clock()
+    seen = []
+
+    def make():
+        SnapEnv.clock = clk
+        return om.DesktopEnvAdapter("x", om.incumbent_factory("vmware", path_to_vm="/vm", desktop_env_module=SnapModule), reuse="post_setup")
+    SnapEnv.log = []
+    hook_calls = []
+
+    def hook(adapter):
+        hook_calls.append(list(adapter.snapshots_taken))
+        seen.extend(adapter.snapshots_taken)
+    s = fc.run_alternating({"A": make, "B": make}, {"a": {"id": "a", "config": [{"type": "launch"}]}}, ["a", "a"], lambda: om.ScriptedAgent({}), 4, {"A": PRICE, "B": PRICE},
+                           str(tmp_path), {}, clock=clk, mem_reader=None, cpu_reader=None, block_hooks={"A": hook})
+    assert len(hook_calls) == 4 and all(len(c) == 1 for c in hook_calls)
+    assert len(set(seen)) == 4 and all(n.startswith("b") and ":" not in n for n in seen)  # one setup+save per block, never the same name twice
+    assert s["arms"]["A"]["between_block_s"] >= 0 and s["arms"]["B"]["between_block_s"] == 0.0

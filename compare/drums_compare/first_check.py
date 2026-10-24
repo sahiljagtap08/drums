@@ -46,12 +46,13 @@ def real_arms(pool, vbox_path_to_vm, reuse="post_setup", desktop_env_module=None
 
 
 def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, out_dir, pins, concurrency=1, max_steps=50, canary=True, clock=time.time,
-                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None):
+                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None, block_hooks=None, name_prefix=True):
     """arms: {name: callable -> fresh Adapter}; prices: {name: Prices} (the owner's own price inputs); pins: any JSON-able facts (versions, commits, settings);
     external_prep: {arm: seconds} of preparation done BEFORE this call (reported, and added in the 'with prep' figures). mem_reader / cpu_reader may be None to record nothing
     (then the telemetry is reported as MISSING, never as zero). env_probes: {arm: object with begin() and end() -> dict} for PER-ENVIRONMENT capture (e.g. the session cgroups
     of a Drums arm); an arm without a probe is reported as MISSING for it."""
     env_probes = env_probes or {}
+    block_hooks = block_hooks or {}  # {arm: callable(adapter) -> None}, run after each block; its time is reported as `between_block_s` and counted in the with-prep figures
     external_prep = external_prep or {}
     names = list(arms)
     if len(names) != 2:
@@ -59,13 +60,15 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
     os.makedirs(out_dir, exist_ok=True)
     json.dump(pins, open(os.path.join(out_dir, "pins.json"), "w"), indent=1, default=str)
     per_arm = {n: {"blocks": 0, "rollouts": 0, "valid": 0, "faults": {}, "wall_s": 0.0, "cost_usd": 0.0, "first_rollout_work_s": 0.0, "interference": 0, "adapter_build_s": 0.0,
-                   "external_prep_s": float(external_prep.get(n, 0.0)), "host_memory_blocks": [], "host_cpu_busy_s_blocks": [], "per_environment_blocks": [], "results": []} for n in names}
+                   "external_prep_s": float(external_prep.get(n, 0.0)), "host_memory_blocks": [], "host_cpu_busy_s_blocks": [], "per_environment_blocks": [], "between_block_s": 0.0, "results": []} for n in names}
     order = []
     for i in range(blocks):
         for n in (names if i % 2 == 0 else names[::-1]):
             order.append((i, n))
             tb = time.time()
             adapter = arms[n]()
+            if name_prefix:
+                adapter.name_prefix = f"b{i}-"
             per_arm[n]["adapter_build_s"] += time.time() - tb
             c0 = cpu_reader() if cpu_reader else None
             probe = env_probes.get(n)
@@ -75,6 +78,10 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
                           mem_reader=mem_reader, mem_period=mem_period)
             if probe:
                 per_arm[n]["per_environment_blocks"].append(probe.end())
+            if n in block_hooks:
+                th = time.time()
+                block_hooks[n](adapter)
+                per_arm[n]["between_block_s"] += time.time() - th
             if cpu_reader:
                 per_arm[n]["host_cpu_busy_s_blocks"].append(cpu_reader() - c0)
             per_arm[n]["host_memory_blocks"].append(res["summary"].get("memory"))
@@ -97,7 +104,7 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
                "preparation_note": "run_arm clock excludes anything done before run_alternating and the arm-factory time; those are reported as external_prep_s and adapter_build_s and added in the *_with_prep figures"}
     for n, a in per_arm.items():
         o = {k: v for k, v in a.items() if k != "results"}
-        prep_s = a["external_prep_s"] + a["adapter_build_s"]
+        prep_s = a["external_prep_s"] + a["adapter_build_s"] + a["between_block_s"]
         prep_cost = prices[n].total(prep_s / 3600) - prices[n].fixed_usd if prep_s else 0.0  # the host price over the prep time (the fixed price is counted once, in the blocks)
         o["cost_per_valid_usd_run_arm_only"] = (a["cost_usd"] / a["valid"]) if a["valid"] else None
         o["cost_with_prep_usd"] = a["cost_usd"] + prep_cost

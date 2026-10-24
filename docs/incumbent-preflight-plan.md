@@ -94,6 +94,10 @@ Concurrency 1; the same local task (`e0df059f`) and the same scripted agent on b
 
 **What this does and does not show.** The Drums side's limits are applied and the sessions stay inside them on this host. **Resource parity is still NOT claimed** (`resource_parity_claimed: false`): the incumbent VM's vCPU and RAM settings are unverified (no VM exists here), the VM has no per-environment capture, the memory figure is 2 percent of the limit on a trivial task (it says nothing about limit pressure), and CPU is a sampled lower bound.
 
+## 8d. Host execution package (BUILT, UNRUN)
+
+The action-ready runner, bootstrap, image-fetch and AWS control scripts, their fail-closed checks, the control design and the gate sequence are in `docs/aws-incumbent-runbook.md`. Nothing there has run against a real VM or AWS.
+
 ## 9. If no suitable existing host or image exists
 
 A rental proposal is written LATER, only after the owner confirms what is already available and after access, quota and price checks have been done by the owner. It would be a bounded, priced proposal (host type, duration, shutdown, cost ceiling). **It is not approved, not priced and not requested here.**
