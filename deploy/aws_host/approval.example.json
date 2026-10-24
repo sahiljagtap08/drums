@@ -1,5 +1,5 @@
 {
-  "_comment": "EXAMPLE ONLY, NOT APPROVED. approved is false; the owner fills every field and sets approved to true. Prices are the owner's inputs, taken from the AWS price list at approval time; none is verified here.",
+  "_comment": "EXAMPLE ONLY, NOT APPROVED (approved is false). stage vbox_metal is the original VirtualBox live-snapshot goal and needs the 96 vCPU quota. quota_standard_vcpu_asserted is the owner's statement of the live quota; no API call checks it. Prices are the owner's inputs from the AWS price list at approval time; none is verified here.",
   "run_id": "OWNER: unique tag, e.g. drums-cmp-001",
   "approved_by": "OWNER",
   "approved": false,
@@ -19,5 +19,13 @@
   "subnet_id": "OWNER",
   "security_group_id": "OWNER",
   "image_id": "OWNER: resolved Ubuntu 24.04 amd64 AMI id in us-east-1",
-  "profile": "OWNER: non-root AWS CLI profile"
+  "profile": "OWNER: non-root AWS CLI profile",
+  "account_id": "463186160490",
+  "stage": "vbox_metal",
+  "quota_standard_vcpu_asserted": 0,
+  "allowed_ingress_ports": [
+    22
+  ],
+  "known_other_instances": [],
+  "watch_arm_timeout_s": 1800
 }

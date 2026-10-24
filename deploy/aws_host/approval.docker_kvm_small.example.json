@@ -1,0 +1,32 @@
+{
+  "_comment": "EXAMPLE ONLY, NOT APPROVED. stage docker_kvm_small: stock OSWorld Docker/KVM cold-reset baseline on one m7i.xlarge (4 vCPU, 16 GiB, $0.2016/h Linux us-east-1 as given by the owner). ceiling_hours plus stop_margin_hours must stay within 2 hours provision-to-terminate. ebs_gb must come from deploy/aws_host/size_image.py (docs/aws-small-stage-plan.md section 3), not a guess.",
+  "run_id": "OWNER: unique tag, e.g. drums-cmp-001",
+  "approved_by": "OWNER",
+  "approved": false,
+  "instance_type": "m7i.xlarge",
+  "region": "us-east-1",
+  "ceiling_hours": 1.5,
+  "stop_margin_hours": 0.5,
+  "budget_cap_usd": 0,
+  "hourly_usd": 0.2016,
+  "ebs_gb": 200,
+  "ebs_usd_per_gb_month": 0,
+  "public_ipv4_usd_per_hour": 0,
+  "transfer_out_gb": 20,
+  "transfer_usd_per_gb": 0,
+  "ssh_cidr": "OWNER: x.x.x.x/32",
+  "key_name": "OWNER",
+  "subnet_id": "OWNER",
+  "security_group_id": "OWNER",
+  "image_id": "OWNER: resolved Ubuntu 24.04 amd64 AMI id in us-east-1",
+  "profile": "OWNER: non-root AWS CLI profile",
+  "account_id": "463186160490",
+  "stage": "docker_kvm_small",
+  "quota_standard_vcpu_asserted": 0,
+  "allowed_ingress_ports": [
+    22
+  ],
+  "known_other_instances": [],
+  "watch_arm_timeout_s": 1800,
+  "cpu_options": "OWNER: copy any nested-virtualization launch option from the live describe-instance-types result, or delete this field if none is needed"
+}
