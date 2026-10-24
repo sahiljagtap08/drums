@@ -797,3 +797,13 @@ Section 17 showed that shaving about a second off an empty start does not move v
 6. MEMORY: restored sibling memory per added session <= 1.05 x the cold-with-setup session (same slope method, 3 trials).
 
 **Expected outcome, stated in advance so it can lose:** LibreOffice checkpoints and restores: about 40% (it forks helpers, uses many pipes and unix sockets and shared memory). If it does: threshold 2 about 85%, 3 about 70%, 4 about 60%; latency 5 about 75% (a LibreOffice cold launch is several seconds against a restore of about a second); memory 6 about 60%. Most likely failing point if it fails: the dump of the LibreOffice process tree. The economics reading, if everything passes: a measured saving of seconds per rollout for this one setup, worth (G-1)/G of it; nothing about any incumbent.
+
+
+### 18.5 Amendment to the 18.4 registration (made after the first attempt produced no measurement, before any measured run)
+
+The first attempt of the 18.4 probe stopped at its first stage: **the readiness criterion "the real accessibility tree contains the LibreOffice Writer window" cannot be evaluated in this sandbox.** LibreOffice 24.2.7 here has only the `gen` VCL plugin (no GTK plugin), so it does not expose itself to AT-SPI: the screenshot shows the window (99.6% of pixels differ from a blank desktop) but the accessibility tree stays at 541 bytes. This is an environment limit, not a CRIU result and not a product defect; the real OSWorld image has a GTK-enabled LibreOffice. No timing or restore result was produced under the original criterion.
+Amended criteria, replacing only the a11y parts (everything else in 18.4 stands, including the thresholds and the expected outcomes):
+- **Agent-ready** = `wmctrl -l` on the session's X display lists a window whose title contains "LibreOffice Writer" AND the screenshot differs from a blank desktop in more than 10% of pixels.
+- **Threshold 2 (state preserved)** = in each restored sibling that window exists with the same title as at checkpoint time.
+- **Threshold 3 (in-app state works and is private)** = a unique token is typed into sibling A through the real pyautogui path, then select-all and copy; the clipboard read from A's X display (`xclip`) contains A's token and not B's; the same for B. This reads actual document text, which is stronger than a pixel check.
+These checks are weaker than the a11y tree in one respect: the window title shows that a document window exists, not what the document contains beyond the typed token. The claim stays what 18.4 says: branching of ONE application-launch state; no evaluator and no benchmark semantics.
