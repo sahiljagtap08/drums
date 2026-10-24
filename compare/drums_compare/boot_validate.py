@@ -63,9 +63,14 @@ def run(a, deps=None):
     if found["problems"]:
         report["problems"] = found["problems"]
         return finish("ABORT_ROOT")  # nothing was created or mounted
-    from envd_linux.session import Supervisor
-    sup = (d.get("supervisor") or Supervisor)(a.state, a.overlay, root_mode="full", base_root=a.root, home=a.home, osworld_real_kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user,
-                                              server_mode="module", netns=True, osworld_port=0, ready_timeout=180)
+    sup = None
+    try:
+        from envd_linux.session import Supervisor
+        sup = (d.get("supervisor") or Supervisor)(a.state, a.overlay, root_mode="full", base_root=a.root, home=a.home, osworld_real_kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user,
+                                                  server_mode="module", netns=True, osworld_port=0, ready_timeout=180)
+    except Exception as e:  # the constructor refuses BEFORE any mount; that is a report, not a traceback
+        report["problems"].append(f"Supervisor preflight refused: {type(e).__name__}: {str(e)[:400]}")
+        return finish("ABORT_PREFLIGHT")
     try:
         info = sup.create(0)
         marks = read_marks(os.path.join(a.state, "s0", "timing.jsonl"))

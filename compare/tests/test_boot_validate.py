@@ -85,6 +85,16 @@ def test_all_checks_passing_allows_timing_and_a_mismatch_never_does_and_the_sess
     assert not out["boot_identity_ok"] and any("screenshot" in p for p in out["problems"]) and any("3.10" in p for p in out["problems"])
 
 
+def test_a_supervisor_constructor_refusal_becomes_a_report_and_no_session_is_created(tmp_path):
+    r, t = _ready_root(tmp_path)
+
+    def boom(*a, **k):
+        raise ValueError("the new base root cannot run the session: x")
+    out = bv.run(args(tmp_path, root=r, overlay=t), {"supervisor": boom})
+    assert out["status"] == "ABORT_PREFLIGHT" and not out["boot_identity_ok"] and "preflight refused" in out["problems"][0]
+    assert json.load(open(tmp_path / "out" / "boot_validation.json"))["status"] == "ABORT_PREFLIGHT"
+
+
 def test_the_default_home_is_the_images_user_home():
     import inspect
     assert 'default="/home/user"' in inspect.getsource(bv.main)
@@ -96,7 +106,7 @@ KFAKES = {
     "mountpoint": '[ -e "$FAKE_DIR/mounted" ]',
     "chroot": '''echo "chroot $*" >> "$FAKE_LOG"
 case "$*" in
-  *"-m venv"*) mkdir -p "$1/opt/drums-osworld-real/venv/bin"; [ "${FAKE_TERM_AT:-}" != venv ] || kill -TERM $PPID;;
+  *"-m venv"*) case "$*" in *--without-pip*) ;; *) echo "ensurepip is not available" >&2; exit 1;; esac; mkdir -p "$1/opt/drums-osworld-real/venv/bin"; [ "${FAKE_TERM_AT:-}" != venv ] || kill -TERM $PPID;;
   *"pip freeze"*) echo "flask==3.0.0";;
   *"print("*) echo 3.10;;
 esac''',
@@ -125,16 +135,20 @@ def kit_env(tmp_path):
     for f in ("main.py", "pyxcursor.py", "screen_recording.py", "__init__.py"):
         (src / "desktop_env" / "server" / f).write_text("# " + f + "\n")
     (src / "LICENSE").write_text("Apache License\n")
+    import hashlib
+    whl = tmp_path / "pip-24.0-py3-none-any.whl"
+    whl.write_bytes(b"PK-not-a-real-wheel")
+    wsha = hashlib.sha256(whl.read_bytes()).hexdigest()
     res = tmp_path / "resolv.real"
     res.write_text("nameserver 10.0.0.2\n")
     d = tmp_path / "fstate"
     d.mkdir()
     ov = tmp_path / "ov"
 
-    def run(**env):
+    def run(wsha_override=None, **env):
         e = {"PATH": f"{fake}:/usr/bin:/bin", "FAKE_LOG": str(d / "log"), "FAKE_DIR": str(d), "DRUMS_RESOLVER_FILE": str(res), "HOME": "/nonexistent"}
         e.update({k: str(v) for k, v in env.items()})
-        r = subprocess.run(["bash", os.path.join(D, "prepare_kit_for_image.sh"), str(root), str(src), str(ov)], capture_output=True, text=True, env=e, timeout=60)
+        r = subprocess.run(["bash", os.path.join(D, "prepare_kit_for_image.sh"), str(root), str(src), str(ov), str(whl), wsha_override or wsha], capture_output=True, text=True, env=e, timeout=60)
         return r, ((d / "log").read_text().splitlines() if (d / "log").exists() else [])
     run.root, run.ov, run.res = root, ov, res
     return run
@@ -153,12 +167,30 @@ def test_the_kit_script_uses_a_real_resolver_in_the_overlay_only_writes_wrappers
     assert len(imp) == 1 and "import pyautogui" not in imp[0] and "find_spec" in imp[0]
     assert not [x for x in log if x.startswith("chroot") and "pip install" in x and "==" in x]  # the dependency list is realkit.PIP, unpinned
     assert any("pip install -q flask lxml pyautogui" in x for x in log)
+    assert any("-m venv --without-pip --system-site-packages" in x for x in log)  # never needs ensurepip
+    seed = [x for x in log if "--no-index --no-deps" in x]
+    assert len(seed) == 1 and "PYTHONPATH=/tmp/drums-seed/pip-24.0-py3-none-any.whl" in seed[0]
+    assert log.index(seed[0]) < log.index([x for x in log if "pip install -q flask" in x][0])  # pip is seeded before the dependency install
+    assert "sha256" in (kit / "pip-seed.txt").read_text() and "pip-24.0" in (kit / "pip-seed.txt").read_text()
+    assert not (kit_env.ov / "upper" / "tmp" / "drums-seed").exists()  # the seed copy is removed again
 
 
 def test_the_resolver_is_in_place_while_pip_runs(kit_env):
     # the fake chroot cannot see it, so check the order in the script text instead: copy, then pip, then removal in the trap
     s = open(os.path.join(D, "prepare_kit_for_image.sh")).read()
-    assert s.index('cp -L -- "$RES" "$M/etc/resolv.conf"') < s.index("pip install") and 'rm -f -- "$OV/upper/etc/resolv.conf"' in s and "rm -rf" not in s and "resolv.conf.drums" not in s
+    assert s.index('cp -L -- "$RES" "$M/etc/resolv.conf"') < s.index("-m pip install -q --no-index") and 'rm -f -- "$OV/upper/etc/resolv.conf"' in s and [l for l in s.splitlines() if "rm -rf" in l and not l.lstrip().startswith("#")][0].count("drums-seed") == 1 and s.count("rm -rf --") == 1 and "resolv.conf.drums" not in s
+
+
+def test_a_wrong_wheel_hash_or_missing_seed_is_refused_before_anything_is_mounted(kit_env):
+    r, log = kit_env(wsha_override="0" * 64)
+    assert r.returncode == 2 and "does not match" in r.stderr and not log and not kit_env.ov.exists()
+    r, log = kit_env(wsha_override="xyz")
+    assert r.returncode == 2 and "64 lowercase hex" in r.stderr and not log
+
+
+def test_a_venv_that_would_need_ensurepip_fails_loudly_in_the_fake_so_the_without_pip_branch_is_what_is_tested(kit_env):
+    s = open(os.path.join(D, "prepare_kit_for_image.sh")).read()
+    assert "-m venv --without-pip" in s and "-m venv --system-site-packages" not in s
 
 
 def test_a_failed_unmount_is_a_failure_that_names_the_retained_mount(kit_env):
@@ -177,7 +209,7 @@ def test_the_kit_script_refuses_a_non_image_root_before_changing_anything(tmp_pa
     import subprocess
     sh = os.path.join(D, "prepare_kit_for_image.sh")
     assert subprocess.run(["bash", "-n", sh]).returncode == 0
-    r = subprocess.run(["bash", sh, str(tmp_path), str(tmp_path), str(tmp_path / "ov")], capture_output=True, text=True)
-    assert r.returncode == 2 and "not the image root" in r.stderr and not (tmp_path / "ov").exists()
+    r = subprocess.run(["bash", sh, str(tmp_path), str(tmp_path), str(tmp_path / "ov"), "/x/pip-1-py3-none-any.whl", "0" * 64], capture_output=True, text=True)
+    assert r.returncode == 2 and not (tmp_path / "ov").exists()
     code = "\n".join(l for l in open(sh).read().splitlines() if not l.lstrip().startswith("#"))
     assert 'chroot "$M" /usr/bin/python3 -m venv' in code and "3.12" not in code and "apt" not in code and "lowerdir=$ROOT" in code
