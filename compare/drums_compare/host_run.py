@@ -563,6 +563,12 @@ def cold_score_gate(lease, task, correct, wrong):
     return out
 
 
+def live_pids(sh_out, comm):
+    """PIDs of LIVE (not zombie) processes whose command name is exactly `comm`, read from /proc state so a defunct entry is never counted (a plain pgrep also matches zombies)."""
+    out = sh_out("for p in /proc/[0-9]*; do [ \"$(cat $p/comm 2>/dev/null)\" = %s ] || continue; st=$(sed -n 's/^State:\\t\\(.\\).*/\\1/p' $p/status 2>/dev/null); [ \"$st\" != Z ] && echo ${p#/proc/}; done" % comm)
+    return [int(x) for x in out.split() if x.isdigit()]
+
+
 def cold_isolation_gate(lease, task, sh_out, step, port=47653):
     """Cold-reset incumbents: state made before a reset must be GONE after it: a live process with an in-memory token, a file marker, and a running Writer."""
     res = {}
@@ -573,11 +579,14 @@ def cold_isolation_gate(lease, task, sh_out, step, port=47653):
     marker = uuid.uuid4().hex[:8]
     step("open('/tmp/gate_marker','w').write(%r)" % marker)
     res["state_existed"] = bool(sh_out("python3 -c %r 2>/dev/null" % (ASK % port)).strip()) and sh_out("cat /tmp/gate_marker").strip() == marker
+    res["writer_pids_before"] = live_pids(sh_out, "soffice.bin")
+    res["writer_running_before"] = bool(res["writer_pids_before"])  # the Writer must be PROVEN running before the reset, or its absence afterwards proves nothing
     lease.reset(task)
     time.sleep(2)
+    res["writer_pids_after"] = live_pids(sh_out, "soffice.bin")
     res.update({"holder_gone": sh_out("python3 -c %r 2>/dev/null" % (ASK % port)).strip() == "", "marker_gone": sh_out("cat /tmp/gate_marker 2>/dev/null").strip() == "",
-                "writer_gone": sh_out("pgrep -x soffice.bin | head -1").strip() == ""})
-    res["pass"] = all(res[k] for k in ("state_existed", "holder_gone", "marker_gone", "writer_gone"))
+                "writer_gone": not res["writer_pids_after"]})
+    res["pass"] = all(res[k] for k in ("state_existed", "writer_running_before", "holder_gone", "marker_gone", "writer_gone"))
     return res
 
 

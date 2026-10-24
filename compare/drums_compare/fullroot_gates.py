@@ -66,69 +66,179 @@ def parity_report(vm, drums):
             "why": "the listed gaps (Xvfb vs Xorg, no display manager, a non-activating private bus, the kernel, clock/lock) are not resolved; a captured difference is data, an uncaptured one is unknown"}
 
 
+HEX32 = __import__("re").compile(r"^[0-9a-f]{32}$")
+NS = __import__("re").compile(r"^mnt:\[\d+\]$")
+
+
+def parse_bus(cap, i):
+    """One session's bus facts, STRICTLY parsed. Returns (facts, problems): a missing probe, a non-zero rc, a malformed device/inode, namespace, bus ID or activation listing is a problem."""
+    problems, f = [], {"socket": f"session{i}"}
+    for k in BUS_REQUIRED:
+        p = cap.get(k)
+        if not isinstance(p, dict) or p.get("rc") != 0:
+            problems.append(f"session {i}: probe {k} failed or is missing (rc {p.get('rc') if isinstance(p, dict) else None}): {(p or {}).get('err') or (p or {}).get('out')}")
+    if problems:
+        return None, problems
+    st = cap["system_bus_socket"]["out"].split()
+    if len(st) != 2 or not all(x.isdigit() for x in st):
+        problems.append(f"session {i}: malformed socket stat {cap['system_bus_socket']['out']!r} (need 'device inode')")
+    else:
+        f["socket_dev"], f["socket_inode"] = int(st[0]), int(st[1])
+    ns = cap["mnt_ns"]["out"].strip()
+    if not NS.match(ns):
+        problems.append(f"session {i}: malformed mount namespace {ns!r}")
+    f["mnt_ns"] = ns
+    ids = [l.split('"')[1] for l in cap["bus_id"]["out"].splitlines() if l.count('"') >= 2]
+    if len(ids) != 1 or not HEX32.match(ids[0]):
+        problems.append(f"session {i}: no single valid 32-hex bus ID in {cap['bus_id']['out']!r}")
+    else:
+        f["id"] = ids[0]
+    names = [l.split('"')[1] for l in cap["bus_activatable"]["out"].splitlines() if l.count('"') >= 2]
+    if "org.freedesktop.DBus" not in names:
+        problems.append(f"session {i}: the activation listing is empty or malformed ({cap['bus_activatable']['out']!r}); an unreadable inventory is not an empty one")
+    f["activatable"] = names
+    f.update(get_id_rc=0, activatable_rc=0)
+    return (None if problems else f), problems
+
+
 def bus_problems(captures):
-    """From the parity captures of two or more sessions: the buses must be real, different and private, judged on (device, inode) and namespaces, with probe failures counted as failures."""
+    """EXACTLY two valid captures are required. Judged on (device, inode), mount namespaces, bus IDs and activation names. NARROW: it does not capture the host socket before/after or the bus's child
+    processes (the offline `bus_validate` and the session's own record do); a pass here is not a security pass."""
     from .bus_validate import identity_problems
+    if len(captures) != 2:
+        return [f"exactly two session captures are required, got {len(captures)}"]
     problems, buses = [], []
     for i, cap in enumerate(captures):
-        for k in BUS_REQUIRED:
-            p = cap.get(k, {})
-            if p.get("rc") != 0:
-                problems.append(f"session {i}: probe {k} failed (rc {p.get('rc')}): {p.get('err') or p.get('out')}")
-        sock = cap.get("system_bus_socket", {}).get("out", "").split()
-        bid = cap.get("bus_id", {}).get("out", "")
-        buses.append({"socket": f"session{i}", "socket_dev": int(sock[0]) if len(sock) == 2 and sock[0].isdigit() else None, "socket_inode": int(sock[1]) if len(sock) == 2 and sock[1].isdigit() else None,
-                      "id": (bid.split('"')[1] if '"' in bid else None), "get_id_rc": cap.get("bus_id", {}).get("rc"), "activatable_rc": cap.get("bus_activatable", {}).get("rc")})
-    if len(buses) == 2 and not problems:
-        problems += identity_problems(buses)
-        if captures[0]["mnt_ns"]["out"] == captures[1]["mnt_ns"]["out"]:
-            problems.append("the two sessions share one mount namespace")
-        for i, cap in enumerate(captures):
-            names = [l.split('"')[1] for l in cap["bus_activatable"]["out"].splitlines() if '"' in l]
-            if [n for n in names if n != "org.freedesktop.DBus"]:
-                problems.append(f"session {i}: activatable names besides org.freedesktop.DBus: {names}")
+        f, pr = parse_bus(cap, i)
+        problems += pr
+        buses.append(f)
+    if problems:
+        return problems
+    problems += identity_problems(buses)
+    if buses[0]["mnt_ns"] == buses[1]["mnt_ns"]:
+        problems.append("the two sessions share one mount namespace")
+    for i, f in enumerate(buses):
+        extra = [n for n in f["activatable"] if n != "org.freedesktop.DBus"]
+        if extra:
+            problems.append(f"session {i}: activatable names besides org.freedesktop.DBus: {extra}")
     return problems
 
 
-def two_session_gate(a, b):
-    """a, b: guests with .run(script) -> dict and .step(code). Canaries (a file and a live process with a unique marker) made in A must be invisible to B; a cold reset of B must leave A's alive."""
+SCAN_CODE = """import os,sys
+proc,tok=sys.argv[1],sys.argv[2]
+me=str(os.getpid())
+for p in sorted(os.listdir(proc)):
+    if not p.isdigit() or p==me:
+        continue
+    try:
+        argv=open(proc+"/"+p+"/cmdline","rb").read().split(b"\\0")
+        st=open(proc+"/"+p+"/stat").read().rsplit(")",1)[1].split()
+    except OSError:
+        continue
+    if tok.encode() in argv and st[0]!="Z":
+        print(p,st[19])
+"""
+
+
+def scan_script(token, proc="/proc"):
+    """Shell command printing 'pid starttime' for every live process one of whose ARGV ELEMENTS is exactly `canary_<token>`. Exact element equality means the probe itself (whose argv holds the long code string)
+    never matches, and an exec'd program that keeps the marker as an argument keeps being found; the marker is not a shell comment."""
+    import shlex
+    return f"python3 -c {shlex.quote(SCAN_CODE)} {shlex.quote(proc)} {shlex.quote('canary_' + token)}"
+
+
+def canary_step(token):
+    return ("import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(600)','canary_%s'], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)" % token)
+
+
+def parse_scan(out):
+    rows = []
+    for line in (out or "").splitlines():
+        f = line.split()
+        if len(f) == 2 and all(x.isdigit() for x in f):
+            rows.append((int(f[0]), int(f[1])))
+    return rows
+
+
+def two_session_gate(a, b, proc="/proc", proc_b=None):
+    """a, b: guests with .run(script) -> dict, .step(code), .reset(). A canary file and a live process (marked by an exact argv element) made in A must be invisible to B; the SAME process (pid and start time)
+    must still be alive in A after B's cold reset. The canary is killed at the end, by pid AND start time, whatever happened."""
     token = uuid.uuid4().hex[:10]
     res = {"token": token}
-    a.step(f"open('/tmp/canary_{token}','w').write('A')")
-    a.step("import subprocess; subprocess.Popen(['sh','-c','exec sleep 600 # canary_%s'], start_new_session=True)" % token)
-    time.sleep(0.5)
-    seen = lambda g: (g.run(f"test -e /tmp/canary_{token} && echo file").get("stdout", "").strip(), g.run(f"pgrep -f canary_{token} | head -1").get("stdout", "").strip())
-    sa, sb = seen(a), seen(b)
-    res.update({"canary_visible_in_A": sa == ("file", sa[1]) and bool(sa[1]), "canary_file_leaked_to_B": sb[0] != "", "canary_process_leaked_to_B": sb[1] != ""})
-    b.reset()
-    sa2 = seen(a)
-    res["A_canary_survives_B_reset"] = sa2[0] == "file" and bool(sa2[1])
-    res["pass"] = res["canary_visible_in_A"] and not res["canary_file_leaked_to_B"] and not res["canary_process_leaked_to_B"] and res["A_canary_survives_B_reset"]
+    sc_a, sc_b = scan_script(token, proc), scan_script(token, proc_b or proc)
+    try:
+        a.step(f"open('/tmp/canary_{token}','w').write('A')")
+        a.step(canary_step(token))
+        found = []
+        for _ in range(20):
+            found = parse_scan(a.run(sc_a)["stdout"])
+            if found:
+                break
+            time.sleep(0.25)
+        res["canary_in_A"] = found
+        fa = a.run(f"test -e /tmp/canary_{token} && echo file")["stdout"].strip()
+        fb = b.run(f"test -e /tmp/canary_{token} && echo file")["stdout"].strip()
+        pb = parse_scan(b.run(sc_b)["stdout"])
+        res.update({"canary_alive_in_A": len(found) == 1 and fa == "file", "canary_file_leaked_to_B": fb != "", "canary_process_leaked_to_B": bool(pb)})
+        b.reset()
+        after = parse_scan(a.run(sc_a)["stdout"])
+        res["canary_in_A_after_B_reset"] = after
+        res["A_same_process_survives_B_reset"] = len(found) == 1 and after == found  # same pid AND start time: not a lookalike
+        res["pass"] = (res["canary_alive_in_A"] and not res["canary_file_leaked_to_B"] and not res["canary_process_leaked_to_B"] and res["A_same_process_survives_B_reset"])
+    finally:
+        try:
+            for pid, start in parse_scan(a.run(sc_a)["stdout"]):
+                a.run(f"kill {pid} 2>/dev/null; rm -f /tmp/canary_{token}")
+        except Exception as e:
+            res["cleanup_error"] = f"{type(e).__name__}: {str(e)[:200]}"
     return res
 
 
 class PhaseClock:
-    """Separate clocks per phase; `unavailable(name, why)` records null (not 0) for a phase this configuration does not have."""
-    PHASES = ("cold_setup", "checkpoint_save", "restore", "hygiene", "task", "evaluation")
+    """Separate MONOTONIC clocks per phase; `unavailable(name, why)` records null (not 0) for a phase this configuration really does not have."""
+    PHASES = ("cold_setup", "reset_setup", "task", "evaluation", "hygiene", "checkpoint_save", "restore")
 
-    def __init__(self, clock=time.time):
+    def __init__(self, clock=time.monotonic):
         self.clock, self.t, self.why = clock, {}, {}
+
+    def add(self, name, seconds):
+        if name not in self.PHASES:
+            raise ValueError(name)
+        self.t[name] = self.t.get(name, 0.0) + seconds
 
     @contextmanager
     def phase(self, name):
-        if name not in self.PHASES:
-            raise ValueError(name)
         t0 = self.clock()
         try:
             yield
         finally:
-            self.t[name] = self.t.get(name, 0.0) + (self.clock() - t0)
+            self.add(name, self.clock() - t0)
 
     def unavailable(self, name, why):
         self.why[name] = why
 
     def report(self):
         return {n: (self.t[n] if n in self.t else None) for n in self.PHASES} | {"unavailable": dict(self.why)}
+
+
+class TimedLease:
+    """Wraps a lease so the UNCHANGED gate functions run as before while each call is timed: reset -> reset_setup, step -> task, evaluate -> evaluation, save_branch/restore_branch -> their own phases.
+    `bucket` (set by the caller around a whole gate) attributes everything inside it to one phase instead (for example `hygiene`) so nothing is counted twice."""
+    MAP = {"reset": "reset_setup", "step": "task", "evaluate": "evaluation", "save_branch": "checkpoint_save", "restore_branch": "restore"}
+
+    def __init__(self, lease, clock):
+        self._lease, self._clock = lease, clock
+        self.bucket = None
+
+    def __getattr__(self, name):
+        attr = getattr(self._lease, name)
+        if name not in self.MAP or not callable(attr):
+            return attr
+
+        def timed(*a, **k):
+            with self._clock.phase(self.bucket or self.MAP[name]):
+                return attr(*a, **k)
+        return timed
 
 
 def state_bytes(path):
@@ -156,24 +266,65 @@ def gate_applicability(cfg):
     return {"gates": g, "image_base_root": img, "label": "ARCHITECTURAL_NOT_FAIR_COMPARISON", "gaps": [x["id"] for x in PARITY_GAPS], "training_economics_claim": False}
 
 
-def preflight(cfg):
-    """Offline checks before any host is paid for. Returns {"checks": [...], "all_ok": bool, "command": str}."""
-    from envd_linux import rootcheck
+REQUIRED = {"drums_desktop": "gnome", "drums_user": "user", "drums_uid": 1000, "drums_gid": 1000, "drums_home": "/home/user", "drums_system_bus": True, "incumbent": "docker_kvm"}
+
+
+def _build_drums_safety():
+    """AST of stages.build_drums: the Supervisor it builds must be root_mode='full' with netns=True (the private bus's safety condition) and must receive the desktop/uid/bus settings."""
+    import ast
+    import inspect
+    from . import stages
+    tree = ast.parse(inspect.getsource(stages.build_drums))
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "Supervisor":
+            kw = {k.arg: k.value for k in n.keywords}
+            full = isinstance(kw.get("root_mode"), ast.Constant) and kw["root_mode"].value == "full"
+            net = isinstance(kw.get("netns"), ast.Constant) and kw["netns"].value is True
+            passes = any(k.arg is None for k in n.keywords)  # **desktop_kw(cfg)
+            return full and net and passes
+    return False
+
+
+def preflight(cfg, scope="config"):
+    """Two scopes, stated plainly.
+    config: OFFLINE checks of this repository's code and of the configuration VALUES (exact required settings, the full-root/netns safety of build_drums, format of the pinned hashes). It says NOTHING about
+            whether any image root, kit or task file on a host works.
+    host:   everything of `config` PLUS checks that need the host's files: the mounted read-only image root, the overlay, the kit, the OSWorld checkout and task file with its pinned sha256, and the actual
+            merged-root `rootcheck`. Only `host` ALL OK allows `run`."""
+    import re
     checks = []
 
     def chk(name, ok, detail):
         checks.append({"name": name, "ok": bool(ok), "detail": detail})
-    need = {"drums_base_root": "/mnt/vm-image-ro", "drums_template_overlay": None, "drums_home": "/home/user", "drums_desktop": "gnome", "drums_uid": 1000, "drums_system_bus": True}
-    for k, v in need.items():
-        chk(f"config_{k}", cfg.get(k) not in (None, "", False, "/") if v is not None else bool(cfg.get(k)), f"{k}={cfg.get(k)!r}")
-    if all(c["ok"] for c in checks):
-        found = rootcheck.check_userland([cfg["drums_template_overlay"], cfg["drums_base_root"]], kit=cfg.get("kit", "/opt/drums-osworld-real"), desktop=cfg["drums_desktop"], uid=int(cfg["drums_uid"]),
-                                         gid=int(cfg.get("drums_gid", cfg["drums_uid"])), user=cfg.get("drums_user", "user"), home=cfg["drums_home"], system_bus=True, xvfb=cfg.get("drums_xvfb", "Xvfb"))
-        chk("rootcheck_userland", not found["problems"], "; ".join(found["problems"]) or f"ok; warnings: {found['warnings']}")
-    chk("two_sessions_possible", int(cfg.get("drums_sessions", 2)) >= 2, f"drums_sessions={cfg.get('drums_sessions', 2)}")
-    chk("incumbent_cold_reset_only", cfg.get("incumbent") != "virtualbox", "an image base root has no checkpoint/restore; the snapshot incumbent is not run by this driver")
-    return {"checks": checks, "all_ok": all(c["ok"] for c in checks), "applicability": gate_applicability(cfg),
-            "command": "python -m drums_compare.fullroot_gates run --config CONFIG.json --out OUTDIR  (authorized host only; after the offline preflight reports ALL OK)"}
+    for k, want in REQUIRED.items():
+        got = cfg.get(k, "gid-default" if k == "drums_gid" and "drums_uid" in cfg else None)
+        if k == "drums_gid" and got == "gid-default":
+            got = cfg.get("drums_uid")
+        chk(f"config_{k}", got == want and type(got) is type(want), f"{k}={cfg.get(k)!r} (required exactly {want!r})")
+    for k in ("drums_base_root", "drums_template_overlay"):
+        v = cfg.get(k)
+        chk(f"config_{k}", isinstance(v, str) and os.path.isabs(v) and os.path.normpath(v) == v and v != "/" and re.fullmatch(r"[A-Za-z0-9_./-]+", v) is not None, f"{k}={v!r} (absolute, normalized, not /, safe characters)")
+    chk("config_drums_sessions", int(cfg.get("drums_sessions", 2)) >= 2, f"drums_sessions={cfg.get('drums_sessions', 2)}")
+    chk("config_task_sha256", isinstance(cfg.get("task_sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", cfg.get("task_sha256", "")) is not None, "the pinned sha256 of the task JSON must be given (64 hex)")
+    chk("config_osworld_src", isinstance(cfg.get("osworld_src"), str) and bool(cfg.get("osworld_src")), "osworld_src is required")
+    chk("code_build_drums_full_root_netns", _build_drums_safety(), "stages.build_drums constructs the Supervisor with root_mode='full', netns=True and the desktop/uid/bus settings")
+    if scope == "host":
+        from envd_linux import rootcheck
+        from . import host_run as hr
+        base, ov, kit = cfg.get("drums_base_root", ""), cfg.get("drums_template_overlay", ""), cfg.get("kit", "/opt/drums-osworld-real")
+        chk("host_base_root_is_dir", os.path.isdir(base), base)
+        chk("host_overlay_is_dir", os.path.isdir(ov), ov)
+        tp = os.path.join(cfg.get("osworld_src", ""), "evaluation_examples", "examples", "os", hr.FIRST_TASK + ".json")
+        actual = hr.file_sha256(tp) if os.path.exists(tp) else None
+        chk("host_task_sha256", actual is not None and actual == cfg.get("task_sha256"), f"{tp}: actual {actual}")
+        chk("host_kit_present", os.path.exists(os.path.join(kit, "server", "main.py")) and os.path.exists(os.path.join(kit, "venv", "bin", "python")) or os.path.isdir(ov), f"kit {kit} (or inside the overlay)")
+        if os.path.isdir(base) and os.path.isdir(ov):
+            found = rootcheck.check_userland([ov, base], kit=kit, desktop=cfg["drums_desktop"], uid=int(cfg["drums_uid"]), gid=int(cfg["drums_gid"]), user=cfg["drums_user"], home=cfg["drums_home"],
+                                             system_bus=True, xvfb=cfg.get("drums_xvfb", "Xvfb"))
+            chk("host_merged_root_rootcheck", not found["problems"], "; ".join(found["problems"]) or f"ok; warnings: {found['warnings']}")
+    return {"scope": scope, "checks": checks, "all_ok": all(c["ok"] for c in checks), "applicability": gate_applicability(cfg),
+            "scope_note": ("OFFLINE config/code checks only: no image root, kit or task file was examined" if scope == "config" else "host checks included, including the merged-root rootcheck"),
+            "command": "python -m drums_compare.fullroot_gates run --config CONFIG.json --out OUTDIR  (authorized host only; after `preflight --scope host` reports ALL OK)"}
 
 
 class _Guest:
@@ -191,55 +342,72 @@ class _Guest:
         return self.lease.reset(self.task)
 
 
-def run_live(cfg, out):
-    """The live gates (authorized host only). Never run in this repository's tests; the gate functions it calls are."""
+def run_live(cfg, out, deps=None):
+    """The live gates (authorized host only). `deps` replaces the host-bound pieces in tests (build_drums, drums factory, strict import, task loader, lease class); nothing else changes. Cleanup runs
+    whatever happened and a failing cleanup is RECORDED, never allowed to hide the gate result."""
     from . import host_run as hr
     from . import osworld_matched as om
     from . import stages
+    d = deps or {}
     work = cfg.get("work_dir", os.path.join(out, "work"))
     os.makedirs(work, exist_ok=True)
-    de, stubs = hr.strict_import(tuple(cfg.get("allow_stub", [])))
-    task = json.load(open(os.path.join(cfg["osworld_src"], "evaluation_examples", "examples", "os", hr.FIRST_TASK + ".json")))
     clock = PhaseClock()
-    res = {"label": "ARCHITECTURAL_NOT_FAIR_COMPARISON", "training_economics_claim": False, "gaps": PARITY_GAPS, "applicability": gate_applicability(cfg), "stubbed_modules": stubs, "config_sha256": hr.config_hash(cfg)}
+    res = {"label": "ARCHITECTURAL_NOT_FAIR_COMPARISON", "training_economics_claim": False, "gaps": PARITY_GAPS, "applicability": gate_applicability(cfg), "config_sha256": hr.config_hash(cfg),
+           "bus_scope": "NARROW: strict parse of two in-session captures (device+inode, mount namespace, bus ID, activation names). NOT captured here: the host socket before/after and the bus's child processes; no security pass is implied",
+           "cleanup_errors": []}
     sup = None
     envs = []
     try:
+        de, stubs = (d.get("strict_import") or hr.strict_import)(tuple(cfg.get("allow_stub", [])))  # refuses stubbed modules BEFORE anything is built
+        res["stubbed_modules"] = stubs
+        task = (d.get("task") or (lambda: json.load(open(os.path.join(cfg["osworld_src"], "evaluation_examples", "examples", "os", hr.FIRST_TASK + ".json")))))()
         with clock.phase("cold_setup"):
-            sup, pool, prep_s = stages.build_drums(cfg, work)
-            factory = om.drums_factory(pool, desktop_env_module=de, **stages.hr_kw(cfg))
+            sup, pool, prep_s = (d.get("build_drums") or stages.build_drums)(cfg, work)
+            factory = (d.get("factory") or (lambda pool, de: om.drums_factory(pool, desktop_env_module=de, **stages.hr_kw(cfg))))(pool, de)
             envs = [factory(i) for i in range(2)]
-            leases = [om._DesktopEnvLease(e) for e in envs]
-            guests = [_Guest(e, l, task) for e, l in zip(envs, leases)]
-            for g in guests:
-                g.reset()
+            lease_cls = d.get("lease_cls") or om._DesktopEnvLease
+            raw = [lease_cls(e) for e in envs]
+            leases = [TimedLease(l, clock) for l in raw]
+            guests = [_Guest(e, l, task) for e, l in zip(envs, raw)]
         res["drums_prep_s"] = prep_s
+        from . import guestexec
+        res["guest_exec_selftest"] = [guestexec.selftest(lambda script, e=e: guestexec.guest_run(e, script)) for e in envs]
+        if not all(x["pass"] for x in res["guest_exec_selftest"]):
+            raise guestexec.GuestExecError(f"the probe helper failed its selftest: {res['guest_exec_selftest']}")
+        for g in guests:
+            g.reset()
         res["parity_capture"] = [capture_parity(g.run) for g in guests]
         res["parity_report_vm_not_captured"] = parity_report(None, res["parity_capture"][0])
         res["bus_problems"] = bus_problems(res["parity_capture"])
         sh_out = lambda script, g=guests[0]: g.run(script)["stdout"]
         step = lambda code, g=guests[0]: g.step(code)
-        with clock.phase("hygiene"):
-            res["reset_hygiene"] = hr.cold_isolation_gate(leases[0], task, sh_out, step)
-        with clock.phase("task"):
-            res["scores"] = hr.cold_score_gate(leases[0], task, stages.CORRECT, stages.WRONG)
+        leases[0].bucket = "hygiene"
+        res["reset_hygiene"] = hr.cold_isolation_gate(leases[0], task, sh_out, step)
+        leases[0].bucket = None
+        res["scores"] = hr.cold_score_gate(leases[0], task, stages.CORRECT, stages.WRONG)  # reset/step/evaluate are timed apart by TimedLease
         res["two_session"] = two_session_gate(guests[0], guests[1])
         for ph in ("checkpoint_save", "restore"):
-            clock.unavailable(ph, "no checkpoint/restore with an image base root (CRIU assumes '/' as the lower layer)")
-        res["state_bytes"] = {f"s{i}_upper": state_bytes(os.path.join(work, "state", f"s{i}", "upper")) for i in range(2)}
+            clock.unavailable(ph, "no checkpoint/restore with an image base root in the cold configuration (CRIU assumes '/' as the lower layer)")
+        res["state_bytes"] = {f"s{i}_upper": state_bytes(os.path.join(sup._dir(i), "upper")) for i in range(2)}  # the Supervisor's own layout
         res["clocks"] = clock.report()
-        res["all_ok"] = not res["bus_problems"] and res["reset_hygiene"]["pass"] and res["scores"]["pass"] and res["two_session"]["pass"]
+        res["all_ok"] = (not res["bus_problems"] and res["reset_hygiene"]["pass"] and res["scores"]["pass"] and res["two_session"]["pass"])
     except Exception as e:  # raw: a failed gate is a result
         res["error"] = f"{type(e).__name__}: {str(e)[:400]}"
         res["all_ok"] = False
+        res["clocks"] = clock.report()
     finally:
         for e in envs:
             try:
                 e.close()
-            except Exception:
-                pass
+            except Exception as ce:
+                res["cleanup_errors"].append(f"env.close: {type(ce).__name__}: {str(ce)[:200]}")
         if sup is not None:
-            sup.close()
+            try:
+                sup.close()
+            except Exception as ce:
+                res["cleanup_errors"].append(f"supervisor.close: {type(ce).__name__}: {str(ce)[:200]}")
+        if res["cleanup_errors"]:
+            res["all_ok"] = False
     json.dump(res, open(os.path.join(out, "fullroot_gates.json"), "w"), indent=1, default=str)
     print("FULLROOT GATES " + ("PASS" if res["all_ok"] else "FAIL: see fullroot_gates.json") + " (ARCHITECTURAL_NOT_FAIR_COMPARISON; no timing claim)")
     return 0 if res["all_ok"] else 1
@@ -250,19 +418,20 @@ def main(argv=None):
     ap.add_argument("stage", choices=["preflight", "run"])
     ap.add_argument("--config", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--scope", choices=["config", "host"], default="config")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     cfg = json.load(open(a.config))
     if a.stage == "preflight":
-        r = preflight(cfg)
-        json.dump(r, open(os.path.join(a.out, "fullroot_preflight.json"), "w"), indent=1, default=str)
+        r = preflight(cfg, a.scope)
+        json.dump(r, open(os.path.join(a.out, f"fullroot_preflight_{a.scope}.json"), "w"), indent=1, default=str)
         for c in r["checks"]:
             print(("PASS " if c["ok"] else "FAIL ") + c["name"] + ": " + c["detail"])
-        print("ALL OK. next: " + r["command"] if r["all_ok"] else "REFUSED: a preflight check failed")
+        print(f"{r['scope'].upper()} CHECKS OK ({r['scope_note']})" + ("; next: " + r["command"] if r["scope"] == "host" else "; the host scope is still to run") if r["all_ok"] else "REFUSED: a preflight check failed")
         return 0 if r["all_ok"] else 1
-    r = preflight(cfg)
+    r = preflight(cfg, "host")
     if not r["all_ok"]:
-        print("REFUSED: the offline preflight failed; run it first")
+        print("REFUSED: the HOST-scope preflight failed; run `preflight --scope host` first")
         return 1
     return run_live(cfg, a.out)
 

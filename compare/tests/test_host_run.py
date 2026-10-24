@@ -433,8 +433,8 @@ def test_cold_isolation_gate_passes_only_when_all_state_is_gone_after_reset():
             return "tok" if state["alive"] else ""
         if "cat /tmp/gate_marker" in s:
             return state["marker"] or ""
-        if "pgrep" in s:
-            return "9" if state["writer"] else ""
+        if "/proc/[0-9]*" in s and "soffice.bin" in s:
+            return "9\n" if state["writer"] else ""
         return ""
     import time as _t
     orig = _t.sleep
@@ -446,8 +446,42 @@ def test_cold_isolation_gate_passes_only_when_all_state_is_gone_after_reset():
             def reset(self, task):
                 pass
         assert not hr.cold_isolation_gate(Leaky(), {}, sh_out, step)["pass"]
+
+        class NoWriter(L):
+            pass
+        real_step = step
+        step2 = lambda code: None if "libreoffice" in code else real_step(code)  # the Writer never starts: its absence after the reset proves nothing
+        r = hr.cold_isolation_gate(NoWriter(), {}, sh_out, step2)
+        assert r["writer_running_before"] is False and r["writer_gone"] is True and not r["pass"]
     finally:
         _t.sleep = orig
+
+
+def test_live_pids_counts_real_live_processes_only_not_zombies(tmp_path):
+    import os
+    import shutil
+    import signal
+    import subprocess
+    import sys
+    import time
+    live_bin, zomb_bin = tmp_path / "drumswriter", tmp_path / "drumszomb"
+    shutil.copy("/bin/sleep", live_bin)
+    shutil.copy("/bin/true", zomb_bin)
+    local = lambda script: subprocess.run(["sh", "-c", script], capture_output=True, text=True).stdout
+    assert hr.live_pids(local, "drumswriter") == []
+    p = subprocess.Popen([str(live_bin), "30"])
+    z = subprocess.Popen([sys.executable, "-c", "import os,time\npid=os.fork()\nif pid==0: os.execv(%r,[%r])\ntime.sleep(8)" % (str(zomb_bin), str(zomb_bin))])
+    try:
+        time.sleep(1.0)
+        assert hr.live_pids(local, "drumswriter") == [p.pid]
+        assert subprocess.run(["pgrep", "-x", "drumszomb"], capture_output=True).returncode == 0  # a plain pgrep DOES see the zombie
+        assert hr.live_pids(local, "drumszomb") == []  # the state-based scan does not
+    finally:
+        p.send_signal(signal.SIGKILL)
+        z.send_signal(signal.SIGKILL)
+        p.wait()
+        z.wait()
+    assert hr.live_pids(local, "drumswriter") == []
 
 
 def test_parity_decision_is_a_readback_record_not_a_claim():
