@@ -12,8 +12,9 @@ CONTROLS (each a design property with a stated failure mode in docs/aws-incumben
   * ONE benchmark host at most, across run ids: launch refuses if ANY non-terminated instance exists in the region (unless the approval lists it as a known other instance)
     or any leftover volume or address tagged drums-bench=true exists. A new run id cannot bypass it.
   * DEADLINE MODE (explicit in the approval): "managed" = an AWS-managed one-time EventBridge Scheduler schedule (universal target ec2:terminateInstances, auto-deleted) created and
-    READ BACK immediately after the instance exists, with the host's own `shutdown -h +N` as the stop that starts at boot, so there is never a window without a stop; if the schedule cannot
-    be created or does not read back exactly, the instance is terminated at once. "watcher" = the external watcher below. awsctl never creates IAM roles or touches IAM.
+    READ BACK immediately after the instance exists, with the host's own `shutdown -h +N` in user data as a second stop that only takes effect AFTER the instance has booted and cloud-init has run it (user data runs after
+    boot and can fail), so between RunInstances returning and the schedule's readback there is a short interval protected by NOTHING in the cloud; if the schedule cannot be created or
+    does not read back exactly, or the process is interrupted by an exception or Ctrl-C, the instance is terminated at once. A kill -9 or power loss in that interval cannot be handled here. "watcher" = the external watcher below. awsctl never creates IAM roles or touches IAM.
   * (watcher mode) An independent WATCHER must be armed first: `watch` waits while nothing is owned (it does not exit), writes a heartbeat receipt, expires if no launch happens within
     `watch_arm_timeout_s`, and keeps watching after launch. `launch --execute` refuses without a fresh receipt from a watcher started with --execute (one that can terminate).
   * The AMI is DESCRIBED and its real root device name is mapped (never a hard-coded one); extra mapped devices, a foreign owner or a Marketplace product code refuse the launch;
@@ -232,7 +233,7 @@ DEADMAN_S = 600
 
 
 def user_data(a):
-    """In-host stops. ALWAYS (1) the ceiling: `shutdown -h +N`, which starts at boot and so covers the gap before any API-side deadline exists. In WATCHER mode also (2) a DEAD-MAN's
+    """In-host stops. ALWAYS (1) the ceiling: `shutdown -h +N`, run by cloud-init from user data: it takes effect only AFTER the host has booted and user data has executed, and user data can fail, so it does NOT cover the interval right after RunInstances. In WATCHER mode also (2) a DEAD-MAN's
     switch: the external watcher tags the instance `drums-watch-beat=<epoch>`; this script reads that tag from the instance metadata service (no credentials needed,
     `InstanceMetadataTags=enabled`) every minute and shuts the host down if the beat is older than DEADMAN_S. In MANAGED mode no watcher exists, so the dead-man is NOT installed
     (it would shut the host down for want of a beat); the AWS-managed schedule is the second stop. Instance-initiated shutdown behaviour is TERMINATE. Failure modes: in watcher mode a tag
@@ -271,11 +272,14 @@ def schedule_expression(deadline):
 
 
 def scheduler_role_documents(a):
-    """The exact least-privilege documents the OWNER would create (awsctl never calls IAM): a trust policy for EventBridge Scheduler pinned to this account and to schedules of this
-    prefix (confused-deputy conditions), and a permission policy of ONE action on instances in this account and region that carry the benchmark tag. Plus what the LAUNCHING identity needs."""
+    """The exact least-privilege documents the OWNER would create (awsctl never calls IAM). The TRUST policy follows the AWS-documented confused-deputy shape for EventBridge Scheduler:
+    aws:SourceAccount is this account and aws:SourceArn is EXACTLY this account's schedule GROUP ARN (`...:schedule-group/default`) with StringEquals. AWS states that the value must be the
+    group ARN and must NOT be narrowed to a schedule or a schedule-name prefix (a prefix there would make the role impossible to assume). The narrowing by schedule-name prefix belongs
+    to the LAUNCHING identity's permissions below, not to the trust policy. The permission policy is of ONE action on instances in this account and region that carry the benchmark tag. Plus what the LAUNCHING identity needs."""
     acct, region = APPROVED_ACCOUNT, REGION
+    group_arn = f"arn:aws:scheduler:{region}:{acct}:schedule-group/default"
     trust = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "scheduler.amazonaws.com"}, "Action": "sts:AssumeRole",
-                                                     "Condition": {"StringEquals": {"aws:SourceAccount": acct}, "ArnLike": {"aws:SourceArn": f"arn:aws:scheduler:{region}:{acct}:schedule/default/{SCHEDULE_PREFIX}*"}}}]}
+                                                     "Condition": {"StringEquals": {"aws:SourceAccount": acct, "aws:SourceArn": group_arn}}}]}
     perm = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "ec2:TerminateInstances", "Resource": f"arn:aws:ec2:{region}:{acct}:instance/*",
                                                     "Condition": {"StringEquals": {f"ec2:ResourceTag/{TAG_ALL}": "true"}}}]}
     launcher = {"scheduler": [f"scheduler:CreateSchedule", "scheduler:GetSchedule", "scheduler:DeleteSchedule"], "scheduler_resource": f"arn:aws:scheduler:{region}:{acct}:schedule/default/{SCHEDULE_PREFIX}*",
@@ -409,8 +413,8 @@ def launch(aws, a, execute=False, now=time.time, receipt=None):
         try:
             aws(*schedule_create_args(a, iid, deadline))
             deadline_info["schedule"] = verify_schedule(aws, a, iid, deadline)
-        except Exception as e:  # noqa: BLE001 - any failure to create or prove the deadline terminates the instance now
-            raise abort_launch(aws, iid, f"{type(e).__name__}: {str(e)[:200]}")
+        except BaseException as e:  # noqa: BLE001 - ANY failure to create or prove the deadline, including an interrupt (Ctrl-C), terminates the instance now
+            raise abort_launch(aws, iid, f"{type(e).__name__}: {str(e)[:200]}") from e
     else:
         deadline_info["watcher"] = {k: rc_.get(k) for k in ("state", "last_beat", "armed_at")}
     return {"executed": True, "instance_id": iid, "deadline": deadline_info, **base}

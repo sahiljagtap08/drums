@@ -509,12 +509,14 @@ def test_the_role_documents_are_least_privilege_and_scoped_to_this_account_regio
     d = awsctl.scheduler_role_documents(managed())
     trust, perm = d["role_trust_policy"]["Statement"][0], d["role_permission_policy"]["Statement"]
     assert trust["Principal"] == {"Service": "scheduler.amazonaws.com"} and trust["Action"] == "sts:AssumeRole"
-    assert trust["Condition"]["StringEquals"]["aws:SourceAccount"] == ACCT
-    assert trust["Condition"]["ArnLike"]["aws:SourceArn"] == f"arn:aws:scheduler:us-east-1:{ACCT}:schedule/default/drums-term-*"
+    # the AWS-documented confused-deputy shape for EventBridge Scheduler: StringEquals on the account AND on the schedule GROUP ARN, never a schedule or a name prefix
+    assert trust["Condition"] == {"StringEquals": {"aws:SourceAccount": ACCT, "aws:SourceArn": f"arn:aws:scheduler:us-east-1:{ACCT}:schedule-group/default"}}
+    assert "ArnLike" not in json.dumps(d["role_trust_policy"]) and "*" not in json.dumps(d["role_trust_policy"]) and "schedule/default" not in json.dumps(d["role_trust_policy"])
     assert len(perm) == 1 and perm[0]["Action"] == "ec2:TerminateInstances" and perm[0]["Resource"] == f"arn:aws:ec2:us-east-1:{ACCT}:instance/*"
     assert perm[0]["Condition"] == {"StringEquals": {"ec2:ResourceTag/drums-bench": "true"}}
     assert "*" not in perm[0]["Action"] and "iam" not in json.dumps(perm) and "scheduler:" not in json.dumps(perm)
     need = d["launching_identity_needs"]
+    assert need["scheduler_resource"] == f"arn:aws:scheduler:us-east-1:{ACCT}:schedule/default/drums-term-*"  # the name-prefix narrowing lives on the LAUNCHER, where it is valid
     assert need["iam:PassRole"]["resource"] == ROLE and need["iam:PassRole"]["condition"] == {"StringEquals": {"iam:PassedToService": "scheduler.amazonaws.com"}} and "nothing here grants" in need["note"]
 
 
@@ -529,3 +531,19 @@ def test_plan_prints_the_role_documents_for_managed_mode(tmp_path, capsys):
     assert awsctl.main(["plan", "--approval", str(p)]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["managed_deadline"]["schedule_target"] == "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances" and "role_trust_policy" in out["managed_deadline"]["documents_for_the_owner_to_create"]
+
+
+def test_an_interrupt_right_after_run_instances_also_terminates_the_instance():
+    class Interrupted(FakeAws):
+        def _scheduler(self, *args):
+            raise KeyboardInterrupt()
+    f = Interrupted()
+    with pytest.raises(awsctl.LaunchAborted, match="KeyboardInterrupt.*terminate-instances was issued"):
+        awsctl.launch(f, managed(), execute=True, now=lambda: 1_761_300_000)
+    assert f.terminated
+
+
+def test_the_launch_docs_do_not_claim_the_host_timer_covers_the_interval_after_run_instances():
+    src = open(awsctl.__file__).read()
+    assert "NOTHING in the cloud" in src and "user data runs after" in src and "can fail" in src
+    assert "never a window without a stop" not in src and "so covers the gap before any API-side deadline exists" not in src
