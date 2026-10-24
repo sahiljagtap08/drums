@@ -230,3 +230,22 @@ def test_the_boot_requests_the_private_system_bus_and_keeps_head_and_tail_of_eac
     import inspect
     src = inspect.getsource(bv.run) + inspect.getsource(bv._keep_logs)
     assert "system_bus=True" in src and "(head)" in src and "(tail)" in src
+
+
+def test_bus_identity_compares_device_and_inode_not_the_inode_alone_and_probe_errors_are_problems():
+    from drums_compare import bus_validate as bvl
+    ok = dict(socket="/a", socket_dev=62, socket_inode=7, id="x1", get_id_rc=0, activatable_rc=0)
+    other = dict(socket="/b", socket_dev=74, socket_inode=7, id="x2", get_id_rc=0, activatable_rc=0)
+    assert bvl.identity_problems([ok, other]) == []  # the real run: both inodes were 7, on two DIFFERENT tmpfs devices
+    same = dict(other, socket_dev=62)
+    assert any("same device and inode" in p for p in bvl.identity_problems([ok, same]))
+    assert any("same ID" in p for p in bvl.identity_problems([ok, dict(other, id="x1")]))
+    assert any("share a socket file" in p for p in bvl.identity_problems([ok, dict(other, socket="/a")]))
+    bad = bvl.identity_problems([dict(ok, get_id_rc=1, id=None), dict(other, activatable_rc=1)])
+    assert any("GetId failed" in p for p in bad) and any("ListActivatableNames failed" in p and "unknown, not empty" in p for p in bad)
+
+
+def test_the_session_records_the_socket_device_next_to_the_inode():
+    import inspect
+    from envd_linux import session_init as SI
+    assert "socket_dev=" in inspect.getsource(SI.start_system_bus)

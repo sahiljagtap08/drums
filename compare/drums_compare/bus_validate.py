@@ -35,6 +35,23 @@ def service_names(conf_dir_hint="/usr/share/dbus-1"):
     return names
 
 
+def identity_problems(buses):
+    """Identity of two buses. A file's inode number is unique only WITHIN one filesystem, so two sockets share a file only if (st_dev, st_ino) are both equal; equal inodes on different devices (two private /run
+    tmpfs mounts) are NOT a collision. The probes themselves must succeed: a failed GetId or ListActivatableNames is a problem, never a pass by absence."""
+    out = []
+    a, b = buses
+    for x in (a, b):
+        if x.get("get_id_rc") != 0 or not x.get("id"):
+            out.append(f"GetId failed on {x.get('socket')} (rc {x.get('get_id_rc')}): the bus identity is unknown")
+        if x.get("activatable_rc") != 0:
+            out.append(f"ListActivatableNames failed on {x.get('socket')} (rc {x.get('activatable_rc')}): the activation inventory is unknown, not empty")
+    if a.get("id") and a.get("id") == b.get("id"):
+        out.append("the two buses have the same ID")
+    if a["socket"] == b["socket"] or (a["socket_dev"], a["socket_inode"]) == (b["socket_dev"], b["socket_inode"]):
+        out.append("the two buses share a socket file (same device and inode)")
+    return out
+
+
 def run(system_conf, runner=subprocess.run):
     from envd_linux import session_init as SI
     report = {"host_socket_before": stat_sig(HOST_SOCKET), "buses": [], "problems": []}
@@ -61,7 +78,9 @@ def run(system_conf, runner=subprocess.run):
             gid = call("org.freedesktop.DBus.GetId")
             act = call("org.freedesktop.DBus.ListActivatableNames")
             kids = runner(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()
-            report["buses"].append({"pid": pid, "socket": sock, "socket_inode": os.stat(sock).st_ino, "mnt_ns": os.readlink(f"/proc/{pid}/ns/mnt"), "id": gid.stdout.split('"')[1] if '"' in gid.stdout else None,
+            st = os.stat(sock)
+            report["buses"].append({"pid": pid, "socket": sock, "socket_inode": st.st_ino, "socket_dev": st.st_dev,
+                                    "get_id_rc": gid.returncode, "activatable_rc": act.returncode, "mnt_ns": os.readlink(f"/proc/{pid}/ns/mnt"), "id": gid.stdout.split('"')[1] if '"' in gid.stdout else None,
                                     "activatable_leaked": [x for x in installed if f'"{x}"' in act.stdout], "child_pids": kids})
     except Exception as e:
         report["problems"].append(f"{type(e).__name__}: {e}")
@@ -74,10 +93,8 @@ def run(system_conf, runner=subprocess.run):
     report["host_socket_after"] = stat_sig(HOST_SOCKET)
     b = report["buses"]
     if len(b) == 2:
-        if b[0]["id"] is None or b[0]["id"] == b[1]["id"]:
-            report["problems"].append("the two buses do not have different IDs")
-        if b[0]["socket_inode"] == b[1]["socket_inode"] or b[0]["socket"] == b[1]["socket"]:
-            report["problems"].append("the two buses share a socket")
+        problems = identity_problems(b)
+        report["problems"] += problems
         for x in b:
             if x["activatable_leaked"]:
                 report["problems"].append(f"activatable names leaked from the image's service directories: {x['activatable_leaked']}")

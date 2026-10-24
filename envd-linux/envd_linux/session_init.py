@@ -208,7 +208,7 @@ def start_system_bus(env, log):
         if time.time() > deadline:
             raise SystemExit(f"the private system bus did not create {SYSTEM_BUS_SOCKET}")
         time.sleep(0.05)
-    SYSTEM_BUS.update(pid=next((int(x) for x in out if x.isdigit()), None), socket=SYSTEM_BUS_SOCKET, socket_inode=os.stat(SYSTEM_BUS_SOCKET).st_ino, mnt_ns=os.readlink("/proc/self/ns/mnt"),
+    SYSTEM_BUS.update(pid=next((int(x) for x in out if x.isdigit()), None), socket=SYSTEM_BUS_SOCKET, socket_inode=os.stat(SYSTEM_BUS_SOCKET).st_ino, socket_dev=os.stat(SYSTEM_BUS_SOCKET).st_dev, mnt_ns=os.readlink("/proc/self/ns/mnt"),
                       conf=SYSTEM_BUS_CONF, conf_sha256=hashlib.sha256(conf.encode()).hexdigest(), activation="none (service directories and launch helper removed)")
     env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
 

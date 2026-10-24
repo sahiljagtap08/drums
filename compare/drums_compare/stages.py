@@ -24,6 +24,18 @@ def hr_kw(cfg):
     return dict(DE_KW, cache_dir=os.path.join(cfg.get("work_dir", "/tmp/drums-host-run"), "cache"))
 
 
+def desktop_kw(cfg):
+    """Supervisor keyword arguments for the GNOME/uid/private-bus configuration; empty (the defaults) unless the config asks for it."""
+    kw = {}
+    if cfg.get("drums_desktop", "openbox") != "openbox":
+        kw["desktop"] = cfg["drums_desktop"]
+    if cfg.get("drums_uid") is not None:
+        kw.update(uid=int(cfg["drums_uid"]), gid=int(cfg.get("drums_gid", cfg["drums_uid"])), user=cfg.get("drums_user", "user"))
+    if cfg.get("drums_system_bus"):
+        kw["system_bus"] = True
+    return kw
+
+
 def build_drums(cfg, work):
     """Supervisor, template and pool with cgroup limits at the guest budget (cpus and memory from the config). Returns (supervisor, pool, prep_seconds): prep is EXTERNAL."""
     from envd_linux import limits as lim
@@ -48,7 +60,7 @@ def build_drums(cfg, work):
     limits = lim.Limits(cpus=float(cfg.get("guest_cpus", 2)), memory_bytes=int(cfg.get("guest_memory_mib", 4096)) * MIB)
     sup = Supervisor(os.path.join(work, "state"), tpl, root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
                      init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120, criu_friendly=(cfg.get("incumbent") == "virtualbox"),
-                     criu=Criu() if cfg.get("incumbent") == "virtualbox" else None, sweep_dir=os.path.join(work, "led"), limits=limits, home=home, base_root=base_root)
+                     criu=Criu() if cfg.get("incumbent") == "virtualbox" else None, sweep_dir=os.path.join(work, "led"), limits=limits, home=home, base_root=base_root, **desktop_kw(cfg))
     pool = DrumsSessionPool(sup, 4, health_timeout=90, eager_reset=False)
     return sup, pool, time.time() - t0
 

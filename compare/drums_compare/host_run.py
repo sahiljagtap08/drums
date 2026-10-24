@@ -341,7 +341,7 @@ def check_all(cfg, deps=None, options=None):
             kit = cfg.get("kit", "/opt/drums-osworld-real")
             main_py = os.path.join(kit, "server", "main.py")
             found = rcm.check_userland(([cfg["drums_template_overlay"]] if cfg.get("drums_template_overlay") else []) + [base], kit=kit,
-                                       server_main_source=open(main_py).read() if os.path.exists(main_py) else None, desktop=cfg.get("drums_desktop", "openbox"))
+                                       server_main_source=open(main_py).read() if os.path.exists(main_py) else None, desktop=cfg.get("drums_desktop", "openbox"), uid=int(cfg.get("drums_uid", -1)), gid=int(cfg.get("drums_gid", cfg.get("drums_uid", -1))), user=cfg.get("drums_user", ""), home=cfg.get("drums_home"), system_bus=bool(cfg.get("drums_system_bus")), xvfb=cfg.get("drums_xvfb", "Xvfb"))
             out.append(chk("drums_base_root_userland", not found["problems"], ("the new root has the session's programs and a runnable kit" + (f"; per-task warnings: {found['warnings']}" if found["warnings"] else "")) if not found["problems"]
                            else "the session could not start in this root: " + "; ".join(found["problems"])))
         except Exception as e:
