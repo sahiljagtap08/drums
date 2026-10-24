@@ -42,7 +42,7 @@ def gnome_files(r, uid=1000, gid=1000, user="user", home="/home/user"):
         mk(r, f)
     for f in ("/usr/share/gnome-session/sessions/ubuntu.session", "/usr/share/glib-2.0/schemas/gschemas.compiled", "/usr/share/gnome-shell/x"):
         mk(r, f, "x", 0o644)
-    mk(r, "/usr/share/dbus-1/system.conf", "<busconfig/>", 0o644)
+    mk(r, "/usr/share/dbus-1/system.conf", "<busconfig><type>system</type></busconfig>", 0o644)
     mk(r, "/etc/passwd", f"root:x:0:0:root:/root:/bin/bash\nmessagebus:x:103:106::/nonexistent:/usr/sbin/nologin\n{user}:x:{uid}:{gid}:U:{home}:/bin/bash\n", 0o644)
 
 
@@ -326,7 +326,7 @@ def test_the_private_system_bus_is_required_only_when_asked_and_names_what_it_ne
     assert rc.check_userland([t, r], kit=KIT)["problems"] == []  # default: unchanged
     probs = rc.check_userland([t, r], kit=KIT, system_bus=True)["problems"]
     assert any("system.conf is missing" in p for p in probs) and any("`messagebus` is not in" in p for p in probs)
-    mk(r, "/usr/share/dbus-1/system.conf", "x", 0o644)
+    mk(r, "/usr/share/dbus-1/system.conf", "<busconfig><type>system</type></busconfig>", 0o644)
     mk(r, "/etc/passwd", "messagebus:x:103:106::/nonexistent:/usr/sbin/nologin\n", 0o644)
     assert rc.check_userland([t, r], kit=KIT, system_bus=True)["problems"] == []
 

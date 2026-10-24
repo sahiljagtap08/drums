@@ -406,6 +406,11 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
         for f in ("/usr/share/dbus-1/system.conf",):
             if resolve(f, layers) is None:
                 problems.append(f"{f} is missing: `dbus-daemon --system` has no configuration")
+            else:
+                r = resolve(f, layers)
+                txt = open(os.path.join(r[0], r[1].lstrip("/")), errors="replace").read()
+                if "<type>system</type>" not in txt:
+                    problems.append(f"{f} is not a system bus configuration")
         if resolve("/etc/dbus-1/system.d", layers) is None:
             warnings.append("/etc/dbus-1/system.d is missing: the private system bus would have no per-service policy")
         pw = resolve("/etc/passwd", layers)

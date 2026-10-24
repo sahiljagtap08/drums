@@ -79,6 +79,8 @@ class Supervisor:
         Supervisor then writes a ledger entry (in sweep_dir) so a later sweep can undo its changes if it dies."""
         if not (isinstance(home, str) and os.path.isabs(home) and os.path.normpath(home) == home and home != "/"):
             raise ValueError(f"home must be a normalized absolute path other than /: {home!r}")
+        if system_bus and not (root_mode == "full" and netns):  # in 'home' mode /run is the HOST's /run: the system bus daemon would touch the host's socket directory
+            raise ValueError("system_bus needs root_mode='full' and netns=True: only then is /run the session's own private tmpfs inside its own mount and network namespaces")
         if desktop not in ("openbox", "gnome"):
             raise ValueError(f"desktop must be 'openbox' or 'gnome': {desktop!r}")
         if uid >= 0 and not (isinstance(uid, int) and uid > 0 and isinstance(gid, int) and gid >= 0 and re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user or "")):

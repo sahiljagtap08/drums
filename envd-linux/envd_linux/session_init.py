@@ -101,19 +101,61 @@ def drop_privileges(uid, gid):
 
 
 SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+SYSTEM_BUS_CONF = "/run/drums-system-bus.conf"
+SYSTEM_BUS = {}  # facts about the bus actually started, written into the identity mark
+
+
+def read_text(path):
+    with open(path, errors="replace") as f:
+        return f.read()
+
+
+def check_private_run(mountinfo, socket_exists):
+    """The bus may be started only if /run is a tmpfs MOUNT of this mount namespace (the session's own) and no bus socket exists there yet (a socket already present means the host's /run, or a leftover)."""
+    run_is_tmpfs = False
+    for line in mountinfo.splitlines():
+        f = line.split()
+        if len(f) > 9 and f[4] == "/run":
+            run_is_tmpfs = f[f.index("-") + 1] == "tmpfs"
+    if not run_is_tmpfs:
+        raise SystemExit("refusing to start a system bus: /run is not a tmpfs mount of this session")
+    if socket_exists:
+        raise SystemExit(f"refusing to start a system bus: {SYSTEM_BUS_SOCKET} already exists")
+
+
+def private_system_conf(text):
+    """The image's own system.conf with the two ways a bus can LAUNCH services removed: `<standard_system_servicedirs/>` (activatable names) and `<servicehelper>`. The explicit policy is therefore NO
+    activation: upower, accountsservice, polkit and logind are never started by the bus (nor by systemd, which is absent). Raises if the file is not a system bus configuration."""
+    if "<type>system</type>" not in text:
+        raise SystemExit("the image's system.conf is not a system bus configuration")
+    out = re.sub(r"<standard_system_servicedirs\s*/>", "", text)
+    out = re.sub(r"<servicehelper>.*?</servicehelper>", "", out, flags=re.S)
+    out = re.sub(r"<servicedir>.*?</servicedir>", "", out, flags=re.S)
+    if "servicedirs" in out or "servicehelper" in out:
+        raise SystemExit("could not remove every service-launching element from the system bus configuration")
+    return out
 
 
 def start_system_bus(env, log):
-    """A PRIVATE system bus: `dbus-daemon --system` inside this session's own mount namespace (its /run is the session's private tmpfs, so the socket exists only here; the host's system bus and logind are
-    never bound in). Nothing else is started: no logind (without /run/systemd/seats gnome-shell's login manager is its dummy), no upower/accounts/polkit services; a client that asks for one gets a
-    plain D-Bus 'service unknown' instead of a missing socket. Runs as root only so that the daemon can drop to its configured `messagebus` user."""
+    """A PRIVATE, NON-ACTIVATING system bus inside this session's own mount namespace. Preconditions (checked, not assumed): the Supervisor only passes --system-bus for root_mode full with netns, /run
+    is this session's tmpfs and holds no bus socket yet. DBUS_SYSTEM_BUS_ADDRESS inherited from the host is dropped first. The daemon runs from a generated copy of the image's own configuration without
+    service directories or launch helper, so it can launch NOTHING (the documented way a system bus starts services is its service directories, through the helper or systemd). It runs as root
+    only to drop to `messagebus`. Facts about it (socket inode, mount namespace, conf hash) are recorded; the service processes under it are listed in the identity mark."""
+    env.pop("DBUS_SYSTEM_BUS_ADDRESS", None)
+    check_private_run(read_text("/proc/self/mountinfo"), os.path.exists(SYSTEM_BUS_SOCKET))
+    conf = private_system_conf(read_text("/usr/share/dbus-1/system.conf"))
     os.makedirs("/run/dbus", exist_ok=True)
-    subprocess.run(["dbus-daemon", "--system", "--fork"], stdout=log, stderr=subprocess.STDOUT, env=env, check=True)
+    with open(SYSTEM_BUS_CONF, "w") as f:
+        f.write(conf)
+    out = subprocess.run(["dbus-daemon", "--system", f"--config-file={SYSTEM_BUS_CONF}", "--fork", "--print-pid=1"], stdout=subprocess.PIPE, stderr=log, text=True, env=env, check=True).stdout.split()
     deadline = time.time() + 5
     while not os.path.exists(SYSTEM_BUS_SOCKET):
         if time.time() > deadline:
             raise SystemExit(f"the private system bus did not create {SYSTEM_BUS_SOCKET}")
         time.sleep(0.05)
+    import hashlib
+    SYSTEM_BUS.update(pid=int(out[0]) if out else None, socket=SYSTEM_BUS_SOCKET, socket_inode=os.stat(SYSTEM_BUS_SOCKET).st_ino, mnt_ns=os.readlink("/proc/self/ns/mnt"),
+                      conf=SYSTEM_BUS_CONF, conf_sha256=hashlib.sha256(conf.encode()).hexdigest(), activation="none (service directories and launch helper removed)")
     env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
 
 
@@ -165,9 +207,11 @@ def record_identity(a, env, server=None, logs=None):
     procs = process_table()
     spid = getattr(server, "pid", server)
     mine = tree_of(spid, procs) if spid else set()
+    bus_pid = SYSTEM_BUS.get("pid")
+    bus_children = sorted({c for pid, _, _, c in procs if bus_pid and pid in tree_of(bus_pid, procs) and pid != bus_pid})  # anything the bus launched: expected empty
     want = ("gnome-shell", "gnome-session-binary", "gnome-session") if a.desktop == "gnome" else (WM_COMMANDS[a.desktop][0],)
     mark("identity", desktop=a.desktop, wm_name=wm, uid_requested=a.uid, desktop_procs=sorted({(c, u) for _, _, u, c in procs if c in want}),
-         server_pid=spid, server_uids=sorted({u for pid, _, u, _ in procs if pid in mine}), user=env.get("USER"), home=env.get("HOME"), logs=logs)
+         server_pid=spid, server_uids=sorted({u for pid, _, u, _ in procs if pid in mine}), user=env.get("USER"), home=env.get("HOME"), logs=logs, system_bus=dict(SYSTEM_BUS, launched_children=bus_children) if SYSTEM_BUS else None)
 
 
 def http_ok(url, timeout=0.5):
@@ -355,6 +399,8 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     a = ap.parse_args(argv)
     preload()
+    if a.system_bus and a.root != "full":
+        raise SystemExit("--system-bus needs --root full")
 
     for f in a.cgroup_procs:  # first act: join the session's cgroup ("0" = self), so every descendant inherits it
         with open(f, "w") as fh:

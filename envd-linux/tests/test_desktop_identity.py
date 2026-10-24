@@ -59,6 +59,78 @@ def test_only_the_two_server_output_directories_change_owner_and_nothing_else_in
 
 def test_system_bus_is_off_by_default_and_reaches_the_init_only_when_asked(tmp_path):
     assert sup(tmp_path).system_bus is False
-    assert sup(tmp_path, system_bus=True).system_bus is True
     import inspect
     assert '*(["--system-bus"] if self.system_bus else [])' in inspect.getsource(S.Supervisor.create)
+
+
+def test_a_system_bus_is_refused_before_any_effect_unless_the_root_is_full_and_the_network_is_private(tmp_path):
+    for kw in ({}, {"root_mode": "home"}, {"root_mode": "home", "netns": True}, {"root_mode": "full", "netns": False}):
+        with pytest.raises(ValueError, match="system_bus needs root_mode='full' and netns=True"):
+            sup(tmp_path, system_bus=True, **kw)
+    assert not os.path.exists(tmp_path / "state")  # nothing was created by a refused construction
+    assert sup(tmp_path).system_bus is False  # the default is unchanged
+
+
+import re
+SYSTEM_CONF = """<!DOCTYPE busconfig>
+<busconfig>
+  <type>system</type>
+  <fork/>
+  <listen>unix:path=/var/run/dbus/system_bus_socket</listen>
+  <policy context="default"><allow own="*"/></policy>
+  <standard_system_servicedirs/>
+  <servicedir>/usr/local/share/dbus-1/system-services</servicedir>
+  <servicehelper>/usr/lib/dbus-1.0/dbus-daemon-launch-helper</servicehelper>
+  <include ignore_missing="yes">/etc/dbus-1/system-local.conf</include>
+</busconfig>
+"""
+
+
+def test_the_generated_bus_configuration_cannot_launch_services_and_keeps_the_images_own_policy():
+    out = SI.private_system_conf(SYSTEM_CONF)
+    assert "servicedirs" not in out and "servicehelper" not in out and "servicedir" not in out
+    assert "<type>system</type>" in out and '<policy context="default">' in out and "system-local.conf" in out
+    with pytest.raises(SystemExit, match="not a system bus"):
+        SI.private_system_conf("<busconfig><type>session</type></busconfig>")
+
+
+MI_OK = "36 29 0:30 / /run rw,nosuid - tmpfs tmpfs rw,mode=755\n"
+MI_HOST = "22 1 8:1 / / rw - ext4 /dev/sda1 rw\n"
+
+
+def test_the_bus_starts_only_where_run_is_a_private_tmpfs_with_no_socket_already_there():
+    SI.check_private_run(MI_OK, False)
+    with pytest.raises(SystemExit, match="not a tmpfs mount"):
+        SI.check_private_run(MI_HOST, False)  # the host's /run is not a separate mount of this namespace
+    with pytest.raises(SystemExit, match="already exists"):
+        SI.check_private_run(MI_OK, True)
+
+
+def test_start_drops_an_inherited_host_address_runs_the_generated_config_and_records_the_facts(tmp_path, monkeypatch):
+    import subprocess as sp
+    sock, conf = tmp_path / "bus.sock", tmp_path / "bus.conf"
+    monkeypatch.setattr(SI, "SYSTEM_BUS_SOCKET", str(sock))
+    monkeypatch.setattr(SI, "SYSTEM_BUS_CONF", str(conf))
+    monkeypatch.setattr(SI, "read_text", lambda p: MI_OK if p == "/proc/self/mountinfo" else SYSTEM_CONF)
+    monkeypatch.setattr(os, "makedirs", lambda *a, **k: None)
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, dict(kw["env"])))
+        sock.write_text("")
+        return sp.CompletedProcess(cmd, 0, stdout="4242\n")
+    monkeypatch.setattr(SI.subprocess, "run", fake_run)
+    SI.SYSTEM_BUS.clear()
+    env = {"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/var/run/dbus/system_bus_socket", "X": "1"}
+    SI.start_system_bus(env, None)
+    (cmd, seen), = calls
+    assert "DBUS_SYSTEM_BUS_ADDRESS" not in seen and cmd[:2] == ["dbus-daemon", "--system"] and f"--config-file={conf}" in cmd  # the host's address was dropped BEFORE the daemon ran
+    assert env["DBUS_SYSTEM_BUS_ADDRESS"] == f"unix:path={sock}" and "servicedirs" not in conf.read_text()
+    assert SI.SYSTEM_BUS["pid"] == 4242 and SI.SYSTEM_BUS["socket_inode"] == os.stat(sock).st_ino and SI.SYSTEM_BUS["mnt_ns"].startswith("mnt:") and "none" in SI.SYSTEM_BUS["activation"] and len(SI.SYSTEM_BUS["conf_sha256"]) == 64
+    SI.SYSTEM_BUS.clear()
+
+
+def test_the_identity_mark_lists_what_the_bus_launched_and_the_init_refuses_a_bus_outside_full_root():
+    import inspect
+    assert "launched_children" in inspect.getsource(SI.record_identity)
+    assert 'a.system_bus and a.root != "full"' in inspect.getsource(SI.main)
