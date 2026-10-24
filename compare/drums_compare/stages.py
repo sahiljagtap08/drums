@@ -157,7 +157,23 @@ def _git(path, *args):
         return "unavailable"
 
 
-def run_matched(cfg, out):
+EXPECT_PROVIDER = {"drums": "DrumsProvider", "docker_kvm": "DockerProvider", "virtualbox": "VirtualBoxProvider"}
+
+
+def make_arms(factories, reuse):
+    """{arm label: callable building that arm's adapter}. Label, factory and expected provider are bound PER ITERATION through a helper function: a comprehension lambda that closes over
+    the loop variable binds late, and the first real run labelled the Drums factory's artifacts with the incumbent's name."""
+    def bind(label, factory):
+        return lambda: om_adapter(label, factory, reuse, EXPECT_PROVIDER.get(label))
+    return {label: bind(label, factory) for label, factory in factories.items()}
+
+
+def om_adapter(label, factory, reuse, expect):
+    from . import osworld_matched as om
+    return om.DesktopEnvAdapter(label, factory, reuse=reuse, expect_provider=expect)
+
+
+def run_matched(cfg, out, gates=None, gates_reuse=None):
     from envd_linux.cgroup_telemetry import CgroupProbe
     from . import docker_telemetry as dt
     from . import first_check as fc
@@ -176,13 +192,13 @@ def run_matched(cfg, out):
     price = om.Prices.from_json(cfg["prices"])
     t_start, ceiling = time.time(), cfg["max_runtime_s"]
     status = {"started": t_start, "max_runtime_s": ceiling, "aborted": None, "mode": mode}
-    gates = json.load(open(os.path.join(out, "gates.json")))
+    gates = gates or json.load(open(os.path.join(out, "gates.json")))
     hr.stage_evidence(cfg, out)
     sup = None
     try:
         sup, pool, prep_s = build_drums(cfg, work)
         factories = arm_factories(cfg, pool, de)
-        arms = {n: (lambda f=f: om.DesktopEnvAdapter(n, f, reuse=reuse)) for n, f in factories.items()}
+        arms = make_arms(factories, reuse)
         if inc == "virtualbox":
             rb = vbox.vm_readback(cfg["vm"])
             inc_probe = vbox.VBoxProbe(rb["uuid"], rb["name"])
@@ -213,12 +229,13 @@ def run_matched(cfg, out):
                 "guest_budget": {"cpus": cfg.get("guest_cpus", 2), "memory_mib": cfg.get("guest_memory_mib", 4096)}, "require_a11y_tree": False, "screen_size": [1280, 800],
                 "prices_file": cfg["prices"], "image_manifest": cfg.get("image_manifest"), "incumbent_image_prep": f"NOT timed unless vm_prep_s_reported is set: {cfg.get('vm_prep_s_reported')}",
                 "known_risks": hr.KNOWN_RISKS, "non_equivalence": "docs/incumbent-preflight-plan.md section 4a",
-                "timing_boundaries": "inside the run clock: guest open, every reset (a cold reboot for docker_kvm), steps, evaluation, close; reported apart: Drums pool build, image fetch, between-block cleanup"}
+                "gates_reuse": gates_reuse, "arm_provider_expect": {n: EXPECT_PROVIDER[n] for n in factories}, "timing_boundaries": "inside the run clock: guest open, every reset (a cold reboot for docker_kvm), steps, evaluation, close; reported apart: Drums pool build, image fetch, between-block cleanup"}
         label = None if mode == "comparison" else "architecture measurement only: image composition not shown equivalent; no cross-arm ratio, no cost-per-valid comparison, no claim"
         hooks = {"drums": ceiling_hook, arm_name: vm_hook if inc == "virtualbox" else docker_hook}
         summary = fc.run_alternating(arms, by_id, seq, lambda: om.ScriptedAgent(scripts), cfg.get("blocks", 4), {"drums": price, arm_name: price}, out, pins, concurrency=1,
                                      max_steps=cfg.get("max_steps", 5), external_prep={"drums": prep_s, arm_name: float(cfg.get("vm_prep_s_reported") or 0.0)}, env_probes=probes,
-                                     block_hooks=hooks, name_prefix=(reuse == "post_setup"), not_a_comparison=label)
+                                     block_hooks=hooks, name_prefix=(reuse == "post_setup"), not_a_comparison=label,
+                                     arm_provider_expect={n: EXPECT_PROVIDER[n] for n in factories})
         json.dump(summary, open(os.path.join(out, "summary.json"), "w"), indent=1, default=str)
         status["finished"] = True
     except hr.CeilingReached as e:

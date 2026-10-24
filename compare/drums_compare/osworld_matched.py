@@ -308,7 +308,7 @@ def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, 
                "canary_unsupported": sum(1 for r in rows if r.canary == "unsupported"),
                "canary_enabled": canary,
                "reset_mean_s": statistics.mean(r.reset_s for r in rows) if rows else None,
-               "memory": sampler.summary(concurrency) if sampler else None, "prices": prices.__dict__}
+               "memory": sampler.summary(concurrency) if sampler else None, "prices": prices.__dict__, "provider_observed": getattr(adapter, "observed_provider", None)}
     return {"summary": summary, "rows": [r.__dict__ for r in sorted(rows, key=lambda r: r.seq)]}
 
 
@@ -430,21 +430,32 @@ def _desktop_canary_write(env, token):
     _bash(env, "; ".join(f"echo {token} > {p}" for p in CANARY_PATHS))
 
 
+class IdentityMismatch(RuntimeError):
+    """The environment an arm actually built is not the kind of environment its label says. Raised before any rollout; nothing is scored under a wrong label."""
+
+
 class DesktopEnvAdapter(Adapter):
     """A pool of `DesktopEnv` instances built up front and REUSED across rollouts (reset between uses). `factory(worker)` builds one.
     Pool reuse and whatever snapshot revert the provider supports are the incumbent's own mechanisms: we only call
     `reset`/`step`/`evaluate`/`close` and, with `reuse="post_setup"`, `_save_state` and `snapshot_name`, the public snapshot surface; the same code path
     serves both arms, so neither gets reuse the other lacks. First-rollout work is inside that rollout's measured reset time."""
 
-    def __init__(self, name, factory, reuse="none"):
+    def __init__(self, name, factory, reuse="none", expect_provider=None):
         if reuse not in ("none", "post_setup"):
             raise ValueError(reuse)
         self.name, self.factory, self.envs, self.reuse, self.saved = name, factory, [], reuse, {}
+        self.expect_provider, self.observed_provider = expect_provider, None  # class name the arm's DesktopEnv.provider MUST have; what it actually had
         self.name_prefix = ""  # set per block by a runner whose provider keeps every snapshot name (a VM): names must be unique across blocks
         self.snapshots_taken = []  # every snapshot name this adapter saved, so the runner can delete them (and time that) between blocks
 
     def open(self, slots):
         self.envs = [self.factory(i) for i in range(slots)]
+        if self.expect_provider is not None:  # DECISIVE identity: the constructed environment's own provider object, not a label
+            seen = sorted({type(getattr(e, "provider", None)).__name__ for e in self.envs})
+            self.observed_provider = seen
+            if seen != [self.expect_provider]:
+                self.close()
+                raise IdentityMismatch(f"arm {self.name!r} expects provider {self.expect_provider!r} but its environment built {seen}: refusing before any rollout")
 
     def acquire(self, worker):
         return _DesktopEnvLease(self.envs[worker], self, worker)

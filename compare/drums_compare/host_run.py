@@ -246,9 +246,10 @@ def docker_provider_env(src):
     return ast.literal_eval(re.sub(r"\s*#.*", "", m.group(1))) if m else None
 
 
-def check_all(cfg, deps=None):
+def check_all(cfg, deps=None, options=None):
     d = {"sh": sh, "import": strict_import, "exists": os.path.exists, "read": lambda p: open(p).read(), "machine": platform.machine, "euid": os.geteuid}
     d.update(deps or {})
+    d["options"] = options or {}
     out, mode, inc = [], cfg.get("mode"), cfg.get("incumbent")
     src = cfg.get("osworld_src", "")
     out.append(chk("mode_and_incumbent_declared", mode in ("comparison", "architecture_measurement") and inc in INCUMBENTS, f"mode={mode!r} incumbent={inc!r}"))
@@ -359,7 +360,7 @@ def check_all(cfg, deps=None):
 
 def _finish(cfg, out, d, stubs, diffs):
     inputs = compute_inputs(cfg, d["sh"])
-    return {"all_ok": all(c["ok"] for c in out), "config_sha256": config_hash(cfg), "inputs": inputs, "inputs_sha256": hashlib.sha256(canon(inputs).encode()).hexdigest(), "mode": cfg.get("mode"),
+    return {"all_ok": all(c["ok"] for c in out), "config_sha256": config_hash(cfg), "options": d.get("options", {}), "inputs": inputs, "inputs_sha256": hashlib.sha256(canon(inputs).encode()).hexdigest(), "mode": cfg.get("mode"),
             "incumbent": cfg.get("incumbent"), "known_risks": KNOWN_RISKS, "checks": out, "stubbed_modules": stubs, "allow_stub": list(cfg.get("allow_stub", [])), "differences": diffs, "at": time.time()}
 
 
@@ -393,11 +394,12 @@ def _check_docker(cfg, d, out, src):
     if ok_file and d["exists"](q):
         size = os.path.getsize(q) if "qcow2_size" not in d else d["qcow2_size"](q)
         out.append(chk("qcow2_size_matches_record", size == cfg.get("qcow2_bytes"), f"{size} bytes, recorded {cfg.get('qcow2_bytes')}"))
-        if cfg.get("verify_sha256", True):
+        skip_text = d.get("options", {}).get("skip_qcow2_hash")  # a command-line statement; it does NOT change the config, so earlier gate evidence keeps its config hash
+        if cfg.get("verify_sha256", True) and not skip_text:
             sha = d["sha256"](q) if "sha256" in d else file_sha256(q)
             out.append(chk("qcow2_sha256_matches_record", sha == cfg.get("qcow2_sha256"), f"{sha[:16]} recorded {str(cfg.get('qcow2_sha256'))[:16]}"))
         else:  # skipping the multi-minute hash needs an explicit owner statement of the earlier verification; the size check above still runs and the file's stat is bound into the inputs
-            earlier = cfg.get("qcow2_sha256_verified_earlier")
+            earlier = skip_text or cfg.get("qcow2_sha256_verified_earlier")
             out.append(chk("qcow2_sha256_matches_record", bool(earlier), f"NOT RECOMPUTED here; owner-stated earlier verification: {earlier!r} (size still checked; file stat bound into the stamp)" if earlier else "verify_sha256 is false but no qcow2_sha256_verified_earlier statement is recorded"))
     try:
         env = d["docker_env"](src) if "docker_env" in d else docker_provider_env(src)
@@ -597,6 +599,68 @@ def need_gates(out_dir, cfg, runner=sh):
     return _verify_stamp(os.path.join(out_dir, "gates.json"), cfg, "gates", runner)
 
 
+# The code the gates execute. Earlier gate evidence may be reused for a later commit ONLY if every one of these definitions is AST-identical to the commit the gates ran on.
+GATE_BEARING = {
+    "compare/drums_compare/host_run.py": ["snapshot_gate", "changed_pixels", "gui_state_gate", "score_gate", "cold_score_gate", "cold_isolation_gate", "guest_readback", "parity_decision", "HOLDER", "ASK", "GUI_THRESHOLDS"],
+    "compare/drums_compare/stages.py": ["run_gates", "drums_limits_readback", "build_drums", "arm_factories", "hr_kw", "_sh", "CORRECT", "WRONG", "DE_KW", "MIB"],
+    "compare/drums_compare/guestexec.py": None,  # None = the whole module
+    "compare/drums_compare/docker_telemetry.py": None,
+    "compare/drums_compare/osworld_matched.py": ["_DesktopEnvLease", "drums_factory", "incumbent_factory", "_bash", "_desktop_canary_probe", "_desktop_canary_write", "CANARY_PATHS"],
+}
+
+
+def _ast_parts(source, names):
+    out = {}
+    for node in ast.parse(source).body:
+        nm = getattr(node, "name", None) or (node.targets[0].id if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) else None)
+        if names is None or nm in names:
+            out[nm or f"<{type(node).__name__}:{len(out)}>"] = ast.dump(node, include_attributes=False)
+    return out
+
+
+def reuse_gates(prior_path, cfg, out_dir, runner=sh, repo=None, gate_files=None, inputs_now=None):
+    """Reuse an EARLIER `gates.json` PASS for a LATER commit without re-running the gates, openly and checkably. Nothing is rewritten or fabricated: the prior file is read as is and its
+    hash recorded. It is accepted only if (1) it passed, for the same incumbent and mode, with the same config hash; (2) every bound input is identical EXCEPT the Drums commit and tree
+    state (so prices, task JSON, actions, manifests, evidence, qcow2 and the OSWorld head are the same); (3) every gate-bearing definition (GATE_BEARING) is AST-identical between the
+    gated commit and the code about to run. The files that DID change are listed in `gates_reuse.json`. Any difference refuses, naming it."""
+    repo = repo or repo_root()
+    gate_files = GATE_BEARING if gate_files is None else gate_files
+    raw = open(prior_path, "rb").read()
+    prior = json.loads(raw)
+    if not prior.get("all_ok"):
+        raise SystemExit("REFUSED: the prior gates.json did not pass")
+    if prior.get("config_sha256") != config_hash(cfg) or prior.get("mode") != cfg.get("mode") or prior.get("incumbent") != cfg.get("incumbent"):
+        raise SystemExit("REFUSED: the prior gates were made for a different config, mode or incumbent")
+    now = inputs_now if inputs_now is not None else compute_inputs(cfg, runner)
+    changed = sorted(k for k in set(now) | set(prior.get("inputs", {})) if k not in ("drums_commit", "drums_tree_clean") and now.get(k) != prior["inputs"].get(k))
+    if changed:
+        raise SystemExit(f"REFUSED: bound inputs other than the Drums commit differ from the gated run: {changed}")
+    frm, to = prior["inputs"].get("drums_commit"), now.get("drums_commit")
+    if not now.get("drums_tree_clean") or not frm or not to:
+        raise SystemExit("REFUSED: the current Drums tree is not clean or a commit is unknown")
+    equal, diffs = {}, []
+    if frm != to:
+        for path, names in gate_files.items():
+            rc, old = runner(["git", "-C", repo, "show", f"{frm}:{path}"])
+            if rc != 0:
+                raise SystemExit(f"REFUSED: cannot read {path} at the gated commit {frm[:12]}")
+            a, b = _ast_parts(old, names), _ast_parts(open(os.path.join(repo, path)).read(), names)
+            bad = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+            if bad:
+                diffs.append((path, bad))
+            else:
+                equal[path] = sorted(a)
+        if diffs:
+            raise SystemExit(f"REFUSED: gate-bearing code changed since the gated commit, so the gates must be re-run: {diffs}")
+    rc, files = runner(["git", "-C", repo, "diff", "--name-only", frm, to]) if frm != to else (0, "")
+    rec = {"reused": True, "gated_commit": frm, "running_commit": to, "gates_json": os.path.abspath(prior_path), "gates_json_sha256": hashlib.sha256(raw).hexdigest(),
+           "files_changed_since_gated_commit": files.split() if rc == 0 else None, "gate_bearing_definitions_identical": equal,
+           "rule": "prior gates.json passed; same config hash; all bound inputs equal except the Drums commit; every GATE_BEARING definition AST-identical between the two commits",
+           "not_claimed": "the changed files themselves were not gated: only the unchanged gate code and its earlier PASS are being reused"}
+    json.dump(rec, open(os.path.join(out_dir, "gates_reuse.json"), "w"), indent=1)
+    return prior, rec
+
+
 EXPORT_TOP = (re.compile(r"^(checks|gates|summary|pins|run_status|parity_decision|export_manifest)\.json$"), re.compile(r"^block\d+_[A-Za-z0-9_.-]+\.json$"), re.compile(r"^[A-Za-z0-9_.-]+\.log$"))
 EXPORT_DIRS = ("manifests", "fixtures")  # populated ONLY by stage_evidence; never walked recursively
 EXPORT_EXT = (".json", ".log", ".txt")
@@ -688,6 +752,9 @@ def main(argv=None):
     ap.add_argument("stage", choices=["check", "gates", "run", "export"])
     ap.add_argument("--config")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--reuse-gates", metavar="GATES_JSON", help="run: reuse an earlier gates.json PASS for this later commit (see reuse_gates for the exact rule)")
+    ap.add_argument("--skip-qcow2-hash", action="store_true", help="check: do not recompute the qcow2 sha256 (needs --earlier-verified)")
+    ap.add_argument("--earlier-verified", help="check: the recorded statement of the earlier sha256 verification(s)")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     if a.stage == "export":
@@ -695,7 +762,9 @@ def main(argv=None):
         return 0
     cfg = json.load(open(a.config))
     if a.stage == "check":
-        r = check_all(cfg)
+        if a.skip_qcow2_hash and not a.earlier_verified:
+            raise SystemExit("REFUSED: --skip-qcow2-hash needs --earlier-verified 'where and when the sha256 was verified'")
+        r = check_all(cfg, options={"skip_qcow2_hash": a.earlier_verified} if a.skip_qcow2_hash else None)
         json.dump(r, open(os.path.join(a.out, "checks.json"), "w"), indent=1, default=str)
         for c in r["checks"]:
             print(("PASS " if c["ok"] else "FAIL ") + c["name"] + ": " + c["detail"])
@@ -705,6 +774,9 @@ def main(argv=None):
     need_checks(a.out, cfg)
     if a.stage == "gates":
         return stages.run_gates(cfg, a.out)
+    if a.reuse_gates:
+        gates, rec = reuse_gates(a.reuse_gates, cfg, a.out)
+        return stages.run_matched(cfg, a.out, gates=gates, gates_reuse=rec)
     need_gates(a.out, cfg)
     return stages.run_matched(cfg, a.out)
 

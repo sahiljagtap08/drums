@@ -18,7 +18,7 @@ import json
 import os
 import time
 
-from .osworld_matched import DesktopEnvAdapter, Prices, compare, drums_factory, incumbent_factory, run_arm
+from .osworld_matched import DesktopEnvAdapter, IdentityMismatch, Prices, compare, drums_factory, incumbent_factory, run_arm
 
 
 def host_used_kib():
@@ -46,7 +46,7 @@ def real_arms(pool, vbox_path_to_vm, reuse="post_setup", desktop_env_module=None
 
 
 def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, out_dir, pins, concurrency=1, max_steps=50, canary=True, clock=time.time,
-                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None, block_hooks=None, name_prefix=True, not_a_comparison=None):
+                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None, block_hooks=None, name_prefix=True, not_a_comparison=None, arm_provider_expect=None):
     """arms: {name: callable -> fresh Adapter}; prices: {name: Prices} (the owner's own price inputs); pins: any JSON-able facts (versions, commits, settings);
     external_prep: {arm: seconds} of preparation done BEFORE this call (reported, and added in the 'with prep' figures). mem_reader / cpu_reader may be None to record nothing
     (then the telemetry is reported as MISSING, never as zero). env_probes: {arm: object with begin() and end() -> dict} for PER-ENVIRONMENT capture (e.g. the session cgroups
@@ -76,6 +76,9 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
                 probe.begin()
             res = run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices[n], max_steps=max_steps, clock=clock, canary=canary,
                           mem_reader=mem_reader, mem_period=mem_period)
+            exp = (arm_provider_expect or {}).get(n)
+            if exp is not None and res["summary"].get("provider_observed") != [exp]:  # before ANYTHING is written under this label
+                raise IdentityMismatch(f"block {i} arm {n!r}: observed provider {res['summary'].get('provider_observed')} != expected [{exp!r}]; no artifact written")
             if probe:
                 per_arm[n]["per_environment_blocks"].append(probe.end())
             if n in block_hooks:
