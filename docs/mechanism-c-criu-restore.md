@@ -73,7 +73,7 @@ flowchart TB
 | same, page cache dropped (NOT pre-registered) | 2.59 s | 1.38 s (1.87x) | 1.67 s (1.55x) |
 | host memory per added session | 229.4 MiB | 221.9 MiB (0.967x) | not measured |
 
-- **Correctness:** C1 PASS (public task 0.0 then 1.0 through the real evaluator, from restored sessions), C2 PASS (99.7% of pixels differ from a blank desktop; browser title present), C3 FAIL by its literal wording and PASS
+- **Correctness:** C1 PASS (public task 0.0 then 1.0 through the real evaluator's shell-getter and string-match path (a `librosa` stub is loaded but unreached; see `docs/task-audit-13.md`), from restored sessions), C2 PASS (99.7% of pixels differ from a blank desktop; browser title present), C3 FAIL by its literal wording and PASS
   against a cold-pair control (the only shared writable objects are two host device nodes that cold sessions share too).
 - **The server-only arm is PARTIAL:** the browser stays cold, so it is not the mechanism. It missed the 2x target.
 - **What it took:** CRIU 4.2 (4.1.1 cannot read TCP socket options on kernel 6.18); a session whose fds and mappings all lie inside its own root; the kill-on-parent-exit signal disabled; the

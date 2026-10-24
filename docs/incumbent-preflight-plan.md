@@ -60,7 +60,7 @@ From Oracle's own documentation (the manual's snapshot chapter, Snapshot Content
 
 1. The real public `DesktopEnv` boots the incumbent VM through the VirtualBox provider on the chosen host.
 2. An application, an unsaved token typed into it and a live background process survive a snapshot revert (the same three things checked on the Drums arm).
-3. The real local evaluator scores the correct continuation 1.0 and the wrong one 0.0, from the reverted state.
+3. The real local evaluator (for a task whose evaluator path is traced as stub-free: `docs/task-audit-13.md`) scores the correct continuation 1.0 and the wrong one 0.0, from the reverted state.
 4. The interference canary is clean on both arms.
 5. Resource parity is applied and recorded on both arms (2 vCPU, 4 GiB: the VM settings on one side, the cgroup on the other) and the measured CPU and memory of each are reported.
 6. Costs are counted on both arms with preparation (supervisor, template, pool or image build) reported as external prep and included in the with-prep figures, and first setup, save and every revert inside the run clock, from the owner's price inputs (O4), and the first-rollout work is shown apart and kept in the totals.
