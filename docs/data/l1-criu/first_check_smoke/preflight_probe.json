@@ -1,0 +1,355 @@
+{
+ "go_incumbent": false,
+ "go_drums": true,
+ "go_drums_restore": false,
+ "go_joint_run_on_this_host": false,
+ "no_go_reasons": [
+  "cpu_virtualization: neither vmx nor svm in /proc/cpuinfo",
+  "virtualbox_installed: VBoxManage not found",
+  "tool_ip: not found (needed only by CRIU's network restore; a private copy on PATH is enough)",
+  "probe_virtualbox_reports_hardware_virtualization: VBoxManage not found"
+ ],
+ "untested": [
+  "virtualbox_extension_pack",
+  "virtualbox_and_drums_on_one_host",
+  "virtualbox_on_a_nested_or_cloud_host",
+  "gate_app_and_token_survive_snapshot_revert",
+  "gate_evaluator_scores_correct_and_wrong",
+  "gate_canary_clean_on_both_arms",
+  "gate_resource_parity_applied_and_measured"
+ ],
+ "checks": [
+  {
+   "name": "cpu_virtualization",
+   "ok": false,
+   "status": "unsupported",
+   "kind": "static",
+   "detail": "neither vmx nor svm in /proc/cpuinfo",
+   "needed_for": [
+    "incumbent"
+   ]
+  },
+  {
+   "name": "dev_kvm",
+   "ok": false,
+   "status": "unsupported",
+   "kind": "static",
+   "detail": "absent (informational: VirtualBox does not need it)",
+   "needed_for": []
+  },
+  {
+   "name": "virtualbox_installed",
+   "ok": false,
+   "status": "unsupported",
+   "kind": "static",
+   "detail": "VBoxManage not found",
+   "needed_for": [
+    "incumbent"
+   ]
+  },
+  {
+   "name": "virtualbox_extension_pack",
+   "ok": false,
+   "status": "untested",
+   "kind": "static",
+   "detail": "VirtualBox absent. The Extension Pack (separate PUEL / commercial licence) is NOT ASSUMED; whether the first pass needs a feature that lives in it is UNTESTED, not 'not needed'",
+   "needed_for": [
+    "incumbent"
+   ]
+  },
+  {
+   "name": "virtualbox_and_drums_on_one_host",
+   "ok": false,
+   "status": "untested",
+   "kind": "static",
+   "detail": "co-residence untested (alternating blocks avoid simultaneous use; correctness of each beside the other is not established)",
+   "needed_for": [
+    "joint"
+   ]
+  },
+  {
+   "name": "virtualbox_on_a_nested_or_cloud_host",
+   "ok": false,
+   "status": "untested",
+   "kind": "static",
+   "detail": "not documented as supported by the AWS or GCE nested-virtualization pages; untested; this preflight assumes a non-virtualized host",
+   "needed_for": []
+  },
+  {
+   "name": "root",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "euid 0",
+   "needed_for": [
+    "incumbent",
+    "drums"
+   ]
+  },
+  {
+   "name": "arch_x86_64",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "x86_64",
+   "needed_for": [
+    "incumbent",
+    "drums"
+   ]
+  },
+  {
+   "name": "overlayfs",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "overlay in /proc/filesystems",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "namespace_pid_file",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/proc/self/ns/pid exists (static: not proof that this process may create one)",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "namespace_mnt_file",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/proc/self/ns/mnt exists (static: not proof that this process may create one)",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "namespace_net_file",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/proc/self/ns/net exists (static: not proof that this process may create one)",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "namespace_ipc_file",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/proc/self/ns/ipc exists (static: not proof that this process may create one)",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "namespace_uts_file",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/proc/self/ns/uts exists (static: not proof that this process may create one)",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "criu_kernel_support",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "kernel.ns_last_pid present",
+   "needed_for": [
+    "drums_restore"
+   ]
+  },
+  {
+   "name": "tool_unshare",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/usr/bin/unshare",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "tool_nsenter",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/usr/bin/nsenter",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "tool_pivot_root",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/usr/sbin/pivot_root",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "tool_mount",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/usr/bin/mount",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "tool_nft",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/usr/sbin/nft",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "tool_Xvfb",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/usr/bin/Xvfb",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "tool_ip",
+   "ok": false,
+   "status": "unsupported",
+   "kind": "static",
+   "detail": "not found (needed only by CRIU's network restore; a private copy on PATH is enough)",
+   "needed_for": [
+    "drums_restore"
+   ]
+  },
+  {
+   "name": "cgroup_hierarchy",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "v1",
+   "needed_for": [
+    "drums_limits"
+   ]
+  },
+  {
+   "name": "criu_private_install",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": "/tmp/claude-0/scratch/criu-dl/x-4.2/usr/sbin/criu",
+   "needed_for": [
+    "drums_restore"
+   ]
+  },
+  {
+   "name": "probe_namespaces_can_be_created",
+   "ok": true,
+   "status": "ok",
+   "kind": "runtime_probe",
+   "detail": "unshare of pid, mount, net, uts, ipc succeeded",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "probe_overlay_mount_with_redirect_dir",
+   "ok": true,
+   "status": "ok",
+   "kind": "runtime_probe",
+   "detail": "overlay mount with redirect_dir=on succeeded and was unmounted",
+   "needed_for": [
+    "drums"
+   ]
+  },
+  {
+   "name": "probe_cgroup_limits_can_be_written",
+   "ok": true,
+   "status": "ok",
+   "kind": "runtime_probe",
+   "detail": "v1 cgroup directory created, limits written and removed",
+   "needed_for": [
+    "drums_limits"
+   ]
+  },
+  {
+   "name": "probe_virtualbox_reports_hardware_virtualization",
+   "ok": false,
+   "status": "unsupported",
+   "kind": "runtime_probe",
+   "detail": "VBoxManage not found",
+   "needed_for": [
+    "incumbent"
+   ]
+  },
+  {
+   "name": "gate_app_and_token_survive_snapshot_revert",
+   "ok": false,
+   "status": "untested",
+   "kind": "gate",
+   "detail": "first-pass gate: shown only by the matched check itself",
+   "needed_for": [
+    "joint"
+   ]
+  },
+  {
+   "name": "gate_evaluator_scores_correct_and_wrong",
+   "ok": false,
+   "status": "untested",
+   "kind": "gate",
+   "detail": "first-pass gate: shown only by the matched check itself",
+   "needed_for": [
+    "joint"
+   ]
+  },
+  {
+   "name": "gate_canary_clean_on_both_arms",
+   "ok": false,
+   "status": "untested",
+   "kind": "gate",
+   "detail": "first-pass gate: shown only by the matched check itself",
+   "needed_for": [
+    "joint"
+   ]
+  },
+  {
+   "name": "gate_resource_parity_applied_and_measured",
+   "ok": false,
+   "status": "untested",
+   "kind": "gate",
+   "detail": "first-pass gate: shown only by the matched check itself",
+   "needed_for": [
+    "joint"
+   ]
+  },
+  {
+   "name": "measured_memory_and_disk",
+   "ok": true,
+   "status": "ok",
+   "kind": "static",
+   "detail": {
+    "MemTotal_MiB": 16091,
+    "MemAvailable_MiB": 15134,
+    "disk_free_GiB_at_/tmp": 9.9,
+    "note": "reported, never judged: no capacity claim"
+   },
+   "needed_for": []
+  }
+ ],
+ "note": "go_* needs every needed check to be 'ok': an 'untested' item keeps the answer at no-go until it is tested. No minimum RAM or disk is asserted."
+}

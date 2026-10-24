@@ -1,0 +1,49 @@
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+{'error': '', 'output': 'Directory exists.\n', 'returncode': 0, 'status': 'success'}
+Directory exists.
+ Directory exists.
+
+RESULT {"driver_smoke_only": true, "task": "e0df059f-28a6-4169-924f-b9623e7184cc", "blocks": 2, "prep_s_before_driver_clock": 0.4497671127319336, "summary": {"engineering_validation_only": true, "no_headline_claim": true, "no_training_claim": true, "block_order": [[0, "drums_post_setup"], [0, "drums_no_reuse"], [1, "drums_no_reuse"], [1, "drums_post_setup"]], "concurrency": 1, "arms": {"drums_post_setup": {"blocks": 2, "rollouts": 6, "valid": 6, "faults": {}, "wall_s": 23.393621683120728, "cost_usd": 23.393621683120728, "first_rollout_work_s": 3.648407459259033, "interference": 0, "adapter_build_s": 0.0004589557647705078, "external_prep_s": 0.4497671127319336, "host_memory_blocks": [{"baseline_kib": 1628268, "samples": 11, "peak_kib": 1737120, "mean_kib": 1705029.8181818181, "peak_delta_per_env_mib": 106.30078125}, {"baseline_kib": 1637852, "samples": 11, "peak_kib": 1706736, "mean_kib": 1669950.9090909092, "peak_delta_per_env_mib": 67.26953125}], "host_cpu_busy_s_blocks": [5.0700000000006185, 5.0900000000001455], "cost_per_valid_usd_run_arm_only": 3.898936947186788, "cost_with_prep_usd": 23.84384775161743, "cost_per_valid_usd_with_prep": 3.973974625269572, "valid_per_hour_run_arm_only": 923.3286018122245, "valid_per_hour_with_prep": 905.8940580819125, "host_memory": [{"baseline_kib": 1628268, "samples": 11, "peak_kib": 1737120, "mean_kib": 1705029.8181818181, "peak_delta_per_env_mib": 106.30078125}, {"baseline_kib": 1637852, "samples": 11, "peak_kib": 1706736, "mean_kib": 1669950.9090909092, "peak_delta_per_env_mib": 67.26953125}], "host_cpu_busy_s": [5.0700000000006185, 5.0900000000001455]}, "drums_no_reuse": {"blocks": 2, "rollouts": 6, "valid": 6, "faults": {}, "wall_s": 27.804525136947632, "cost_usd": 27.804525136947632, "first_rollout_work_s": 0.0, "interference": 0, "adapter_build_s": 4.315376281738281e-05, "external_prep_s": 0.4497671127319336, "host_memory_blocks": [{"baseline_kib": 1706396, "samples": 13, "peak_kib": 1678308, "mean_kib": 1649968.923076923, "peak_delta_per_env_mib": -27.4296875}, {"baseline_kib": 1669876, "samples": 13, "peak_kib": 1688484, "mean_kib": 1645532.923076923, "peak_delta_per_env_mib": 18.171875}], "host_cpu_busy_s_blocks": [6.329999999999927, 6.139999999999418], "cost_per_valid_usd_run_arm_only": 4.634087522824605, "cost_with_prep_usd": 28.254335403442383, "cost_per_valid_usd_with_prep": 4.7090559005737305, "valid_per_hour_run_arm_only": 776.8519654125349, "valid_per_hour_with_prep": 764.4844478404667, "host_memory": [{"baseline_kib": 1706396, "samples": 13, "peak_kib": 1678308, "mean_kib": 1649968.923076923, "peak_delta_per_env_mib": -27.4296875}, {"baseline_kib": 1669876, "samples": 13, "peak_kib": 1688484, "mean_kib": 1645532.923076923, "peak_delta_per_env_mib": 18.171875}], "host_cpu_busy_s": [6.329999999999927, 6.139999999999418]}}, "resource_parity_claimed": false, "per_environment_resource_capture": "MISSING: only host-wide memory and CPU are recorded; no per-VM or per-session figures, so no resource-parity statement can be made", "preparation_note": "run_arm clock excludes anything done before run_alternating and the arm-factory time; those are reported as external_prep_s and adapter_build_s and added in the *_with_prep figures", "raw_ratio_first_over_second_with_prep_NOT_A_CLAIM": 1.184973822084809}}

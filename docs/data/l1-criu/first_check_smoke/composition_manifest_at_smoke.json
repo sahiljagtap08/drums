@@ -1,0 +1,29 @@
+{
+ "format": 1,
+ "os_release": {
+  "NAME": "Ubuntu",
+  "VERSION_ID": "24.04",
+  "VERSION_CODENAME": "noble"
+ },
+ "kernel": "6.18.44-fc-v153",
+ "machine": "x86_64",
+ "dpkg": {
+  "libreoffice-core": "4:24.2.7-0ubuntu0.24.04.7",
+  "xvfb": "2:21.1.12-1ubuntu1.9",
+  "openbox": "3.6.1-12build5",
+  "at-spi2-core": "2.52.0-1build1",
+  "dbus": "1.14.10-4ubuntu4.1",
+  "wmctrl": "1.07-7ubuntu3",
+  "xclip": "0.13-3",
+  "python3": "3.12.3-0ubuntu2.1",
+  "nftables": "1.0.9-1ubuntu0.1",
+  "iproute2": null,
+  "soffice_version_string": "LibreOffice 24.2.7.2 420(Build:2)"
+ },
+ "browsers": {
+  "/opt/pw-browsers/chromium-1194/chrome-linux/chrome": "Chromium 141.0.7390.37"
+ },
+ "python": {},
+ "guest_server": {},
+ "desktop_env": {}
+}

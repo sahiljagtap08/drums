@@ -1,0 +1,3 @@
+/tmp/claude-0/scratch/osw-venv/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+Failed to load proxies from evaluation_examples/settings/proxy/dataimpulse.json: [Errno 2] No such file or directory: 'evaluation_examples/settings/proxy/dataimpulse.json'
