@@ -1,0 +1,91 @@
+{
+ "summary": {
+  "arm": "drums_no_reuse",
+  "rollouts": 3,
+  "valid": 3,
+  "faults": {},
+  "wall_s": 14.692452669143677,
+  "open_s": 1.8487560749053955,
+  "valid_per_hour": 735.0712806910446,
+  "cost_usd": 14.692452669143677,
+  "cost_per_valid_usd": 4.8974842230478925,
+  "rollout_wall_p50_s": 4.8208839893341064,
+  "rollout_wall_p95_s": 4.934592962265015,
+  "reuse": {
+   "phases": {},
+   "valid_by_state_kind": {},
+   "first_rollout_work_s": 0.0
+  },
+  "interference_count": 0,
+  "canary_clean": 3,
+  "canary_unsupported": 0,
+  "canary_enabled": true,
+  "reset_mean_s": 2.067596515019735,
+  "memory": {
+   "baseline_kib": 1731528,
+   "samples": 14,
+   "peak_kib": 1726648,
+   "mean_kib": 1645854.5714285714,
+   "peak_delta_per_env_mib": -4.765625
+  },
+  "prices": {
+   "host_usd_per_hour": 3600.0,
+   "hosts": 1,
+   "fixed_usd": 0.0,
+   "label": "driver smoke placeholder, not a price"
+  }
+ },
+ "rows": [
+  {
+   "arm": "drums_no_reuse",
+   "task_id": "e0df059f-28a6-4169-924f-b9623e7184cc",
+   "seq": 0,
+   "worker": 0,
+   "reset_s": 0.8666987419128418,
+   "wall_s": 3.0872390270233154,
+   "steps": 1,
+   "score": 1.0,
+   "fault": null,
+   "valid": true,
+   "t_start": 1792841844.1317606,
+   "reuse_phase": "",
+   "state_kind": "",
+   "canary": "clean",
+   "canary_seen": []
+  },
+  {
+   "arm": "drums_no_reuse",
+   "task_id": "e0df059f-28a6-4169-924f-b9623e7184cc",
+   "seq": 1,
+   "worker": 0,
+   "reset_s": 2.603224754333496,
+   "wall_s": 4.8208839893341064,
+   "steps": 1,
+   "score": 1.0,
+   "fault": null,
+   "valid": true,
+   "t_start": 1792841847.2190056,
+   "reuse_phase": "",
+   "state_kind": "",
+   "canary": "clean",
+   "canary_seen": []
+  },
+  {
+   "arm": "drums_no_reuse",
+   "task_id": "e0df059f-28a6-4169-924f-b9623e7184cc",
+   "seq": 2,
+   "worker": 0,
+   "reset_s": 2.732866048812866,
+   "wall_s": 4.934592962265015,
+   "steps": 1,
+   "score": 1.0,
+   "fault": null,
+   "valid": true,
+   "t_start": 1792841852.0398984,
+   "reuse_phase": "",
+   "state_kind": "",
+   "canary": "clean",
+   "canary_seen": []
+  }
+ ]
+}

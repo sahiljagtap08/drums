@@ -1,0 +1,3 @@
+# FIRST ATTEMPT, kept raw: per-session capture read cgroup v2 files on a cgroup v1 host
+
+12 of 12 rollouts valid with session cgroups at 2 CPU / 4 GiB, no fault. But `per_environment` in `summary.json` is INVALID for CPU and memory: this host mounts cgroup v1 (separate `cpu`, `memory`, `pids` directories), and the probe (`cgroup_telemetry.py` at `4bc9afc`) only read v2 files (`cpu.stat`, `memory.current`, `cpu.max`, `memory.max`), so CPU and memory read as 0.0 / None. These zeros are "not measured", not "used nothing". Only `pids.max` (4096) and the process counts (`procs_max` 9; `empty_samples` mostly 0) are real here. The corrected run is in `../first_check_smoke_v1/`.
