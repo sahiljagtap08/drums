@@ -1,0 +1,52 @@
+{
+ "knobs_prior": {
+  "run": "0",
+  "pages_to_scan": "100",
+  "sleep_millisecs": "20",
+  "use_zero_pages": "0"
+ },
+ "probes": [
+  {
+   "ksm_merging_pages_before": 8192,
+   "pages_per_region": 8192,
+   "shared": {
+    "median_ns": 3854,
+    "p95_ns": 7712
+   },
+   "unique": {
+    "median_ns": 345,
+    "p95_ns": 784
+   },
+   "shared_over_unique_median": 11.171014492753622,
+   "threshold_ns": 1262,
+   "heldout_tpr": 1.0,
+   "heldout_tnr": 0.9990234375,
+   "heldout_balanced_accuracy": 0.99951171875,
+   "bsc_capacity_bits_per_page": 0.9939246373227156,
+   "round_s": 40.04666179600008,
+   "bandwidth_bits_per_s_one_bit_per_page": 203.31858546474265,
+   "bandwidth_note": "pages/2 candidate pages are tested per round (one region of each kind); rate = capacity x pages tested / round time"
+  },
+  {
+   "ksm_merging_pages_before": 8192,
+   "pages_per_region": 8192,
+   "shared": {
+    "median_ns": 2973,
+    "p95_ns": 4261
+   },
+   "unique": {
+    "median_ns": 342,
+    "p95_ns": 684
+   },
+   "shared_over_unique_median": 8.692982456140351,
+   "threshold_ns": 2568,
+   "heldout_tpr": 0.998779296875,
+   "heldout_tnr": 0.9990234375,
+   "heldout_balanced_accuracy": 0.9989013671875,
+   "bsc_capacity_bits_per_page": 0.9876162359280882,
+   "round_s": 40.03294581600039,
+   "bandwidth_bits_per_s_one_bit_per_page": 202.09734856657144,
+   "bandwidth_note": "pages/2 candidate pages are tested per round (one region of each kind); rate = capacity x pages tested / round time"
+  }
+ ]
+}

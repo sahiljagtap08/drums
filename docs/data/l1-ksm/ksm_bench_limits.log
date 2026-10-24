@@ -1,0 +1,7 @@
+ksm trial=0 OFF slope=231.1 total@20=4626 MiB sharing=0 ksmd_cpu=0.0
+ksm trial=0 K1 slope=215.5 total@20=4247 MiB sharing=88869 ksmd_cpu=115.75
+ksm trial=0 K2 slope=136.2 total@20=2796 MiB sharing=793475 ksmd_cpu=70.56999999999994
+ksm trial=1 K1 slope=213.8 total@20=4285 MiB sharing=88357 ksmd_cpu=110.59000000000003
+ksm trial=1 K2 slope=136.9 total@20=2781 MiB sharing=795802 ksmd_cpu=73.04000000000008
+ksm trial=1 OFF slope=228.2 total@20=4651 MiB sharing=0 ksmd_cpu=0.0
+wrote /tmp/claude-0/scratch/ksm_bench_limits.json

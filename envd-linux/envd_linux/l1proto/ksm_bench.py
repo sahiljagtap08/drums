@@ -19,6 +19,7 @@ import statistics
 import tempfile
 import time
 
+from ..limits import INCUMBENT_SHAPE
 from ..session import Supervisor
 from ..template import build_home_template
 from .bench import CHECKPOINTS, bootstrap_diff, log, ols_slope, pct, used_kib
@@ -68,13 +69,15 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--trials", type=int, default=3)
     ap.add_argument("--max-n", type=int, default=20)
+    ap.add_argument("--limits", action="store_true", help="give every session the incumbent shape (2 vCPU, 4 GiB) via cgroups")
     a = ap.parse_args(argv)
     tmp = tempfile.mkdtemp(prefix="l1ksm")
     tpl = os.path.join(tmp, "tpl")
     build_home_template(os.path.join(tpl, "home", "drums"))
     py = os.path.join(KIT, "venv", "bin", "python")
     sup = Supervisor(os.path.join(tmp, "state"), tpl, root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=KIT,
-                     init_python=py, server_mode="module", workload="chromium", ready_timeout=120)
+                     init_python=py, server_mode="module", workload="chromium", ready_timeout=120,
+                     limits=INCUMBENT_SHAPE if a.limits else None)
     sup.t_request = {}
     result = {"host": {"kernel": os.uname().release, "cpus": os.cpu_count()}, "args": vars(a), "knobs_set": KNOBS,
               "knobs_prior": {}, "memory": [], "create_s": {k: [] for k in ARMS}}

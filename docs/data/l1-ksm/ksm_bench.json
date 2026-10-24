@@ -1,0 +1,1067 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "args": {
+  "out": "/tmp/claude-0/scratch/ksm_bench.json",
+  "trials": 3,
+  "max_n": 20
+ },
+ "knobs_set": {
+  "run": "1",
+  "pages_to_scan": "20000",
+  "sleep_millisecs": "2",
+  "use_zero_pages": "1"
+ },
+ "knobs_prior": {
+  "run": "0",
+  "pages_to_scan": "100",
+  "sleep_millisecs": "20",
+  "use_zero_pages": "0"
+ },
+ "memory": [
+  {
+   "arm": "OFF",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 233344,
+     "settle_s": 5.000711917877197,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 187,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 952996,
+     "settle_s": 5.00106406211853,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 187,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1889632,
+     "settle_s": 5.000692129135132,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 187,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2818820,
+     "settle_s": 5.000647306442261,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 187,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3754452,
+     "settle_s": 5.000686168670654,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 187,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4659908,
+     "settle_s": 5.000811576843262,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 187,
+      "general_profit": 0
+     }
+    }
+   ],
+   "slope_mib_per_session": 227.56553514377,
+   "total_at_max_n_mib": 4550.69140625,
+   "ksmd_cpu_s": 0.0,
+   "trial_wall_s": 82.93568801879883
+  },
+  {
+   "arm": "K1",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 232520,
+     "settle_s": 15.001808404922485,
+     "ksm": {
+      "pages_shared": 789,
+      "pages_sharing": 3169,
+      "pages_unshared": 9870,
+      "pages_volatile": 48716,
+      "full_scans": 633,
+      "general_profit": 13872128
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 895680,
+     "settle_s": 15.001691341400146,
+     "ksm": {
+      "pages_shared": 2970,
+      "pages_sharing": 17260,
+      "pages_unshared": 28953,
+      "pages_volatile": 201569,
+      "full_scans": 740,
+      "general_profit": 73535488
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1766036,
+     "settle_s": 15.001695156097412,
+     "ksm": {
+      "pages_shared": 4711,
+      "pages_sharing": 36158,
+      "pages_unshared": 50801,
+      "pages_volatile": 410106,
+      "full_scans": 786,
+      "general_profit": 153811968
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2660076,
+     "settle_s": 10.001160621643066,
+     "ksm": {
+      "pages_shared": 6446,
+      "pages_sharing": 54128,
+      "pages_unshared": 88042,
+      "pages_volatile": 603294,
+      "full_scans": 810,
+      "general_profit": 228206080
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3547880,
+     "settle_s": 10.005581855773926,
+     "ksm": {
+      "pages_shared": 8031,
+      "pages_sharing": 71677,
+      "pages_unshared": 108511,
+      "pages_volatile": 813650,
+      "full_scans": 828,
+      "general_profit": 300387456
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4386156,
+     "settle_s": 15.00169825553894,
+     "ksm": {
+      "pages_shared": 9710,
+      "pages_sharing": 89124,
+      "pages_unshared": 75240,
+      "pages_volatile": 1075235,
+      "full_scans": 845,
+      "general_profit": 370718784
+     }
+    }
+   ],
+   "slope_mib_per_session": 214.24009834265178,
+   "total_at_max_n_mib": 4283.35546875,
+   "ksmd_cpu_s": 112.63,
+   "trial_wall_s": 125.88848805427551
+  },
+  {
+   "arm": "K2",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 214588,
+     "settle_s": 10.001330614089966,
+     "ksm": {
+      "pages_shared": 4063,
+      "pages_sharing": 28860,
+      "pages_unshared": 3542,
+      "pages_volatile": 25909,
+      "full_scans": 1206,
+      "general_profit": 119059840
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 649368,
+     "settle_s": 10.00097393989563,
+     "ksm": {
+      "pages_shared": 12345,
+      "pages_sharing": 148928,
+      "pages_unshared": 4744,
+      "pages_volatile": 83649,
+      "full_scans": 1308,
+      "general_profit": 613416832
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1232592,
+     "settle_s": 10.001213312149048,
+     "ksm": {
+      "pages_shared": 14395,
+      "pages_sharing": 310471,
+      "pages_unshared": 16692,
+      "pages_volatile": 158386,
+      "full_scans": 1358,
+      "general_profit": 1278076416
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 1792840,
+     "settle_s": 10.001227378845215,
+     "ksm": {
+      "pages_shared": 16596,
+      "pages_sharing": 472889,
+      "pages_unshared": 34251,
+      "pages_volatile": 226639,
+      "full_scans": 1388,
+      "general_profit": 1946170944
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 2286412,
+     "settle_s": 10.001272439956665,
+     "ksm": {
+      "pages_shared": 18624,
+      "pages_sharing": 634212,
+      "pages_unshared": 51325,
+      "pages_volatile": 295144,
+      "full_scans": 1410,
+      "general_profit": 2606644544
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 2854860,
+     "settle_s": 10.001070022583008,
+     "ksm": {
+      "pages_shared": 20667,
+      "pages_sharing": 795743,
+      "pages_unshared": 67011,
+      "pages_volatile": 363790,
+      "full_scans": 1428,
+      "general_profit": 3268212032
+     }
+    }
+   ],
+   "slope_mib_per_session": 134.99010832667733,
+   "total_at_max_n_mib": 2787.94921875,
+   "ksmd_cpu_s": 71.16000000000001,
+   "trial_wall_s": 100.71539664268494
+  },
+  {
+   "arm": "K1",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 239888,
+     "settle_s": 10.001139640808105,
+     "ksm": {
+      "pages_shared": 642,
+      "pages_sharing": 3051,
+      "pages_unshared": 6405,
+      "pages_volatile": 52689,
+      "full_scans": 1784,
+      "general_profit": 13315648
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 873088,
+     "settle_s": 15.001538038253784,
+     "ksm": {
+      "pages_shared": 2849,
+      "pages_sharing": 16793,
+      "pages_unshared": 45307,
+      "pages_volatile": 185375,
+      "full_scans": 1902,
+      "general_profit": 71830272
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1761912,
+     "settle_s": 15.001811265945435,
+     "ksm": {
+      "pages_shared": 4853,
+      "pages_sharing": 35863,
+      "pages_unshared": 32350,
+      "pages_volatile": 428369,
+      "full_scans": 1953,
+      "general_profit": 153247808
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2592360,
+     "settle_s": 20.002301454544067,
+     "ksm": {
+      "pages_shared": 6782,
+      "pages_sharing": 53356,
+      "pages_unshared": 68528,
+      "pages_volatile": 620859,
+      "full_scans": 1993,
+      "general_profit": 224471616
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3534408,
+     "settle_s": 10.000999450683594,
+     "ksm": {
+      "pages_shared": 8314,
+      "pages_sharing": 70425,
+      "pages_unshared": 92369,
+      "pages_volatile": 827396,
+      "full_scans": 2012,
+      "general_profit": 293959168
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4371708,
+     "settle_s": 10.001317739486694,
+     "ksm": {
+      "pages_shared": 9849,
+      "pages_sharing": 88223,
+      "pages_unshared": 88667,
+      "pages_volatile": 1060851,
+      "full_scans": 2026,
+      "general_profit": 365671872
+     }
+    }
+   ],
+   "slope_mib_per_session": 213.25133536341855,
+   "total_at_max_n_mib": 4269.24609375,
+   "ksmd_cpu_s": 110.03000000000003,
+   "trial_wall_s": 123.07108926773071
+  },
+  {
+   "arm": "K2",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 177284,
+     "settle_s": 10.00124216079712,
+     "ksm": {
+      "pages_shared": 3955,
+      "pages_sharing": 28785,
+      "pages_unshared": 4087,
+      "pages_volatile": 25576,
+      "full_scans": 2421,
+      "general_profit": 118718272
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 632500,
+     "settle_s": 10.001058578491211,
+     "ksm": {
+      "pages_shared": 12562,
+      "pages_sharing": 149567,
+      "pages_unshared": 4566,
+      "pages_volatile": 82569,
+      "full_scans": 2527,
+      "general_profit": 615752704
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1181312,
+     "settle_s": 10.001171588897705,
+     "ksm": {
+      "pages_shared": 14209,
+      "pages_sharing": 311516,
+      "pages_unshared": 20045,
+      "pages_volatile": 153777,
+      "full_scans": 2577,
+      "general_profit": 1282054464
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 1731196,
+     "settle_s": 10.001315355300903,
+     "ksm": {
+      "pages_shared": 16485,
+      "pages_sharing": 473266,
+      "pages_unshared": 34543,
+      "pages_volatile": 225506,
+      "full_scans": 2607,
+      "general_profit": 1946752384
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 2299016,
+     "settle_s": 10.000991344451904,
+     "ksm": {
+      "pages_shared": 18540,
+      "pages_sharing": 632720,
+      "pages_unshared": 37760,
+      "pages_volatile": 309519,
+      "full_scans": 2628,
+      "general_profit": 2600549696
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 2840704,
+     "settle_s": 10.001332998275757,
+     "ksm": {
+      "pages_shared": 20716,
+      "pages_sharing": 792031,
+      "pages_unshared": 54545,
+      "pages_volatile": 379652,
+      "full_scans": 2645,
+      "general_profit": 3252033280
+     }
+    }
+   ],
+   "slope_mib_per_session": 136.40679662539938,
+   "total_at_max_n_mib": 2774.125,
+   "ksmd_cpu_s": 69.87,
+   "trial_wall_s": 99.2814838886261
+  },
+  {
+   "arm": "OFF",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 251784,
+     "settle_s": 5.000686883926392,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 2646,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 961408,
+     "settle_s": 5.000676870346069,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 2646,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1945896,
+     "settle_s": 5.000816822052002,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 2646,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2863992,
+     "settle_s": 5.000706911087036,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 2646,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3811800,
+     "settle_s": 5.000810384750366,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 2646,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4781800,
+     "settle_s": 5.000678062438965,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 2646,
+      "general_profit": 0
+     }
+    }
+   ],
+   "slope_mib_per_session": 232.33217352236423,
+   "total_at_max_n_mib": 4669.7265625,
+   "ksmd_cpu_s": 0.0,
+   "trial_wall_s": 74.68350863456726
+  },
+  {
+   "arm": "K2",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 81300,
+     "settle_s": 10.001230716705322,
+     "ksm": {
+      "pages_shared": 4029,
+      "pages_sharing": 28856,
+      "pages_unshared": 1894,
+      "pages_volatile": 27620,
+      "full_scans": 3040,
+      "general_profit": 118972480
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 492984,
+     "settle_s": 10.001160383224487,
+     "ksm": {
+      "pages_shared": 12598,
+      "pages_sharing": 149102,
+      "pages_unshared": 8878,
+      "pages_volatile": 78841,
+      "full_scans": 3143,
+      "general_profit": 613879040
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1073008,
+     "settle_s": 10.001176118850708,
+     "ksm": {
+      "pages_shared": 14413,
+      "pages_sharing": 310411,
+      "pages_unshared": 22597,
+      "pages_volatile": 152363,
+      "full_scans": 3192,
+      "general_profit": 1277267456
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 1614168,
+     "settle_s": 10.001202583312988,
+     "ksm": {
+      "pages_shared": 16313,
+      "pages_sharing": 472442,
+      "pages_unshared": 25760,
+      "pages_volatile": 235716,
+      "full_scans": 3222,
+      "general_profit": 1943306752
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 2181544,
+     "settle_s": 10.001093864440918,
+     "ksm": {
+      "pages_shared": 19107,
+      "pages_sharing": 635311,
+      "pages_unshared": 42640,
+      "pages_volatile": 301704,
+      "full_scans": 3242,
+      "general_profit": 2611046848
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 2684204,
+     "settle_s": 10.001128673553467,
+     "ksm": {
+      "pages_shared": 21142,
+      "pages_sharing": 794936,
+      "pages_unshared": 52822,
+      "pages_volatile": 377596,
+      "full_scans": 3259,
+      "general_profit": 3264399360
+     }
+    }
+   ],
+   "slope_mib_per_session": 134.6700978434505,
+   "total_at_max_n_mib": 2621.29296875,
+   "ksmd_cpu_s": 69.64000000000004,
+   "trial_wall_s": 98.50064492225647
+  },
+  {
+   "arm": "OFF",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 262480,
+     "settle_s": 5.000843286514282,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 3260,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 962612,
+     "settle_s": 5.000720739364624,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 3260,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1899916,
+     "settle_s": 5.000576019287109,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 3260,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2837960,
+     "settle_s": 5.000596523284912,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 3260,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3788952,
+     "settle_s": 5.001006603240967,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 3260,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4718408,
+     "settle_s": 5.000593185424805,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 3260,
+      "general_profit": 0
+     }
+    }
+   ],
+   "slope_mib_per_session": 229.29874700479235,
+   "total_at_max_n_mib": 4607.8203125,
+   "ksmd_cpu_s": 0.0,
+   "trial_wall_s": 75.42622947692871
+  },
+  {
+   "arm": "K1",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 161512,
+     "settle_s": 10.00200629234314,
+     "ksm": {
+      "pages_shared": 618,
+      "pages_sharing": 2980,
+      "pages_unshared": 2940,
+      "pages_volatile": 55897,
+      "full_scans": 3628,
+      "general_profit": 12993920
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 851076,
+     "settle_s": 10.001270771026611,
+     "ksm": {
+      "pages_shared": 2678,
+      "pages_sharing": 16459,
+      "pages_unshared": 13237,
+      "pages_volatile": 217858,
+      "full_scans": 3714,
+      "general_profit": 70836672
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1693676,
+     "settle_s": 15.001813173294067,
+     "ksm": {
+      "pages_shared": 4792,
+      "pages_sharing": 35598,
+      "pages_unshared": 47611,
+      "pages_volatile": 413382,
+      "full_scans": 3762,
+      "general_profit": 152014400
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2553188,
+     "settle_s": 15.00173044204712,
+     "ksm": {
+      "pages_shared": 6831,
+      "pages_sharing": 54789,
+      "pages_unshared": 70101,
+      "pages_volatile": 620265,
+      "full_scans": 3791,
+      "general_profit": 232874816
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3445884,
+     "settle_s": 10.001182556152344,
+     "ksm": {
+      "pages_shared": 8540,
+      "pages_sharing": 71637,
+      "pages_unshared": 118105,
+      "pages_volatile": 801435,
+      "full_scans": 3807,
+      "general_profit": 300398144
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4257460,
+     "settle_s": 20.002367973327637,
+     "ksm": {
+      "pages_shared": 10173,
+      "pages_sharing": 88650,
+      "pages_unshared": 84510,
+      "pages_volatile": 1063101,
+      "full_scans": 3829,
+      "general_profit": 367183680
+     }
+    }
+   ],
+   "slope_mib_per_session": 210.59454123402557,
+   "total_at_max_n_mib": 4157.67578125,
+   "ksmd_cpu_s": 109.55999999999995,
+   "trial_wall_s": 122.04831051826477
+  }
+ ],
+ "create_s": {
+  "OFF": [
+   1.9278943538665771,
+   2.075363874435425,
+   2.2438602447509766,
+   2.3247406482696533,
+   2.3192379474639893,
+   2.1153790950775146,
+   3.510928153991699,
+   4.335459470748901,
+   3.059614896774292,
+   2.7642669677734375,
+   2.5524048805236816,
+   2.757843255996704,
+   2.5954976081848145,
+   2.7550570964813232,
+   2.548129081726074,
+   2.6284890174865723,
+   2.6286051273345947,
+   2.5814037322998047,
+   2.43206524848938,
+   2.7669389247894287,
+   1.8667476177215576,
+   1.9109413623809814,
+   1.8638873100280762,
+   1.8404834270477295,
+   1.9164173603057861,
+   1.8680119514465332,
+   1.9512650966644287,
+   1.8141288757324219,
+   1.9880506992340088,
+   1.921640396118164,
+   2.1817362308502197,
+   2.5990889072418213,
+   2.62557315826416,
+   2.569119930267334,
+   2.6683270931243896,
+   2.6614813804626465,
+   2.529115676879883,
+   2.5275652408599854,
+   2.7457876205444336,
+   2.622617483139038,
+   1.8856501579284668,
+   1.8886144161224365,
+   1.7975988388061523,
+   1.8943679332733154,
+   1.8862040042877197,
+   1.9140844345092773,
+   1.9673652648925781,
+   1.7857551574707031,
+   1.8053345680236816,
+   1.8671753406524658,
+   1.904911756515503,
+   2.1946563720703125,
+   2.431751012802124,
+   2.514293909072876,
+   2.6070830821990967,
+   2.391749382019043,
+   2.8535897731781006,
+   2.828866481781006,
+   3.188559055328369,
+   3.8078486919403076
+  ],
+  "K1": [
+   2.1612584590911865,
+   1.92047119140625,
+   1.9599990844726562,
+   2.0200037956237793,
+   1.8410401344299316,
+   1.9719233512878418,
+   1.9497981071472168,
+   1.947620153427124,
+   1.9904322624206543,
+   2.4053287506103516,
+   2.7196292877197266,
+   2.3624355792999268,
+   2.627153158187866,
+   2.5886189937591553,
+   2.763702154159546,
+   2.6810038089752197,
+   2.4927120208740234,
+   2.359868049621582,
+   2.5639941692352295,
+   2.540553569793701,
+   1.962218999862671,
+   1.785158395767212,
+   1.860818862915039,
+   1.771531343460083,
+   1.9384524822235107,
+   1.9420151710510254,
+   1.9827237129211426,
+   1.8992602825164795,
+   1.9448070526123047,
+   1.8599021434783936,
+   1.9358184337615967,
+   2.488844394683838,
+   2.4130747318267822,
+   2.4472122192382812,
+   2.4056880474090576,
+   2.529444932937622,
+   2.4101808071136475,
+   2.4280219078063965,
+   2.555290937423706,
+   2.4949114322662354,
+   2.064281702041626,
+   1.9661617279052734,
+   1.8203074932098389,
+   1.8824892044067383,
+   1.9916417598724365,
+   2.000933885574341,
+   1.9131097793579102,
+   1.9651377201080322,
+   2.0208375453948975,
+   1.8641557693481445,
+   1.859712839126587,
+   1.8780303001403809,
+   1.8987231254577637,
+   1.9233391284942627,
+   2.338218927383423,
+   2.622939348220825,
+   2.376009225845337,
+   2.4194719791412354,
+   2.458733558654785,
+   2.7666542530059814
+  ],
+  "K2": [
+   2.1461570262908936,
+   2.015989065170288,
+   2.116877555847168,
+   2.045978546142578,
+   1.939615249633789,
+   1.9053082466125488,
+   1.876593828201294,
+   1.8758063316345215,
+   1.9477779865264893,
+   1.8801376819610596,
+   1.9252541065216064,
+   1.8396518230438232,
+   1.8262073993682861,
+   1.892394781112671,
+   1.9699485301971436,
+   2.27103853225708,
+   2.1636648178100586,
+   2.2509849071502686,
+   2.4091756343841553,
+   2.403491973876953,
+   2.2332682609558105,
+   1.9677245616912842,
+   1.9993658065795898,
+   1.7471978664398193,
+   1.906550645828247,
+   1.8763766288757324,
+   1.8907508850097656,
+   1.887054204940796,
+   1.903456449508667,
+   1.9331767559051514,
+   1.7759017944335938,
+   1.9396023750305176,
+   1.8437716960906982,
+   1.8570799827575684,
+   1.844111442565918,
+   1.883174180984497,
+   1.9847846031188965,
+   2.2168328762054443,
+   2.234612226486206,
+   2.342001438140869,
+   2.275561809539795,
+   2.088953733444214,
+   1.806952714920044,
+   1.9621522426605225,
+   1.9820842742919922,
+   1.9182102680206299,
+   1.8427972793579102,
+   1.976369857788086,
+   1.80653977394104,
+   1.878952980041504,
+   1.8605568408966064,
+   1.7677688598632812,
+   1.910203456878662,
+   1.88454270362854,
+   1.9957334995269775,
+   1.8697469234466553,
+   1.9648644924163818,
+   1.8990533351898193,
+   1.9126689434051514,
+   1.8835997581481934
+  ]
+ },
+ "memory_summary": {
+  "OFF": {
+   "slopes": [
+    227.56553514377,
+    232.33217352236423,
+    229.29874700479235
+   ],
+   "mean": 229.73215189030887,
+   "total_at_max_n_mean_mib": 4609.412760416667
+  },
+  "K1": {
+   "slopes": [
+    214.24009834265178,
+    213.25133536341855,
+    210.59454123402557
+   ],
+   "mean": 212.69532498003196,
+   "total_at_max_n_mean_mib": 4236.759114583333
+  },
+  "K2": {
+   "slopes": [
+    134.99010832667733,
+    136.40679662539938,
+    134.6700978434505
+   ],
+   "mean": 135.35566759850906,
+   "total_at_max_n_mean_mib": 2727.7890625
+  },
+  "OFF_minus_K1": {
+   "mean": 17.036826910276915,
+   "ci95": [
+    14.232761747870086,
+    19.840892072683715
+   ]
+  },
+  "K1_ksmd_vcpu_fraction_mean": 0.8954647132446679,
+  "OFF_minus_K2": {
+   "mean": 94.37648429179981,
+   "ci95": [
+    92.2087052382854,
+    96.86983576277956
+   ]
+  },
+  "K2_ksmd_vcpu_fraction_mean": 0.7057674832120685
+ },
+ "create_summary": {
+  "OFF": {
+   "n": 60,
+   "p50": 2.4117501974105835,
+   "p95": 3.2046775102615346
+  },
+  "K1": {
+   "n": 60,
+   "p50": 2.01046884059906,
+   "p95": 2.682935082912445
+  },
+  "K2": {
+   "n": 60,
+   "p50": 1.9154396057128906,
+   "p95": 2.2788837909698483
+  }
+ }
+}

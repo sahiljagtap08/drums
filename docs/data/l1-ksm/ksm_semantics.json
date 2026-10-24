@@ -1,0 +1,60 @@
+{
+ "guest_contract_failures": [
+  [],
+  []
+ ],
+ "real_server_failures": [
+  [],
+  []
+ ],
+ "pid_ns_distinct": true,
+ "mnt_ns_distinct": true,
+ "net_ns_distinct": true,
+ "pid_sets_disjoint": true,
+ "xvfb_per_session": [
+  1,
+  1
+ ],
+ "xvfb_first_mapping_per_session": [
+  [
+   "555555554000",
+   "/usr/bin/Xvfb"
+  ],
+  [
+   "555555554000",
+   "/usr/bin/Xvfb"
+  ]
+ ],
+ "aslr_off_same_base_in_both_sessions": true,
+ "chrome_first_mapping_per_session": [
+  [
+   "206800000000",
+   "0"
+  ],
+  [
+   "d1000000000",
+   "0"
+  ]
+ ],
+ "personality": [
+  "00040000",
+  "00040000"
+ ],
+ "public_task_in_K2": {
+  "stubbed_modules": [
+   "librosa"
+  ],
+  "instruction": "I have a directory named \"todo_list_Jan_1\". Can you help me change its name into \"todo_list_Jan_2\"?",
+  "obs_keys": [
+   "accessibility_tree",
+   "instruction",
+   "screenshot",
+   "terminal"
+  ],
+  "obs_a11y_is_real_xml": true,
+  "setup_ran_through_real_server": true,
+  "score_before_acting": 0.0,
+  "score_after_acting": 1.0
+ },
+ "PASS": true
+}

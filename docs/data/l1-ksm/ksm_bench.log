@@ -1,0 +1,10 @@
+ksm trial=0 OFF slope=227.6 total@20=4551 MiB sharing=0 ksmd_cpu=0.0
+ksm trial=0 K1 slope=214.2 total@20=4283 MiB sharing=89124 ksmd_cpu=112.63
+ksm trial=0 K2 slope=135.0 total@20=2788 MiB sharing=795743 ksmd_cpu=71.16000000000001
+ksm trial=1 K1 slope=213.3 total@20=4269 MiB sharing=88223 ksmd_cpu=110.03000000000003
+ksm trial=1 K2 slope=136.4 total@20=2774 MiB sharing=792031 ksmd_cpu=69.87
+ksm trial=1 OFF slope=232.3 total@20=4670 MiB sharing=0 ksmd_cpu=0.0
+ksm trial=2 K2 slope=134.7 total@20=2621 MiB sharing=794936 ksmd_cpu=69.64000000000004
+ksm trial=2 OFF slope=229.3 total@20=4608 MiB sharing=0 ksmd_cpu=0.0
+ksm trial=2 K1 slope=210.6 total@20=4158 MiB sharing=88650 ksmd_cpu=109.55999999999995
+wrote /tmp/claude-0/scratch/ksm_bench.json

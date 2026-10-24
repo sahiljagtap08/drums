@@ -1,0 +1,741 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "args": {
+  "out": "/tmp/claude-0/scratch/ksm_bench_limits.json",
+  "trials": 2,
+  "max_n": 20,
+  "limits": true
+ },
+ "knobs_set": {
+  "run": "1",
+  "pages_to_scan": "20000",
+  "sleep_millisecs": "2",
+  "use_zero_pages": "1"
+ },
+ "knobs_prior": {
+  "run": "0",
+  "pages_to_scan": "100",
+  "sleep_millisecs": "20",
+  "use_zero_pages": "0"
+ },
+ "memory": [
+  {
+   "arm": "OFF",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 247112,
+     "settle_s": 5.00070333480835,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 7529,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 972304,
+     "settle_s": 5.000624418258667,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 7529,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1905184,
+     "settle_s": 5.000715732574463,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 7529,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2846880,
+     "settle_s": 5.000777959823608,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 7529,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3825796,
+     "settle_s": 5.000807046890259,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 7529,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4737068,
+     "settle_s": 5.001309394836426,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 7529,
+      "general_profit": 0
+     }
+    }
+   ],
+   "slope_mib_per_session": 231.11256489616613,
+   "total_at_max_n_mib": 4626.04296875,
+   "ksmd_cpu_s": 0.0,
+   "trial_wall_s": 75.77988958358765
+  },
+  {
+   "arm": "K1",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 150460,
+     "settle_s": 15.002072811126709,
+     "ksm": {
+      "pages_shared": 811,
+      "pages_sharing": 3176,
+      "pages_unshared": 5118,
+      "pages_volatile": 53144,
+      "full_scans": 8000,
+      "general_profit": 13710784
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 810916,
+     "settle_s": 15.001798152923584,
+     "ksm": {
+      "pages_shared": 3192,
+      "pages_sharing": 17115,
+      "pages_unshared": 29711,
+      "pages_volatile": 199648,
+      "full_scans": 8115,
+      "general_profit": 73039488
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1679384,
+     "settle_s": 15.002155780792236,
+     "ksm": {
+      "pages_shared": 5144,
+      "pages_sharing": 35929,
+      "pages_unshared": 54453,
+      "pages_volatile": 405127,
+      "full_scans": 8164,
+      "general_profit": 153047744
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2526440,
+     "settle_s": 20.00250005722046,
+     "ksm": {
+      "pages_shared": 7109,
+      "pages_sharing": 53681,
+      "pages_unshared": 41487,
+      "pages_volatile": 646683,
+      "full_scans": 8201,
+      "general_profit": 225609664
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3461132,
+     "settle_s": 10.001233100891113,
+     "ksm": {
+      "pages_shared": 8996,
+      "pages_sharing": 70838,
+      "pages_unshared": 112133,
+      "pages_volatile": 806426,
+      "full_scans": 8218,
+      "general_profit": 295481728
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4348804,
+     "settle_s": 10.001107454299927,
+     "ksm": {
+      "pages_shared": 10482,
+      "pages_sharing": 88869,
+      "pages_unshared": 108458,
+      "pages_volatile": 1038076,
+      "full_scans": 8232,
+      "general_profit": 368226432
+     }
+    }
+   ],
+   "slope_mib_per_session": 215.529348043131,
+   "total_at_max_n_mib": 4246.87890625,
+   "ksmd_cpu_s": 115.75,
+   "trial_wall_s": 129.01225900650024
+  },
+  {
+   "arm": "K2",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 198176,
+     "settle_s": 10.001442909240723,
+     "ksm": {
+      "pages_shared": 3973,
+      "pages_sharing": 28820,
+      "pages_unshared": 4135,
+      "pages_volatile": 25560,
+      "full_scans": 8619,
+      "general_profit": 118913536
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 654988,
+     "settle_s": 10.001156568527222,
+     "ksm": {
+      "pages_shared": 12485,
+      "pages_sharing": 148441,
+      "pages_unshared": 7120,
+      "pages_volatile": 81735,
+      "full_scans": 8725,
+      "general_profit": 611275456
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1177440,
+     "settle_s": 10.001019716262817,
+     "ksm": {
+      "pages_shared": 14738,
+      "pages_sharing": 310373,
+      "pages_unshared": 15476,
+      "pages_volatile": 159989,
+      "full_scans": 8775,
+      "general_profit": 1277622208
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 1744028,
+     "settle_s": 10.001160621643066,
+     "ksm": {
+      "pages_shared": 17287,
+      "pages_sharing": 470263,
+      "pages_unshared": 31517,
+      "pages_volatile": 231174,
+      "full_scans": 8804,
+      "general_profit": 1934915520
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 2305612,
+     "settle_s": 10.001222372055054,
+     "ksm": {
+      "pages_shared": 19410,
+      "pages_sharing": 631920,
+      "pages_unshared": 37114,
+      "pages_volatile": 311272,
+      "full_scans": 8826,
+      "general_profit": 2597156608
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 2862792,
+     "settle_s": 10.001206398010254,
+     "ksm": {
+      "pages_shared": 21397,
+      "pages_sharing": 793475,
+      "pages_unshared": 50925,
+      "pages_volatile": 380939,
+      "full_scans": 8842,
+      "general_profit": 3258657728
+     }
+    }
+   ],
+   "slope_mib_per_session": 136.247316793131,
+   "total_at_max_n_mib": 2795.6953125,
+   "ksmd_cpu_s": 70.56999999999994,
+   "trial_wall_s": 98.93328905105591
+  },
+  {
+   "arm": "K1",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 229648,
+     "settle_s": 10.001303911209106,
+     "ksm": {
+      "pages_shared": 638,
+      "pages_sharing": 3024,
+      "pages_unshared": 7243,
+      "pages_volatile": 51777,
+      "full_scans": 9190,
+      "general_profit": 13265088
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 860896,
+     "settle_s": 15.001598119735718,
+     "ksm": {
+      "pages_shared": 2973,
+      "pages_sharing": 16813,
+      "pages_unshared": 49047,
+      "pages_volatile": 181085,
+      "full_scans": 9307,
+      "general_profit": 72024192
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1742240,
+     "settle_s": 15.001612424850464,
+     "ksm": {
+      "pages_shared": 4799,
+      "pages_sharing": 35784,
+      "pages_unshared": 28093,
+      "pages_volatile": 431980,
+      "full_scans": 9358,
+      "general_profit": 152564736
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2585364,
+     "settle_s": 20.00219702720642,
+     "ksm": {
+      "pages_shared": 6601,
+      "pages_sharing": 53369,
+      "pages_unshared": 55993,
+      "pages_volatile": 633071,
+      "full_scans": 9395,
+      "general_profit": 224286016
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3499348,
+     "settle_s": 10.001198291778564,
+     "ksm": {
+      "pages_shared": 8437,
+      "pages_sharing": 70472,
+      "pages_unshared": 132555,
+      "pages_volatile": 786282,
+      "full_scans": 9411,
+      "general_profit": 293708544
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4387948,
+     "settle_s": 10.001203536987305,
+     "ksm": {
+      "pages_shared": 9869,
+      "pages_sharing": 88357,
+      "pages_unshared": 161464,
+      "pages_volatile": 987069,
+      "full_scans": 9424,
+      "general_profit": 366200320
+     }
+    }
+   ],
+   "slope_mib_per_session": 213.8280026956869,
+   "total_at_max_n_mib": 4285.10546875,
+   "ksmd_cpu_s": 110.59000000000003,
+   "trial_wall_s": 123.05857276916504
+  },
+  {
+   "arm": "K2",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 184940,
+     "settle_s": 10.00131368637085,
+     "ksm": {
+      "pages_shared": 3951,
+      "pages_sharing": 28788,
+      "pages_unshared": 1717,
+      "pages_volatile": 27947,
+      "full_scans": 9816,
+      "general_profit": 118685504
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 616264,
+     "settle_s": 10.001193284988403,
+     "ksm": {
+      "pages_shared": 12567,
+      "pages_sharing": 149099,
+      "pages_unshared": 4713,
+      "pages_volatile": 83178,
+      "full_scans": 9922,
+      "general_profit": 613923520
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1142468,
+     "settle_s": 15.001495599746704,
+     "ksm": {
+      "pages_shared": 14910,
+      "pages_sharing": 311658,
+      "pages_unshared": 12708,
+      "pages_volatile": 161059,
+      "full_scans": 9987,
+      "general_profit": 1282602048
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 1746728,
+     "settle_s": 10.001201152801514,
+     "ksm": {
+      "pages_shared": 17193,
+      "pages_sharing": 474438,
+      "pages_unshared": 17372,
+      "pages_volatile": 241744,
+      "full_scans": 10017,
+      "general_profit": 1951967552
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 2285788,
+     "settle_s": 10.001158237457275,
+     "ksm": {
+      "pages_shared": 19104,
+      "pages_sharing": 635958,
+      "pages_unshared": 41047,
+      "pages_volatile": 302365,
+      "full_scans": 10039,
+      "general_profit": 2613517696
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 2847468,
+     "settle_s": 10.001135349273682,
+     "ksm": {
+      "pages_shared": 21545,
+      "pages_sharing": 795802,
+      "pages_unshared": 72431,
+      "pages_volatile": 356867,
+      "full_scans": 10056,
+      "general_profit": 3267318336
+     }
+    }
+   ],
+   "slope_mib_per_session": 136.90073881789138,
+   "total_at_max_n_mib": 2780.73046875,
+   "ksmd_cpu_s": 73.04000000000008,
+   "trial_wall_s": 103.74512934684753
+  },
+  {
+   "arm": "OFF",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 306164,
+     "settle_s": 5.000648260116577,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 10062,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 4,
+     "delta_kib": 1033252,
+     "settle_s": 5.000640153884888,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 10062,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 8,
+     "delta_kib": 1942564,
+     "settle_s": 5.0007171630859375,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 10062,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 12,
+     "delta_kib": 2877204,
+     "settle_s": 5.000611066818237,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 10062,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 16,
+     "delta_kib": 3813008,
+     "settle_s": 5.000668287277222,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 10062,
+      "general_profit": 0
+     }
+    },
+    {
+     "n": 20,
+     "delta_kib": 4762624,
+     "settle_s": 5.000635623931885,
+     "ksm": {
+      "pages_shared": 0,
+      "pages_sharing": 0,
+      "pages_unshared": 0,
+      "pages_volatile": 0,
+      "full_scans": 10062,
+      "general_profit": 0
+     }
+    }
+   ],
+   "slope_mib_per_session": 228.24522264377,
+   "total_at_max_n_mib": 4651.0,
+   "ksmd_cpu_s": 0.0,
+   "trial_wall_s": 73.87051606178284
+  }
+ ],
+ "create_s": {
+  "OFF": [
+   1.9586076736450195,
+   1.932908296585083,
+   1.8611605167388916,
+   1.8990626335144043,
+   1.9684605598449707,
+   1.7930645942687988,
+   1.9621343612670898,
+   1.9118502140045166,
+   1.9124562740325928,
+   2.19120717048645,
+   2.8261678218841553,
+   2.4059252738952637,
+   2.7237980365753174,
+   2.793248176574707,
+   2.469269037246704,
+   2.6614325046539307,
+   2.621173858642578,
+   2.584419012069702,
+   2.6764791011810303,
+   2.6146204471588135,
+   1.955641508102417,
+   1.8285586833953857,
+   1.8319976329803467,
+   1.8489549160003662,
+   1.9735431671142578,
+   1.9294092655181885,
+   1.866379976272583,
+   1.9007887840270996,
+   1.8673186302185059,
+   1.8823273181915283,
+   1.9283943176269531,
+   2.2964117527008057,
+   2.5141735076904297,
+   2.6022188663482666,
+   2.7483747005462646,
+   2.5400302410125732,
+   2.527399778366089,
+   2.5004560947418213,
+   2.575700044631958,
+   2.7422986030578613
+  ],
+  "K1": [
+   2.127176284790039,
+   2.035710096359253,
+   2.0516300201416016,
+   1.9195318222045898,
+   2.023310422897339,
+   2.085784673690796,
+   1.9375689029693604,
+   1.9414074420928955,
+   1.9848051071166992,
+   1.8440265655517578,
+   2.0341131687164307,
+   1.9413321018218994,
+   2.021838903427124,
+   2.483535051345825,
+   2.7362282276153564,
+   2.3851370811462402,
+   2.5690104961395264,
+   2.4220550060272217,
+   2.7228219509124756,
+   2.728135585784912,
+   2.025120735168457,
+   1.832489252090454,
+   2.0563719272613525,
+   1.9103777408599854,
+   1.9122655391693115,
+   1.8685150146484375,
+   1.9324944019317627,
+   1.8218481540679932,
+   1.9903221130371094,
+   2.051248550415039,
+   2.0371711254119873,
+   1.9224450588226318,
+   1.9737401008605957,
+   2.167241334915161,
+   2.567549705505371,
+   2.7408225536346436,
+   2.526668071746826,
+   2.775221347808838,
+   2.4986772537231445,
+   2.4322855472564697
+  ],
+  "K2": [
+   2.08918833732605,
+   2.0126538276672363,
+   2.091453790664673,
+   1.9898231029510498,
+   2.0355122089385986,
+   1.9169247150421143,
+   1.9215309619903564,
+   1.8036279678344727,
+   1.9359092712402344,
+   1.9498932361602783,
+   1.8849897384643555,
+   1.9224250316619873,
+   1.9546985626220703,
+   1.8372657299041748,
+   2.0074143409729004,
+   1.8990001678466797,
+   1.9901645183563232,
+   1.9563851356506348,
+   1.802656650543213,
+   1.9188146591186523,
+   2.0775582790374756,
+   2.038736343383789,
+   1.9634180068969727,
+   1.9646451473236084,
+   1.8992774486541748,
+   1.9236578941345215,
+   1.9979033470153809,
+   1.9209041595458984,
+   1.9528229236602783,
+   1.9915690422058105,
+   1.9414880275726318,
+   1.924788236618042,
+   1.8962979316711426,
+   2.007061243057251,
+   1.9057848453521729,
+   1.7999975681304932,
+   1.9558100700378418,
+   1.784116506576538,
+   1.8960480690002441,
+   1.8890011310577393
+  ]
+ },
+ "memory_summary": {
+  "OFF": {
+   "slopes": [
+    231.11256489616613,
+    228.24522264377
+   ],
+   "mean": 229.67889376996806,
+   "total_at_max_n_mean_mib": 4638.521484375
+  },
+  "K1": {
+   "slopes": [
+    215.529348043131,
+    213.8280026956869
+   ],
+   "mean": 214.67867536940895,
+   "total_at_max_n_mean_mib": 4265.9921875
+  },
+  "K2": {
+   "slopes": [
+    136.247316793131,
+    136.90073881789138
+   ],
+   "mean": 136.5740278055112,
+   "total_at_max_n_mean_mib": 2788.212890625
+  },
+  "OFF_minus_K1": {
+   "mean": 15.000218400559106,
+   "ci95": [
+    12.715874600639012,
+    17.28456220047923
+   ]
+  },
+  "K1_ksmd_vcpu_fraction_mean": 0.897939649586619,
+  "OFF_minus_K2": {
+   "mean": 93.10486596445685,
+   "ci95": [
+    91.34448382587863,
+    94.86524810303513
+   ]
+  },
+  "K2_ksmd_vcpu_fraction_mean": 0.7086709980929848
+ },
+ "create_summary": {
+  "OFF": {
+   "n": 40,
+   "p50": 2.082375168800354,
+   "p95": 2.750618374347687
+  },
+  "K1": {
+   "n": 40,
+   "p50": 2.03644061088562,
+   "p95": 2.736457943916321
+  },
+  "K2": {
+   "n": 40,
+   "p50": 1.938698649406433,
+   "p95": 2.0781397819519043
+  }
+ }
+}

@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 12 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 13 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -421,3 +421,90 @@ cost is measured and reported, not hidden). Only processes that opt in are scann
 - M-K2: the aggressive scan settings may cost more than 0.25 vCPU while sessions are being added; if so that fails M-K2 even if M-K1 passes.
 - M-K5: expected to show a clear gap (merged pages take a copy-on-write fault on write).
 - If K2 passes M-K1 only narrowly, or only at a CPU cost that fails M-K2, the report says exactly that.
+
+
+## 13. Mechanism K results (MEASURED; raw data in `docs/data/l1-ksm/`)
+
+**Status: MEASURED on one 4-vCPU host, 3 trials per arm (2 for the re-run under limits). PROTOTYPE. Scored against the thresholds committed in `8062ff0`.**
+Headline in plain terms: page merging saves a lot of memory only when address randomisation is switched OFF for every process in
+the session, which is a security regression and not a shippable default. That arm also fails its CPU threshold. With randomisation ON the
+saving is under 8%. Merging also introduces a strong, measured cross-session timing channel.
+
+| Measurement | Arm | Result | Threshold | Verdict |
+|---|---|---|---|---|
+| M-K1 memory per added session | OFF | 229.7 MiB/session | | |
+| | K1 (merging, randomisation ON) | 212.7 MiB (0.926 x OFF); OFF-K1 95% interval [14.2, 19.8] MiB | K1 reported against the K2 rule (<= 0.80 x OFF) | **K1 FAIL** (a real but small saving, 7%) |
+| | K2 (merging, randomisation OFF) | 135.4 MiB (0.589 x OFF); OFF-K2 95% interval [92.2, 96.9] MiB | <= 0.80 x OFF and interval excludes 0 | **K2 PASS** |
+| M-K2 merging-thread CPU | K1 / K2 | 0.895 / 0.706 vCPU on average over the trial wall time | <= 0.25 vCPU | **FAIL for both** (the pre-registered aggressive scan settings cost more than a quarter of a core; I did not tune them down and re-measure, so this does not say what a slower scan would cost in saving) |
+| M-K3 semantics (K2 only) | K2 | guest-contract and real-server checks pass, real accessibility tree, public OSWorld task scored 0.0 then 1.0, namespaces distinct, one Xvfb per session, personality 0x40000 set in both sessions, mapping bases identical in the two sessions | all hold | **PASS** (`ksm_semantics.json`) |
+| M-K4 create latency | OFF / K1 / K2 | p95 3.20 / 2.68 / 2.28 s (60 creations each) | K2 p95 <= 1.10 x OFF | **PASS**, but K2 being FASTER than OFF is not a benefit I claim: the arms were interleaved yet creation latency here also depends on host state, and I did not isolate why |
+| M-K5 side channel | probes in two sessions | see below | reported | **A strong channel EXISTS** |
+
+**Overall verdict by the pre-registered rules: no K arm is a product mechanism.** K1 fails M-K1 and M-K2. K2 passes M-K1, M-K3 and M-K4 but fails
+M-K2, and in addition is not shippable on security grounds (next subsection). The measured saving at K2 is real; the cost to obtain it is not
+acceptable.
+
+### K2 is benchmark-sandbox only: security regression, not shippable
+
+K2 turns address-space layout randomisation (ASLR) off for every process started in the session. ASLR is what makes the memory addresses
+of a program's code and data unpredictable to an attacker; with it off, a memory-corruption bug in ANY program in the session (the
+browser, the office suite, the agent's own tool calls, the guest server) becomes far easier to exploit because every address is the same on every
+run. The K2 saving comes from exactly this: pages merge only because two sessions' processes are laid out identically. There is no
+configuration of K2 that keeps the saving and the randomisation. If K2 were ever used, it would be in a throwaway benchmark sandbox
+that runs only trusted tasks, and its numbers would have to be labelled that way. It must not be a default, a recommendation or a headline.
+
+### Page merging does NOT preserve isolation by construction
+
+Process isolation (separate PID, mount and network namespaces, private root, own display) is unchanged and was audited. What K introduces is a
+new CROSS-SESSION channel that the other arms do not have: when two sessions hold the same page content the kernel merges them, and a write
+to a merged page is measurably slower (copy-on-write fault). A process in one session can therefore learn whether a page with a given
+content exists in another session.
+
+**What was inferred (M-K5, `ksm_sidechannel.json`).** Two cooperating probe processes, one in each of two real sessions (default session
+arguments, host merging knobs at the K settings). Each maps two private anonymous regions of 8192 pages. In `shared` every page has a
+deterministic content that BOTH probes know and both hold; in `unique` every page is random. After a 40 s merge wait each probe times the first write to
+every page. The classifier decides, for one page, **"is this page's content also held by a process in another session?"** (page CONTENT
+presence, one yes/no per page; it does not measure when the other session did anything). The threshold is fitted on the even-indexed pages
+and scored on the odd-indexed pages it never saw.
+
+| | probe 1 | probe 2 |
+|---|---|---|
+| pages merged before timing (`ksm_merging_pages`) | 8192 | 8192 |
+| median first-write latency, merged vs unmerged | 3854 ns vs 345 ns (11.2x) | 2973 ns vs 342 ns (8.7x) |
+| held-out true-positive / true-negative rate | 1.000 / 0.999 | 0.999 / 0.999 |
+| held-out balanced accuracy | 0.9995 | 0.9989 |
+| binary-channel capacity per page | 0.994 bit | 0.988 bit |
+| rate: 8192 candidate pages per 40.0 s round | about 203 bits/s | about 202 bits/s |
+
+Reading it: a sibling that can GUESS a page's exact content (4 KiB of known bytes: a known file's page, a known library page, a known
+secret with a guessable surrounding structure) can confirm whether another session holds it, at about 200 yes/no answers per second in this
+setup, with about 99.9% accuracy. That is an upper bound for this probe design: the two probes cooperate and the content is known to both, so it is a
+covert-channel and content-existence bound, not an attack on real task data. What it does NOT show: that a sibling can READ another
+session's memory, or find content it cannot guess. Whether the channel is usable against real task secrets was not tested. It is a cost of
+the mechanism and counts against it, independent of the memory saving. The known mitigation (disable merging for sensitive regions, or only merge
+within one tenant) removes exactly the sharing K sells.
+
+**Correction recorded.** My first M-K5 run reported a 1.1x latency gap and 56% accuracy. It was INVALID: Python's `mmap(-1, ...)` default is a shared
+anonymous mapping, which KSM does not merge (`ksm_merging_pages_before` was 0, the reading I had not checked). The probe now uses private
+mappings and the record above is the re-run. The invalid run is not in the data directory.
+
+### Scope of the isolation audit (declared boundary)
+
+The M-K3 hygiene audit ran against **K2 only** (K1 was not audited; its namespace set is the same code path but that is an inference, not a
+check). It covers process, mount, network and display isolation. **The timing channel is OUTSIDE the scope of that audit.** It was
+measured separately by M-K5 and is reported here as a cost; no verdict rule treats "isolation audit passed" as meaning "no
+side channel".
+
+### Under the incumbent resource shape
+
+Re-run with every session in a cgroup limited to 2 vCPU and 4 GiB (the incumbent's shipped shape, `docs/data/l1-ksm/ksm_bench_limits.json`, 2 trials,
+`--limits`): OFF 229.7, K1 214.7, K2 136.6 MiB per session; OFF-K2 interval [91.3, 94.9]; ksmd fraction 0.90 / 0.71. The limits changed nothing that
+matters for the memory result (a session uses about 230 MiB, far below 4 GiB, and the merging thread is not in the session cgroup). This
+is a READINESS check, not a separate result.
+
+### Caveats
+
+- One host, one kernel (6.18), 4 vCPU, 3 trials; the intervals are over trials, not over hosts.
+- Incumbents' VMs can use KSM too (each QEMU guest is a mergeable process), so nothing here is a claim against an incumbent.
+- The 0.25 vCPU threshold was fixed before measuring and is failed by a wide margin; scan settings were not re-tuned.
+- Merging pays only while sessions are being added and settled; the saving is a steady-state number after counters settle.

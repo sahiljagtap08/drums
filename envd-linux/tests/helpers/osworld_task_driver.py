@@ -41,8 +41,9 @@ tmp = tempfile.mkdtemp()
 tpl_home = os.path.join(tmp, "tpl", "home", "drums")
 build_home_template(tpl_home)
 os.makedirs(os.path.join(tpl_home, "Desktop"), exist_ok=True)  # the OSWorld image's home has a Desktop
+extra = json.loads(os.environ.get("DRUMS_SUPERVISOR_EXTRA", "{}"))  # e.g. {"ksm": true, "no_aslr": true} (mechanism K checks)
 sup = Supervisor(os.path.join(tmp, "state"), os.path.join(tmp, "tpl"), root_mode="full", netns=True,
-                 osworld_port=5000, osworld_real_kit=kit)
+                 osworld_port=5000, osworld_real_kit=kit, **extra)
 pool = DrumsSessionPool(sup, 1, health_timeout=90, eager_reset=False)
 try:
     op.install(pool)
