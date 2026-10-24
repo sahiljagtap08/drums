@@ -1,0 +1,26 @@
+/tmp/claude-0/scratch/osw-venv/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+Failed to load proxies from evaluation_examples/settings/proxy/dataimpulse.json: [Errno 2] No such file or directory: 'evaluation_examples/settings/proxy/dataimpulse.json'
+stage baseline_blank_desktop ok
+stage T1_checkpoint_libreoffice ok
+stage T1b_restore_two_siblings ok
+stage T2_state_preserved ok
+stage T3_in_app_state_works_and_is_private ok
+stage T4_sharing_audit_revision_2a ok
+task latency rep 0: SETUP=3.22 BRANCH=0.83
+task latency rep 1: SETUP=3.05 BRANCH=0.83
+task latency rep 2: SETUP=3.05 BRANCH=0.87
+task latency rep 3: SETUP=3.09 BRANCH=0.83
+task latency rep 4: SETUP=3.12 BRANCH=0.92
+task latency rep 5: SETUP=3.13 BRANCH=0.92
+task latency rep 6: SETUP=2.97 BRANCH=0.91
+task latency rep 7: SETUP=3.27 BRANCH=0.81
+task latency rep 8: SETUP=3.12 BRANCH=0.90
+task latency rep 9: SETUP=3.14 BRANCH=0.86
+task memory trial=0 COLD slope=242.5 MiB/session
+task memory trial=0 RESTORE slope=237.4 MiB/session
+task memory trial=1 RESTORE slope=239.6 MiB/session
+task memory trial=1 COLD slope=245.2 MiB/session
+task memory trial=2 COLD slope=227.8 MiB/session
+task memory trial=2 RESTORE slope=238.5 MiB/session
+wrote /tmp/claude-0/scratch/criu_task_probe.json

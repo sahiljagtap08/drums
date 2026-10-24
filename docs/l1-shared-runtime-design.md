@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 18 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 19 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -807,3 +807,27 @@ Amended criteria, replacing only the a11y parts (everything else in 18.4 stands,
 - **Threshold 2 (state preserved)** = in each restored sibling that window exists with the same title as at checkpoint time.
 - **Threshold 3 (in-app state works and is private)** = a unique token is typed into sibling A through the real pyautogui path, then select-all and copy; the clipboard read from A's X display (`xclip`) contains A's token and not B's; the same for B. This reads actual document text, which is stronger than a pixel check.
 These checks are weaker than the a11y tree in one respect: the window title shows that a document window exists, not what the document contains beyond the typed token. The claim stays what 18.4 says: branching of ONE application-launch state; no evaluator and no benchmark semantics.
+
+
+## 19. Results: branching the post-setup state of one real public task setup (MEASURED; `docs/data/l1-criu/task_branch_probe.json`)
+
+**Status: MEASURED on one host against the 18.4 registration as amended in 18.5. PROTOTYPE. This is one application-launch setup (`launch libreoffice --writer`, run by the real `SetupController`), not the task `e1fc0df3` (its evaluation needs the internet and was not run), not a benchmark result and not an incumbent comparison.**
+
+| Threshold | Result | Verdict |
+|---|---|---|
+| 1 feasibility: LibreOffice dumps and restores | dump 0.35 s, image 236 MiB; two siblings restored (0.73 to 0.80 s each); no workaround, LibreOffice stayed in the checkpoint | **PASS** (I put it at about 40%) |
+| 2 state preserved | both siblings show the Writer window `Untitled 1 - LibreOffice Writer`, the same title as at checkpoint time | **PASS** |
+| 3 in-app state works and is private | a token typed into A is in A's clipboard and not B's, and the reverse | **PASS** (needed a harness correction, below) |
+| 4 sharing audit, revision 2a, with a cold-pair control | shared objects: `/dev/null` only, shared by the cold pair too; no pipe or socket inode, lock, or writable file shared; a write in one sibling is invisible to the other | **PASS** |
+| 5 latency (target >= 2x) | SETUP (cold session plus the real setup) p50 3.12 s, p95 3.24 s; BRANCH p50 0.87 s, p95 0.92 s; ratio **3.6x** (bootstrap 95% interval 3.4 to 3.8), 10 starts per arm interleaved, no faults | **PASS** |
+| 6 memory (<= 1.05x) | per added session COLD (with setup) 238.5 MiB, RESTORE 238.5 MiB; ratio 1.00; difference interval -10.4 to +6.7 MiB | **PASS** (no measurable difference); measured to 12 sessions per trial, not 20, to stay within host memory |
+
+**Two harness findings, both recorded, neither a CRIU result.** (1) The first attempt could not use the registered accessibility-tree readiness: this LibreOffice build has only the `gen` VCL plugin and exposes nothing to AT-SPI (18.5, registered before the measured run). (2) The first measured run (kept as `task_branch_probe_run1_T3_dialog_harness_fail.json`) failed threshold 3 for BOTH siblings: LibreOffice's first-run "Tip of the Day" dialog, which is part of the preserved state, swallowed the keystrokes; a COLD session did the same in a debug run (screenshot inspected), so it was the harness, not restore. The second run dismisses the dialog with OK before typing. Thresholds 1, 2, 4, 5 and 6 were also passed in run 1 (latency ratio 3.6x, interval 3.3 to 3.8).
+
+**What this is worth, by arithmetic from the measured numbers (not a throughput measurement):** the saving is about 2.25 s per rollout after the first of a group, so with G rollouts per task the average saving is 2.25 s x (G-1)/G (1.97 s for G = 8): about 3% of a 60 s rollout and 0.7% of a 300 s rollout. The setup here is cheap (a LibreOffice launch is about 1.6 s on top of the session start); the survey in 18.2 says that most real setups are downloads (cached after the first rollout) and application launches of unknown but similar order. **On this evidence, branching the setup state of launch-only tasks is a small saving.**
+
+**Where a larger saving would have to come from (HYPOTHESIS, UNTESTED):** not the setup but the agent's own trajectory prefix. Branching a session after N agent steps lets G continuations share N steps of environment time AND of model inference; that is where a rollout's real cost sits. Whether a mid-task state (a browser with live page state, an application mid-edit) survives restore with its semantics intact is not known: Chromium and LibreOffice survived at their launch state only. It is also not unique to Drums: a VM snapshot taken mid-task is the incumbent's equivalent, and tree-style rollouts are known in the agent-training literature. Any claim needs a registered test of mid-task branching against the incumbent's snapshot on a real host.
+
+### What is NOT established
+
+The effect on valid rollouts per hour (not measured), anything about the task's evaluator, tasks with downloads (the file host is unreachable here and its licence is unresolved), tasks with logged-in or networked state, restore on another host, the incumbent's post-setup snapshot latency, and isolation beyond the audit above on two siblings.

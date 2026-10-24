@@ -1,0 +1,291 @@
+{
+ "host": {
+  "kernel": "6.18.44-fc-v153",
+  "cpus": 4
+ },
+ "criu": "Version: 4.2",
+ "task": "e1fc0df3-c8b9-4ee7-864c-d0b590d3aa56",
+ "config": [
+  {
+   "type": "launch",
+   "parameters": {
+    "command": [
+     "libreoffice",
+     "--writer"
+    ]
+   }
+  }
+ ],
+ "args": {
+  "task": "/tmp/claude-0/scratch/osw-main/evaluation_examples/examples/multi_apps/e1fc0df3-c8b9-4ee7-864c-d0b590d3aa56.json",
+  "out": "/tmp/claude-0/scratch/criu_task_probe.json",
+  "starts": 10,
+  "trials": 3,
+  "max_n": 12,
+  "skip_memory": false
+ },
+ "stages": {
+  "baseline_blank_desktop": {
+   "ok": true,
+   "seconds": 1.6014940738677979
+  },
+  "T1_checkpoint_libreoffice": {
+   "ok": true,
+   "seconds": 5.385298490524292,
+   "title_at_checkpoint": "Untitled 1 \u2014 LibreOffice Writer",
+   "dump_seconds": 0.3473334312438965,
+   "image_mib": 236.47168350219727
+  },
+  "T1b_restore_two_siblings": {
+   "ok": true,
+   "seconds": 1.6773738861083984,
+   "restore_total_s": [
+    0.7544069290161133,
+    0.7598686218261719
+   ],
+   "ready_extra_s": [
+    0.06725883483886719,
+    0.07145214080810547
+   ],
+   "reseed": "preserved (checkpoint not declared clean, or it has no browser)"
+  },
+  "T2_state_preserved": {
+   "ok": true,
+   "seconds": 0.01402425765991211,
+   "titles": [
+    "Untitled 1 \u2014 LibreOffice Writer",
+    "Untitled 1 \u2014 LibreOffice Writer"
+   ],
+   "PASS": true
+  },
+  "T3_in_app_state_works_and_is_private": {
+   "ok": true,
+   "seconds": 3.1218299865722656,
+   "own_a": false,
+   "own_b": false,
+   "a_in_b": false,
+   "b_in_a": false,
+   "PASS": false
+  },
+  "T4_sharing_audit_revision_2a": {
+   "ok": true,
+   "seconds": 4.295877933502197,
+   "processes": {
+    "a": 10,
+    "b": 10
+   },
+   "pid_sets_disjoint": true,
+   "distinct_namespaces": {
+    "pid": true,
+    "mnt": true,
+    "net": true,
+    "ipc": true,
+    "uts": true
+   },
+   "shared_pipe_or_socket_inodes": [],
+   "shared_regular_files_readonly": [],
+   "shared_regular_files_writable": [],
+   "shared_character_devices": [
+    "chr:6:3:/dev/null"
+   ],
+   "shared_lock_entries": [],
+   "xvfb_socket_inodes_differ": true,
+   "addresses_differ": true,
+   "write_in_a_visible_in_b": false,
+   "PASS_ignoring_devices": true,
+   "cold_pair_control_devices": [
+    "chr:6:3:/dev/null"
+   ],
+   "PASS_revision_2a": true
+  }
+ },
+ "latency": {
+  "SETUP": {
+   "n": 10,
+   "p50": 3.267014980316162,
+   "p95": 3.591953682899475,
+   "mean": 3.2864441871643066,
+   "all": [
+    3.235412359237671,
+    3.0321075916290283,
+    3.238117218017578,
+    2.9985687732696533,
+    3.295912742614746,
+    3.488718271255493,
+    3.6764190196990967,
+    3.3762364387512207,
+    3.1111037731170654,
+    3.4118456840515137
+   ]
+  },
+  "BRANCH": {
+   "n": 10,
+   "p50": 0.9077082872390747,
+   "p95": 1.1150991797447203,
+   "mean": 0.939009690284729,
+   "all": [
+    0.8639700412750244,
+    0.8997690677642822,
+    1.0211615562438965,
+    0.9153237342834473,
+    0.8225126266479492,
+    0.8969821929931641,
+    0.9451761245727539,
+    1.1919572353363037,
+    0.9000928401947021,
+    0.9331514835357666
+   ]
+  },
+  "ratio_setup_over_branch_p50": 3.599190429618372
+ },
+ "latency_faults": [],
+ "memory": [
+  {
+   "arm": "COLD",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 149376
+    },
+    {
+     "n": 4,
+     "delta_kib": 938104
+    },
+    {
+     "n": 8,
+     "delta_kib": 1896028
+    },
+    {
+     "n": 12,
+     "delta_kib": 2759744
+    }
+   ],
+   "slope_mib_per_session": 231.41504261363636
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 0,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 83248
+    },
+    {
+     "n": 4,
+     "delta_kib": 758084
+    },
+    {
+     "n": 8,
+     "delta_kib": 1733116
+    },
+    {
+     "n": 12,
+     "delta_kib": 2721516
+    }
+   ],
+   "slope_mib_per_session": 234.92796875
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 77960
+    },
+    {
+     "n": 4,
+     "delta_kib": 812704
+    },
+    {
+     "n": 8,
+     "delta_kib": 1787776
+    },
+    {
+     "n": 12,
+     "delta_kib": 2746240
+    }
+   ],
+   "slope_mib_per_session": 236.9547443181818
+  },
+  {
+   "arm": "COLD",
+   "trial": 1,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 152364
+    },
+    {
+     "n": 4,
+     "delta_kib": 908192
+    },
+    {
+     "n": 8,
+     "delta_kib": 1821208
+    },
+    {
+     "n": 12,
+     "delta_kib": 2868348
+    }
+   ],
+   "slope_mib_per_session": 239.1586931818182
+  },
+  {
+   "arm": "COLD",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 100120
+    },
+    {
+     "n": 4,
+     "delta_kib": 773396
+    },
+    {
+     "n": 8,
+     "delta_kib": 1817384
+    },
+    {
+     "n": 12,
+     "delta_kib": 2716044
+    }
+   ],
+   "slope_mib_per_session": 234.82818181818183
+  },
+  {
+   "arm": "RESTORE",
+   "trial": 2,
+   "points": [
+    {
+     "n": 1,
+     "delta_kib": 4960
+    },
+    {
+     "n": 4,
+     "delta_kib": 692412
+    },
+    {
+     "n": 8,
+     "delta_kib": 1664228
+    },
+    {
+     "n": 12,
+     "delta_kib": 2640140
+    }
+   ],
+   "slope_mib_per_session": 234.50620738636363
+  }
+ ],
+ "memory_summary": {
+  "COLD": 235.1339725378788,
+  "RESTORE": 235.46297348484848,
+  "restore_over_cold": 1.0013992063478478,
+  "cold_minus_restore_ci95": [
+   -4.047930871212117,
+   3.5551325757575967
+  ]
+ }
+}
