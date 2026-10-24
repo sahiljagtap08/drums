@@ -155,11 +155,21 @@ class FakeDesktopEnv:
     built = []
 
     def __init__(self, **kw):
-        self.kw, self.log, self.closed = kw, [], False
+        self.kw, self.log, self.closed, self.markers = kw, [], False, {}
+        self.controller = self
         FakeDesktopEnv.built.append(self)
+
+    def run_bash_script(self, script, timeout=30):  # the public controller call the canary uses
+        if script.startswith("cat"):
+            return {"status": "success", "output": "\n".join(self.markers.values())}
+        for part in script.split("; "):
+            tok, path = part.replace("echo ", "").split(" > ")
+            self.markers[path] = tok
+        return {"status": "success", "output": ""}
 
     def reset(self, task_config=None, seed=None, options=None):
         self.log.append(("reset", task_config["id"]))
+        self.markers = {}  # a clean revert
         return {"screenshot": b""}
 
     def step(self, action, pause=2):
@@ -194,3 +204,92 @@ def test_desktop_env_adapter_dry_run_builds_a_pool_once_and_reuses_it():
 def test_the_quarantined_provider_is_not_imported_by_the_runner():
     import sys
     assert "envd_linux.scalecua._quarantined_provider" not in sys.modules
+
+
+# ---- interference canary (READINESS) ----
+class CanaryLease(FakeLease):
+    def canary_probe(self):
+        return list(self.a.slots.setdefault(self.w, set()))
+
+    def canary_write(self, token):
+        self.a.slots.setdefault(self.w, set()).add(token)
+
+    def reset(self, task):
+        out = super().reset(task)
+        if not self.a.leaky:  # a clean reset wipes the slot, a leaky one does not
+            self.a.slots[self.w] = set()
+        return out
+
+
+class CanaryAdapter(FakeAdapter):
+    def __init__(self, *a, leaky=False, **k):
+        super().__init__(*a, **k)
+        self.leaky, self.slots = leaky, {}
+
+    def acquire(self, worker):
+        return CanaryLease(self, worker)
+
+
+def test_canary_clean_reset_gives_zero_interference_and_all_rollouts_stay_valid():
+    clk = Clock()
+    r = run(CanaryAdapter("c", clk), ["a", "b", "a", "b"], clk)
+    s = r["summary"]
+    assert s["interference_count"] == 0 and s["canary_clean"] == 4 and s["valid"] == 4
+    assert all(row["canary"] == "clean" for row in r["rows"])
+
+
+def test_canary_catches_state_that_survives_a_reset_and_invalidates_the_rollout():
+    clk = Clock()
+    r = run(CanaryAdapter("c", clk, leaky=True), ["a", "b", "a"], clk)
+    s = r["summary"]
+    # the first rollout on the slot sees nothing; the second and third see the earlier markers
+    assert [row["canary"] for row in r["rows"]] == ["clean", "interference", "interference"]
+    assert s["interference_count"] == 2 and s["valid"] == 1 and s["faults"] == {"interference": 2}
+    assert r["rows"][2]["canary_seen"] and r["rows"][1]["canary_seen"][0].startswith("c:0:0:")
+    assert s["cost_usd"] > 0  # invalid rollouts still cost
+
+
+def test_a_lease_that_cannot_run_commands_is_unsupported_never_clean():
+    clk = Clock()
+    s = run(FakeAdapter("f", clk), ["a", "b"], clk)["summary"]
+    assert s["canary_unsupported"] == 2 and s["canary_clean"] == 0 and s["interference_count"] == 0
+
+
+def test_canary_off_leaves_rollouts_unchanged():
+    clk = Clock()
+    s = run(CanaryAdapter("c", clk, leaky=True), ["a", "b"], clk, canary=False)["summary"]
+    assert s["canary_enabled"] is False and s["interference_count"] == 0 and s["valid"] == 2
+
+
+def test_canary_probe_failure_is_a_fault_not_a_pass():
+    clk = Clock()
+
+    class Broken(CanaryAdapter):
+        def acquire(self, worker):
+            l = super().acquire(worker)
+            l.canary_probe = lambda: (_ for _ in ()).throw(RuntimeError("no shell"))
+            return l
+
+    s = run(Broken("b", clk), ["a"], clk)["summary"]
+    assert s["faults"] == {"canary_failed": 1} and s["valid"] == 0
+
+
+def test_desktop_env_lease_canary_uses_the_public_controller_and_sees_markers():
+    store = {}
+
+    class Ctl:
+        def run_bash_script(self, script, timeout=30):
+            if script.startswith("cat"):
+                return {"status": "success", "output": "\n".join(store.values()) + "\n"}
+            for part in script.split("; "):
+                tok, path = part.replace("echo ", "").split(" > ")
+                store[path] = tok
+            return {"status": "success", "output": ""}
+
+    class Env:
+        controller = Ctl()
+
+    lease = om._DesktopEnvLease(Env())
+    assert lease.canary_probe() == []
+    lease.canary_write("t1")
+    assert lease.canary_probe() == ["t1"]

@@ -43,8 +43,9 @@ OSGym-style variant (KVM plus copy-on-write snapshot resume), that is a differen
 **not built**.
 
 **Resource parity (a precondition that is NOT met today).** The incumbent's VMs have fixed vCPU and RAM (the shipped ScaleCUA worker
-config uses 2 vCPU and 4 GiB per VM). Drums sessions currently have no cgroup limits. Until per-session limits exist, the report must
-show measured CPU and memory use for both arms and must not claim parity.
+config uses 2 vCPU and 4 GiB per VM). Drums sessions can now be given per-session cgroup limits (section 4a, BUILT). The limits applied are recorded in each session's
+`session.json` (`limits`) and must be copied into the run's `run.json`. Parity still requires that the incumbent arm's VM shape was
+actually 2 vCPU / 4 GiB on the host used, and the report must show measured CPU and memory use for both arms.
 
 ## 3. Task sampling rule
 
@@ -68,7 +69,34 @@ show measured CPU and memory use for both arms and must not claim parity.
 | Valid rollouts per hour | valid / arm wall hours; **the pool build time is inside the wall time** |
 | Cost per valid rollout | `hosts x host_usd_per_hour x wall_hours + fixed_usd`, divided by valid; the prices are a JSON input per arm, never a constant in the code |
 | Host memory | used memory (total minus available) sampled once a second; peak and mean; peak delta divided by concurrency |
-| Interference | NOT measured by this runner yet: it needs a per-slot canary check between consecutive rollouts (a marker written at the end of rollout k must be absent at the start of k+1). Listed as a gap in the runbook |
+| Interference | `interference_count` in every arm summary, from the per-slot canary (section 4a). A marker that survives a reset makes that rollout invalid (fault `interference`); leases that cannot run commands are counted as `canary_unsupported`, never as clean |
+
+## 4a. Readiness: resource limits and the interference canary (BUILT, not results)
+
+**Status: BUILT and tested; nothing here is a measurement of Drums against an incumbent.**
+
+```mermaid
+flowchart LR
+  SUP[Supervisor.create slot] -->|makes and records| CG["cgroup drums/run/sN<br/>cpu 2 vCPU, memory 4 GiB, swap 0, pids"]
+  SUP -->|passes --cgroup-procs| INIT[session init]
+  INIT -->|first act, before any fork: join the cgroup| CG
+  INIT --> KIDS[Xvfb, guest server, browser, tool calls]
+  CG -. every descendant inherits .-> KIDS
+  SWEEP[ownership sweep] -->|removes recorded dirs after killing the run's pids| CG
+```
+
+- **Resource limits** (`envd-linux/envd_linux/limits.py`, `Supervisor(limits=...)`, default incumbent shape = 2 vCPU, 4 GiB, no swap, 4096
+  pids). The session's own init joins the cgroup as its first act, so there is no window in which a child runs outside it. The cgroup dirs are
+  written to the sweep ledger before they exist and removed by `close()` and by the sweep. Tested: backend file writes against fake v2 and v1
+  hierarchies (form only), and a real session on this host that joins its cgroup, has Xvfb inside it, reads the limits back, and leaves nothing
+  behind. **Declared gaps:** this development host is cgroup v1/hybrid, so the real-session test exercises the v1 backend; the v2 backend (what
+  a modern AWS host uses) has never run against a real v2 kernel here. Throttling and out-of-memory behaviour under the limits was not measured.
+  Whether the incumbent's VMs are actually 2 vCPU / 4 GiB on the run host is for the run spec to verify.
+- **Interference canary** (`osworld_matched.run_arm(canary=True)`, default on). After each reset the runner reads every marker present in the slot
+  (`/tmp/.drums_canary` and `~/.drums_canary`, over the public `DesktopEnv.controller.run_bash_script`), then writes its own. A marker found
+  after a reset is state that survived the revert: the rollout is invalid with fault `interference`, counted, and still paid for. The first rollout
+  on a slot cannot see anything by construction. The check covers two file locations only; it does not look for leaked processes, browser state or
+  clipboard. Tested with fake adapters that reset cleanly and that leak, a failing probe (a fault, never a pass), and the controller path.
 
 ## 5. Verdict rule (fixed now)
 

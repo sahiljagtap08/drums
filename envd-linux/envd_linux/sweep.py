@@ -30,7 +30,9 @@ CONTRACT of `sweep(...)`: idempotent and safe at any time; a no-op on a clean ho
 ledger entry names a running pid with the same start time) is never touched unless `force=True`; each dead
 entry is removed after its resources are; returns a report of what it removed.
 
-NOT covered: files left in a state dir, cgroups (none are created). The instance-termination layer on a
+cgroups          recorded session cgroup dirs under drums/<run id>/  exactly those directories (once empty)
+
+NOT covered: files left in a state dir. The instance-termination layer on a
 cloud host is separate and is NOT implemented here.
 
 Standalone: `python -m envd_linux.sweep [--ledger DIR] [--force]` prints the report as JSON."""
@@ -51,7 +53,7 @@ _LOCK = threading.Lock()  # record() is read-modify-write on a file shared by al
 DEFAULT_LEDGER = "/run/drums"
 FORWARD = "/proc/sys/net/ipv4/ip_forward"
 EMPTY = {"killed": [], "links": [], "unmounted": [], "tables": [], "ip_forward_restored": None,
-         "entries_removed": [], "live_supervisors": [], "x11_links": [], "sysfs_restored": []}
+         "entries_removed": [], "live_supervisors": [], "x11_links": [], "sysfs_restored": [], "cgroups": []}
 
 
 def ledger_dir(path=None):
@@ -95,7 +97,7 @@ def register(state_dir, run_id, ledger=None):
     path = os.path.join(d, f"sup-{os.getpid()}-{next(_COUNTER)}.json")
     _save(path, {"pid": os.getpid(), "starttime": _starttime(os.getpid()), "run_id": run_id,
                  "tag": f"drums:{run_id}", "state_dir": os.path.abspath(state_dir), "t": time.time(),
-                 "mounts": [], "x11_links": [], "tables": [], "links": [], "forward": None, "sysfs": []})
+                 "mounts": [], "x11_links": [], "tables": [], "links": [], "forward": None, "sysfs": [], "cgroups": []})
     return path
 
 
@@ -262,6 +264,20 @@ def sweep(ledger=None, force=False):
             if os.path.islink(x):
                 os.unlink(x)
                 rep["x11_links"].append(x)
+        for c in e.get("cgroups", []):  # only recorded paths under a ".../drums/<run id>/" directory
+            if f"/drums/{e['run_id']}/" in c and os.path.isdir(c):
+                for _ in range(20):  # PIDs were killed above; the kernel needs a moment to release them
+                    try:
+                        os.rmdir(c)
+                        rep["cgroups"].append(c)
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                for up in (os.path.dirname(c), os.path.dirname(os.path.dirname(c))):
+                    try:
+                        os.rmdir(up)
+                    except OSError:
+                        pass
         fw = e.get("forward")
         if fw and not live_forward_setter and read_forward() == fw["set_to"] and rep["ip_forward_restored"] is None:
             if fw["prior"] != fw["set_to"]:

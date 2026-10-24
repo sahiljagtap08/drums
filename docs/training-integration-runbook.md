@@ -93,7 +93,9 @@ Each step is a precondition for the next. "Gap" rows are the only open work.
 | 18 | GPU instance quota (the default On-Demand quota for GPU families is 0) | GAP | GPU quota | Quota request for the chosen family and region |
 | 19 | Independent termination layer (AWS only): a timer outside the job that terminates the instance whatever the job does | GAP, unbuilt: `smoke.py` documents it as out of scope for the code | code + user decision | Instance-initiated-shutdown-behaviour set to terminate plus a `shutdown -h +N` timer set at launch, and a billing alarm; no credentials are used until approved |
 | 20 | Job-level teardown | DONE locally: inner teardown plus outer sweep (`4cf869b`); not exercised on a real host | code | Run the sweep tests and the smoke on the real host as part of step 8 |
-| 21 | The sweep does not track cgroup directories (only matters for the systemd experiment, not the current session type) | GAP, follow-up | code | Add cgroup paths to the ledger when a systemd session type is built |
+| 21 | Sweep tracking of cgroup directories | DONE (READINESS): session cgroups are recorded in the ledger before creation and removed by `close()` and the sweep | code | Exercise on the real run host |
+| 22 | Per-session resource limits matching the incumbent (2 vCPU, 4 GiB) | BUILT (READINESS): `limits.py`; enforced path tested on this v1/hybrid host only, the v2 path against a fake tree | code | Run the limits test on the real (v2) host before the matched run |
+| 23 | Interference canary between consecutive rollouts on a slot | BUILT (READINESS): in `run_arm`, tested with fakes; the real-session dry run does not yet exercise it | code | Enable it in the real matched run and report `interference_count` |
 
 ## C. What the sharing experiments mean for this plan
 

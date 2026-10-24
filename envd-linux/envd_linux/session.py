@@ -60,7 +60,7 @@ class Supervisor:
                  firewall=None, nat=False, block_private_egress=True,
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
-                 ksm=False, no_aslr=False):
+                 ksm=False, no_aslr=False, limits=None, cgroup_root=None):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -81,6 +81,7 @@ class Supervisor:
                              "DRUMS_ALLOW_SYSTEMD_PROBE=1, and still writes into the host cgroup hierarchy")
         # PROTOTYPE of L1 mechanism F (docs/l1-shared-runtime-design.md section 8): sessions forked from a zygote
         self.zygote, self.server_mode, self.workload = zygote, server_mode, workload
+        self.limits, self.cgroup_root, self._cgroups = limits, cgroup_root, {}  # READINESS: per-session cgroup limits (limits.py)
         self.ksm, self.no_aslr = ksm, no_aslr  # PROTOTYPE of mechanism K (page merging); see l1-shared-runtime-design.md section 12
         self.init_python, self.ready_timeout = init_python or python, ready_timeout
         self.exec_systemd = exec_systemd  # EXPERIMENT: systemd as the session's PID 1 (see systemd_probe.py)
@@ -201,6 +202,15 @@ class Supervisor:
                  *(["--server-mode", self.server_mode, "--timing", timing] if self.osworld_real_kit else []),
                  *(["--workload", self.workload] if self.workload else []),
                  *(["--ksm"] if self.ksm else []), *(["--no-aslr"] if self.no_aslr else [])]
+        cg = None
+        if self.limits is not None:
+            from . import limits as lim
+            cg = lim.SessionCgroup(self.run_id, slot, self.limits, **({"root": self.cgroup_root} if self.cgroup_root else {}))
+            for dd in cg.dirs:
+                sw.record(self._ledger, "cgroups", dd)  # recorded before the directory exists
+            cg.create()
+            self._cgroups[slot] = cg
+            sargs += [x for f in cg.procs_files() for x in ("--cgroup-procs", f)]
         self.t_request = {**getattr(self, "t_request", {}), slot: time.time()}
         if self.zygote:  # PROTOTYPE: fork from the pre-warmed zygote instead of exec'ing a fresh interpreter
             proc = _ForkedProc(self.zygote.spawn(sargs, env, os.path.join(d, "init.log"), net=self.netns))
@@ -236,6 +246,8 @@ class Supervisor:
         info = {"epoch": self._epochs[slot], "display": n, "init_pid": kids[0], "home": HOME,
                 "unshare_pid": proc.pid, "created": time.time(), "root_mode": self.root_mode,
                 "netns": self.netns, "osworld_port": self.osworld_port}
+        if cg is not None:
+            info["limits"] = cg.record()
         if self.netns:
             sw.record(self._ledger, "links", f"dvh{slot}")  # recorded before the link exists
             r = subprocess.run([self.python, "-m", "envd_linux.netsetup", "--slot", str(slot), "--pid",
@@ -279,6 +291,12 @@ class Supervisor:
         link = f"/tmp/.X11-unix/X{self.display(slot)}"
         if os.path.islink(link):
             os.unlink(link)
+        cg = self._cgroups.pop(slot, None)
+        if cg is not None:
+            for _ in range(20):  # the killed processes leave the cgroup asynchronously
+                if cg.remove():
+                    break
+                time.sleep(0.1)
         if not keep_state:
             shutil.rmtree(d, ignore_errors=True)
 

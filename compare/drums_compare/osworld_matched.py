@@ -19,6 +19,7 @@ price.total(arm wall hours) / valid. Prices come from a JSON config the caller s
 
 import json
 import random
+import uuid
 import statistics
 import threading
 import time
@@ -65,6 +66,8 @@ class Rollout:
     fault: str | None = None
     valid: bool = False
     t_start: float = 0.0
+    canary: str = "off"  # off | clean | interference | unsupported
+    canary_seen: list = field(default_factory=list)
 
 
 class Lease(ABC):
@@ -79,6 +82,14 @@ class Lease(ABC):
 
     def release(self) -> None:  # noqa: B027
         pass
+
+    # Interference canary (READINESS): rollout k writes a marker into the slot, rollout k+1 on the same slot must not see it.
+    def canary_probe(self) -> list:
+        """Markers visible in this slot right now (all of them, whoever wrote them). Raise NotImplementedError if the lease cannot run a command."""
+        raise NotImplementedError
+
+    def canary_write(self, token: str) -> None:
+        raise NotImplementedError
 
 
 class Adapter(ABC):
@@ -159,9 +170,29 @@ class MemorySampler:
                 "mean_kib": statistics.mean(self.samples), "peak_delta_per_env_mib": (peak - self.baseline) / 1024 / max(concurrency, 1)}
 
 
+def _canary(lease, r):
+    try:
+        seen = lease.canary_probe()
+    except NotImplementedError:
+        r.canary = "unsupported"
+        return
+    except Exception as e:
+        raise AdapterFault("canary_failed", str(e)[:200]) from e
+    r.canary_seen = list(seen)
+    r.canary = "interference" if seen else "clean"
+    try:
+        lease.canary_write(f"{r.arm}:{r.seq}:{r.worker}:{uuid.uuid4().hex[:8]}")
+    except Exception as e:
+        raise AdapterFault("canary_failed", str(e)[:200]) from e
+
+
 def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, max_steps=50, clock=time.time,
-            mem_reader=None, mem_period=1.0):
-    """Run `sequence` (task ids) on one adapter with `concurrency` workers; return the arm's raw rows and summary."""
+            mem_reader=None, mem_period=1.0, canary=True):
+    """Run `sequence` (task ids) on one adapter with `concurrency` workers; return the arm's raw rows and summary.
+
+    canary (READINESS): after each reset the slot is probed for markers written by ANY earlier rollout, then this rollout writes its
+    own. A marker that survives a reset is INTERFERENCE: the rollout is invalid (fault "interference"), counted, and still costs.
+    A lease that cannot run commands is counted as canary "unsupported" (never as clean)."""
     rows, lock, idx = [], threading.Lock(), {"i": 0}
     sampler = MemorySampler(mem_reader, mem_period) if mem_reader else None
     t0 = clock()
@@ -187,6 +218,8 @@ def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, 
                     t1 = clock()
                     obs = lease.reset(tasks_by_id[tid])
                     r.reset_s = clock() - t1
+                    if canary:
+                        _canary(lease, r)
                     agent.start(tasks_by_id[tid], obs)
                     for _ in range(max_steps):
                         a = agent.next_action(obs)
@@ -198,6 +231,8 @@ def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, 
                     r.valid = r.score is not None
                     if not r.valid:
                         r.fault = "no_score"
+                    if r.canary == "interference":
+                        r.valid, r.fault = False, r.fault or "interference"
                 except AdapterFault as e:
                     r.fault = e.kind
                 except Exception as e:  # an adapter bug or environment error: invalid, counted, reported
@@ -237,6 +272,10 @@ def run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices, 
                "cost_usd": prices.total(hours),
                "cost_per_valid_usd": prices.total(hours) / valid if valid else None,
                "rollout_wall_p50_s": pct(0.5), "rollout_wall_p95_s": pct(0.95),
+               "interference_count": sum(1 for r in rows if r.canary == "interference"),
+               "canary_clean": sum(1 for r in rows if r.canary == "clean"),
+               "canary_unsupported": sum(1 for r in rows if r.canary == "unsupported"),
+               "canary_enabled": canary,
                "reset_mean_s": statistics.mean(r.reset_s for r in rows) if rows else None,
                "memory": sampler.summary(concurrency) if sampler else None, "prices": prices.__dict__}
     return {"summary": summary, "rows": [r.__dict__ for r in sorted(rows, key=lambda r: r.seq)]}
@@ -288,6 +327,33 @@ class _DesktopEnvLease(Lease):
             return self.env.evaluate()
         except Exception as e:
             raise AdapterFault("evaluate_failed", str(e)[:200]) from e
+
+    def canary_probe(self):
+        return _desktop_canary_probe(self.env)
+
+    def canary_write(self, token):
+        _desktop_canary_write(self.env, token)
+
+
+CANARY_PATHS = ("/tmp/.drums_canary", "~/.drums_canary")
+
+
+def _bash(env, script):
+    out = env.controller.run_bash_script(script, timeout=30)  # public DesktopEnv controller API
+    if isinstance(out, dict):
+        if out.get("status") == "error":
+            raise RuntimeError(str(out.get("output") or out.get("error"))[:200])
+        return str(out.get("output", ""))
+    return str(out or "")
+
+
+def _desktop_canary_probe(env):
+    text = _bash(env, "; ".join(f"cat {p} 2>/dev/null" for p in CANARY_PATHS) + "; true")
+    return sorted({ln.strip() for ln in text.splitlines() if ln.strip()})
+
+
+def _desktop_canary_write(env, token):
+    _bash(env, "; ".join(f"echo {token} > {p}" for p in CANARY_PATHS))
 
 
 class DesktopEnvAdapter(Adapter):

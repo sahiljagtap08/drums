@@ -195,9 +195,13 @@ def main(argv=None):
     # PROTOTYPE of mechanism K (docs/l1-shared-runtime-design.md section 12): page merging across sessions
     ap.add_argument("--ksm", action="store_true", help="prctl(PR_SET_MEMORY_MERGE): the whole session's memory may be merged by KSM")
     ap.add_argument("--no-aslr", action="store_true", help="personality(ADDR_NO_RANDOMIZE) for every process exec'd in this session")
+    ap.add_argument("--cgroup-procs", action="append", default=[])  # cgroup.procs files to join, before forking anything
     ap.add_argument("--tag", default="")  # ownership tag, read by the sweep from /proc/<pid>/cmdline
     a = ap.parse_args(argv)
 
+    for f in a.cgroup_procs:  # first act: join the session's cgroup ("0" = self), so every descendant inherits it
+        with open(f, "w") as fh:
+            fh.write("0")
     if a.no_aslr or a.ksm:
         import ctypes
         libc = ctypes.CDLL(None, use_errno=True)
