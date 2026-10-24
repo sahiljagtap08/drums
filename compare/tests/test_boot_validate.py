@@ -66,14 +66,14 @@ class FakeSup:
 def fake_http(url, data=None, timeout=20):
     if url.endswith("/screenshot"):
         return b"\x89PNG\r\n\x1a\n" + b"x" * 6000
-    return json.dumps({"returncode": 0, "output": "(3, 10)\n"}).encode()
+    return json.dumps({"returncode": 0, "output": "Xlib.xauth: warning, no xauthority details available\nDRUMS_JSON:{\"python\": [3, 10]}\n"}).encode()
 
 
 def test_all_checks_passing_allows_timing_and_a_mismatch_never_does_and_the_session_is_always_closed(tmp_path):
     r, t = _ready_root(tmp_path)
     a = args(tmp_path, root=r, overlay=t)
     out = bv.run(a, {"supervisor": FakeSup, "http": fake_http})
-    assert out["status"] == "BOOT_OK" and out["boot_identity_ok"] and out["timing_authorized"] is False and "gates" in out["note"] and FakeSup.kw["home"] == "/home/user" and FakeSup.kw["uid"] == 1000 and FakeSup.closed and out["server_python"] == "(3, 10)" and (tmp_path / "out" / "boot.png").exists()
+    assert out["status"] == "BOOT_OK" and out["boot_identity_ok"] and out["timing_authorized"] is False and "gates" in out["note"] and FakeSup.kw["home"] == "/home/user" and FakeSup.kw["uid"] == 1000 and FakeSup.closed and out["server_python"] == [3, 10] and "xauth" in out["server_import_raw_output"] and (tmp_path / "out" / "boot.png").exists()
     FakeSup.closed = False
     FakeSup.marks = [dict(GOOD, wm_name="Openbox")]
     import shutil
@@ -82,8 +82,8 @@ def test_all_checks_passing_allows_timing_and_a_mismatch_never_does_and_the_sess
     assert out["status"] == "BOOT_MISMATCH" and not out["boot_identity_ok"] and FakeSup.closed
     FakeSup.marks = [GOOD]
     shutil.rmtree(tmp_path / "state")
-    out = bv.run(a, {"supervisor": FakeSup, "http": lambda u, d=None, timeout=20: b"not a png" if u.endswith("screenshot") else json.dumps({"returncode": 0, "output": "(3, 12)"}).encode()})
-    assert not out["boot_identity_ok"] and any("screenshot" in p for p in out["problems"]) and any("3.10" in p for p in out["problems"])
+    out = bv.run(a, {"supervisor": FakeSup, "http": lambda u, d=None, timeout=20: b"not a png" if u.endswith("screenshot") else json.dumps({"returncode": 0, "output": "DRUMS_JSON:{\"python\": [3, 12]}"}).encode()})
+    assert not out["boot_identity_ok"] and any("screenshot" in p for p in out["problems"]) and any("[3, 10]" in p for p in out["problems"])
 
 
 def test_a_supervisor_constructor_refusal_becomes_a_report_and_no_session_is_created(tmp_path):
@@ -214,3 +214,19 @@ def test_the_kit_script_refuses_a_non_image_root_before_changing_anything(tmp_pa
     assert r.returncode == 2 and not (tmp_path / "ov").exists()
     code = "\n".join(l for l in open(sh).read().splitlines() if not l.lstrip().startswith("#"))
     assert 'chroot "$M" /usr/bin/python3 -m venv' in code and "3.12" not in code and "apt" not in code and "lowerdir=$ROOT" in code
+
+
+def test_the_import_check_uses_a_json_sentinel_keeps_raw_output_and_still_fails_real_errors():
+    noisy = {"returncode": 0, "output": "Xlib.xauth: warning\nDRUMS_JSON:{\"python\": [3, 10]}\nmore noise\n"}
+    assert bv.parse_server_python(noisy) == ([3, 10], None)
+    py, why = bv.parse_server_python({"returncode": 1, "output": "ModuleNotFoundError: No module named 'flask'"})
+    assert py is None and "returncode 1" in why and "flask" in why
+    py, why = bv.parse_server_python({"returncode": 0, "output": "(3, 10)\n"})  # the old format is no longer accepted
+    assert py is None and "no DRUMS_JSON:" in why
+    assert bv.parse_server_python({"returncode": 0, "output": "DRUMS_JSON:{bad"})[0] is None
+
+
+def test_the_boot_requests_the_private_system_bus_and_keeps_head_and_tail_of_each_desktop_log():
+    import inspect
+    src = inspect.getsource(bv.run) + inspect.getsource(bv._keep_logs)
+    assert "system_bus=True" in src and "(head)" in src and "(tail)" in src

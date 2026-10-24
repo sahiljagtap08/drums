@@ -42,7 +42,8 @@ def gnome_files(r, uid=1000, gid=1000, user="user", home="/home/user"):
         mk(r, f)
     for f in ("/usr/share/gnome-session/sessions/ubuntu.session", "/usr/share/glib-2.0/schemas/gschemas.compiled", "/usr/share/gnome-shell/x"):
         mk(r, f, "x", 0o644)
-    mk(r, "/etc/passwd", f"root:x:0:0:root:/root:/bin/bash\n{user}:x:{uid}:{gid}:U:{home}:/bin/bash\n", 0o644)
+    mk(r, "/usr/share/dbus-1/system.conf", "<busconfig/>", 0o644)
+    mk(r, "/etc/passwd", f"root:x:0:0:root:/root:/bin/bash\nmessagebus:x:103:106::/nonexistent:/usr/sbin/nologin\n{user}:x:{uid}:{gid}:U:{home}:/bin/bash\n", 0o644)
 
 
 def kit_layer(tmp_path, python_target="/usr/bin/python3.12", with_server=True, venv_version="3.12.3"):
@@ -264,7 +265,7 @@ def test_the_gnome_chain_checks_a_finite_named_list_and_reports_the_unknowns_as_
         assert any(need in p for p in probs), (need, probs)
     gnome_files(r)
     out = rc.check_userland([t, r], **kw)
-    assert out["problems"] == [] and any("no system bus and no logind" in w for w in out["warnings"]) and any("XDG_RUNTIME_DIR=/run/user/1000" in w for w in out["warnings"])
+    assert out["problems"] == [] and any("private system bus" in w for w in out["warnings"]) and any("XDG_RUNTIME_DIR=/run/user/1000" in w for w in out["warnings"])
     assert any("uid 1000 gid 1000, not 1001/1001" in p for p in rc.check_userland([t, r], **dict(kw, uid=1001, gid=1001))["problems"])
     assert any("home as /home/user, not /home/other" in p for p in rc.check_userland([t, r], **dict(kw, home="/home/other"))["problems"])
 
@@ -317,3 +318,24 @@ def test_desktop_children_keep_their_stderr_in_tmp_not_devnull():
     from envd_linux import session_init as SI
     src = inspect.getsource(SI.start_real_desktop)
     assert "subprocess.DEVNULL" not in src and "drums-desktop-" in src and 'kept("desktop")' in src and 'logfile("dbus")' in src and "logs=logs" in inspect.getsource(SI.record_identity)
+
+
+def test_the_private_system_bus_is_required_only_when_asked_and_names_what_it_needs(tmp_path):
+    r = image_root(tmp_path, programs=("dbus-daemon", "openbox"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    assert rc.check_userland([t, r], kit=KIT)["problems"] == []  # default: unchanged
+    probs = rc.check_userland([t, r], kit=KIT, system_bus=True)["problems"]
+    assert any("system.conf is missing" in p for p in probs) and any("`messagebus` is not in" in p for p in probs)
+    mk(r, "/usr/share/dbus-1/system.conf", "x", 0o644)
+    mk(r, "/etc/passwd", "messagebus:x:103:106::/nonexistent:/usr/sbin/nologin\n", 0o644)
+    assert rc.check_userland([t, r], kit=KIT, system_bus=True)["problems"] == []
+
+
+def test_the_system_bus_is_private_started_first_and_nothing_else_is_bound_from_the_host():
+    import inspect
+    from envd_linux import session_init as SI
+    src = inspect.getsource(SI.start_real_desktop)
+    assert src.index("start_system_bus(") < src.index('"--session"') < src.index('kept("desktop")')  # system bus, then session bus, then the desktop
+    body = inspect.getsource(SI.start_system_bus)
+    assert '"dbus-daemon", "--system"' in body and "/run/dbus" in body and "--bind" not in body  # no host path is bound in
+    assert "--system-bus" in inspect.getsource(SI.main) and SI.SYSTEM_BUS_SOCKET == "/run/dbus/system_bus_socket"

@@ -265,7 +265,7 @@ def gnome_chain(layers, uid, gid, user, home):
             problems.append(f"/etc/passwd has {user} as uid {line[2]} gid {line[3]}, not {uid}/{gid}")
         if home and line[5] != home:
             problems.append(f"/etc/passwd has {user}'s home as {line[5]}, not {home}")
-    warnings.append("no system bus and no logind/accountsservice/polkit run inside the session (dbus-daemon --session only); whether gnome-shell tolerates that is UNKNOWN until a live boot")
+    warnings.append("without a private system bus (Supervisor system_bus=True) gnome-shell 42 fails at start (observed live); with it, no logind/accountsservice/polkit/upower run, which is untested")
     warnings.append(f"XDG_RUNTIME_DIR=/run/user/{uid} is created by the init (mode 0700, owned by the user) and not by logind")
     return problems, warnings
 
@@ -347,7 +347,7 @@ def _python_minor_problems(kit, layers, interp):
     return out
 
 
-def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None, uid=-1, gid=-1, user="", home=None):
+def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None, uid=-1, gid=-1, user="", home=None, system_bus=False):
     """{"problems": [...], "warnings": [...]}. Problems are things the session needs at start-up and would not find; warnings are per-task needs."""
     layers = [L for L in layers if L and os.path.isdir(L)]
     problems, warnings = [], []
@@ -402,6 +402,15 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
         for prog in server_programs(server_main_source):
             if find_program(prog, layers) is None:
                 warnings.append(f"the pinned server runs `{prog}` for some tasks and it is not in the new root: those tasks would fail")
+    if system_bus:
+        for f in ("/usr/share/dbus-1/system.conf",):
+            if resolve(f, layers) is None:
+                problems.append(f"{f} is missing: `dbus-daemon --system` has no configuration")
+        if resolve("/etc/dbus-1/system.d", layers) is None:
+            warnings.append("/etc/dbus-1/system.d is missing: the private system bus would have no per-service policy")
+        pw = resolve("/etc/passwd", layers)
+        if not (pw and any(l.split(":")[0] == "messagebus" for l in open(os.path.join(pw[0], pw[1].lstrip("/")), errors="replace"))):
+            problems.append("user `messagebus` is not in the new root's /etc/passwd: the system bus daemon cannot drop privileges")
     if desktop == "gnome" and uid >= 0:
         gp, gw = gnome_chain(layers, uid, gid, user, home)
         problems += gp

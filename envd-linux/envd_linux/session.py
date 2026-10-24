@@ -62,7 +62,7 @@ class Supervisor:
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
                  ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True,
-                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user=""):
+                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user="", system_bus=False):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -103,11 +103,11 @@ class Supervisor:
                 raise ValueError("base_root other than / needs osworld_real_kit so that the python the session will run can be resolved and version-checked inside the new root before any mount")
             if osworld_real_kit:  # BEFORE any mount: would the programs the session starts exist inside the new root? (the host's kit and python 3.12 vanish at the pivot)
                 from . import rootcheck
-                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb, uid=uid, gid=gid, user=user, home=home)
+                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb, uid=uid, gid=gid, user=user, home=home, system_bus=system_bus)
                 if found["problems"]:
                     raise ValueError("the new base root cannot run the session: " + "; ".join(found["problems"]))
         self.home, self.base_root = home, base_root
-        self.desktop, self.uid, self.gid, self.user = desktop, uid, gid, user
+        self.desktop, self.uid, self.gid, self.user, self.system_bus = desktop, uid, gid, user, system_bus
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None
         if exec_systemd and not (netns and os.environ.get("DRUMS_ALLOW_SYSTEMD_PROBE") == "1"):
@@ -257,6 +257,7 @@ class Supervisor:
                  *(["--server-mode", self.server_mode] + ([] if self.criu_friendly else ["--timing", timing]) if self.osworld_real_kit else []),
                  *(["--criu-friendly"] if self.criu_friendly else []),
                  *(["--desktop", self.desktop] if self.desktop != "openbox" else []),
+                 *(["--system-bus"] if self.system_bus else []),
                  *(["--uid", str(self.uid), "--gid", str(self.gid), "--user", self.user] if self.uid >= 0 else []),
                  *(["--workload", self.workload] if self.workload else []),
                  *(["--ksm"] if self.ksm else []), *(["--no-aslr"] if self.no_aslr else [])]

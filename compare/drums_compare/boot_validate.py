@@ -16,7 +16,23 @@ import time
 import urllib.request
 
 EXPECT_WM = "GNOME Shell"
-IMPORTS = "import flask, pyautogui, Xlib, lxml, PIL, psutil, sys; print(tuple(sys.version_info[:2]))"
+SENTINEL = "DRUMS_JSON:"
+IMPORTS = f"import flask, pyautogui, Xlib, lxml, PIL, psutil, sys, json; print({SENTINEL!r} + json.dumps({{'python': list(sys.version_info[:2])}}))"
+
+
+def parse_server_python(ex):
+    """(python minor as a list or None, problem or None). The command's stdout may carry unrelated lines (Xlib xauth warnings): only the JSON sentinel line counts, the raw output is kept, and a
+    non-zero return code or a missing/different sentinel is the failure."""
+    out = ex.get("output", "") if isinstance(ex, dict) else ""
+    if not isinstance(ex, dict) or ex.get("returncode") != 0:
+        return None, f"the import command failed (returncode {ex.get('returncode') if isinstance(ex, dict) else '?'}): {str(out)[-400:]}"
+    for line in out.splitlines():
+        if line.startswith(SENTINEL):
+            try:
+                return json.loads(line[len(SENTINEL):])["python"], None
+            except (ValueError, KeyError):
+                break
+    return None, f"no {SENTINEL} line in the import command's output: {str(out)[-400:]}"
 
 
 def identity_problems(marks, uid, want_wm=EXPECT_WM):
@@ -57,7 +73,7 @@ def _keep_logs(a, report, d, info):
             if os.path.exists(src):
                 open(os.path.join(a.out, n), "wb").write(open(src, "rb").read()[-30000:])
         if info and info.get("ip"):
-            body = (d.get("http") or http)(f"http://{info['ip']}:5000/execute", {"command": "tail -c 20000 /tmp/drums-desktop-*.log", "shell": True})
+            body = (d.get("http") or http)(f"http://{info['ip']}:5000/execute", {"command": 'for f in /tmp/drums-desktop-*.log; do echo "== $f (head)"; head -c 20000 "$f"; echo; echo "== $f (tail)"; tail -c 20000 "$f"; done', "shell": True})
             open(os.path.join(a.out, "desktop_logs.json"), "wb").write(body)
     except Exception as e:  # logs are best-effort; the report says if they were not kept
         report.setdefault("log_note", f"desktop logs not captured: {type(e).__name__}")
@@ -73,7 +89,7 @@ def run(a, deps=None):
         report["status"] = status
         json.dump(report, open(os.path.join(a.out, "boot_validation.json"), "w"), indent=1, default=str)
         return report
-    found = rootcheck.check_userland([a.overlay, a.root], kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user, home=a.home)
+    found = rootcheck.check_userland([a.overlay, a.root], kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user, home=a.home, system_bus=True)
     if found["problems"]:
         report["problems"] = found["problems"]
         return finish("ABORT_ROOT")  # nothing was created or mounted
@@ -81,7 +97,7 @@ def run(a, deps=None):
     try:
         from envd_linux.session import Supervisor
         sup = (d.get("supervisor") or Supervisor)(a.state, a.overlay, root_mode="full", base_root=a.root, home=a.home, osworld_real_kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user,
-                                                  server_mode="module", netns=True, osworld_port=0, ready_timeout=180)
+                                                  server_mode="module", system_bus=True, netns=True, osworld_port=0, ready_timeout=180)
     except Exception as e:  # the constructor refuses BEFORE any mount; that is a report, not a traceback
         report["problems"].append(f"Supervisor preflight refused: {type(e).__name__}: {str(e)[:400]}")
         return finish("ABORT_PREFLIGHT")
@@ -98,9 +114,13 @@ def run(a, deps=None):
             report["problems"].append("the screenshot is not a PNG of plausible size")
         try:
             ex = json.loads((d.get("http") or http)(base + "/execute", {"command": ["python", "-c", IMPORTS], "shell": False}))
-            report["server_python"] = ex.get("output", "").strip()
-            if ex.get("returncode") != 0 or report["server_python"] != "(3, 10)":
-                report["problems"].append(f"server imports/python failed or are not the image's 3.10: {ex}")
+            report["server_import_raw_output"] = ex.get("output", "")
+            py, why = parse_server_python(ex)
+            report["server_python"] = py
+            if why:
+                report["problems"].append(why)
+            elif py != [3, 10]:
+                report["problems"].append(f"the server's python is {py}, not the image's [3, 10]")
         except Exception as e:
             report["problems"].append(f"/execute failed: {type(e).__name__}: {e}")
     except Exception as e:

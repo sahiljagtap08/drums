@@ -55,3 +55,10 @@ def test_only_the_two_server_output_directories_change_owner_and_nothing_else_in
     import inspect
     src = inspect.getsource(SI.start_real_desktop)
     assert '("screenshots", "__pycache__")' in src and "os.chown(d, a.uid, a.gid)" in src and "chown(kit" not in src and "chown(os.path.join(kit" not in src
+
+
+def test_system_bus_is_off_by_default_and_reaches_the_init_only_when_asked(tmp_path):
+    assert sup(tmp_path).system_bus is False
+    assert sup(tmp_path, system_bus=True).system_bus is True
+    import inspect
+    assert '*(["--system-bus"] if self.system_bus else [])' in inspect.getsource(S.Supervisor.create)

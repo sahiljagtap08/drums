@@ -100,6 +100,23 @@ def drop_privileges(uid, gid):
     return drop
 
 
+SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+
+
+def start_system_bus(env, log):
+    """A PRIVATE system bus: `dbus-daemon --system` inside this session's own mount namespace (its /run is the session's private tmpfs, so the socket exists only here; the host's system bus and logind are
+    never bound in). Nothing else is started: no logind (without /run/systemd/seats gnome-shell's login manager is its dummy), no upower/accounts/polkit services; a client that asks for one gets a
+    plain D-Bus 'service unknown' instead of a missing socket. Runs as root only so that the daemon can drop to its configured `messagebus` user."""
+    os.makedirs("/run/dbus", exist_ok=True)
+    subprocess.run(["dbus-daemon", "--system", "--fork"], stdout=log, stderr=subprocess.STDOUT, env=env, check=True)
+    deadline = time.time() + 5
+    while not os.path.exists(SYSTEM_BUS_SOCKET):
+        if time.time() > deadline:
+            raise SystemExit(f"the private system bus did not create {SYSTEM_BUS_SOCKET}")
+        time.sleep(0.05)
+    env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
+
+
 def process_table():
     """[(pid, ppid, euid, comm)] of what is running in this session's PID namespace, read from /proc."""
     out = []
@@ -248,6 +265,8 @@ def start_real_desktop(a):
     def logfile(name):  # the desktop's stderr is KEPT in /tmp (never DEVNULL) so a failing GNOME/dbus/at-spi leaves its own cause
         logs[name] = f"/tmp/drums-desktop-{name}.log"
         return open(logs[name], "wb")
+    if a.system_bus:
+        start_system_bus(env, logfile("system-dbus"))
     dbus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
                           stdout=subprocess.PIPE, stderr=logfile("dbus"), text=True, env=env, check=True, preexec_fn=pre)
     bus = dbus.stdout.split()
@@ -309,6 +328,7 @@ def main(argv=None):
     ap.add_argument("--root", choices=["home", "full"], default="home")
     ap.add_argument("--base-root", default="/")
     ap.add_argument("--osworld-port", type=int, default=0)
+    ap.add_argument("--system-bus", action="store_true")  # a private `dbus-daemon --system` inside the session (see start_system_bus)
     ap.add_argument("--desktop", choices=sorted(WM_COMMANDS), default="openbox")
     ap.add_argument("--uid", type=int, default=-1)  # >= 0: the desktop and server children drop groups, gid and uid before exec; this root process only sets up
     ap.add_argument("--gid", type=int, default=-1)
