@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 23 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 25 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -963,3 +963,48 @@ So a "tuned incumbent with a post-setup snapshot of live state" exists off the s
 4. On that host: a live-state snapshot test of the chosen incumbent provider (does a launched application survive revert, and how long does revert take), the same test that was run on the Drums arm.
 5. The licence terms of VirtualBox's Extension Pack if VirtualBox is chosen, and the Broadcom account step if VMware is.
 6. The matched run specification: the same image on both arms, the same task sequence and agent, prices from the owner's own price sheet.
+
+
+## 24. Crash DURING restore, checkpoint, teardown and sweep: registered fault windows and cleanup criteria (REGISTERED before implementation or any run)
+
+**Status: PRE-REGISTRATION. Nothing here has been run. Scope: the windows below, on this host and this kernel; no safety claim beyond them.** Section 17.2 covered one case: the Supervisor killed while its sessions were complete and idle. This registers the harder one: the Supervisor (and, in some windows, CRIU or the sweep) killed IN THE MIDDLE of an operation that creates or removes mounts, links and processes.
+
+### 24.1 Method
+
+A test-only fault hook (`DRUMS_FAULT_AT=<window>`, a no-op when unset) makes the Supervisor SIGKILL itself at a named point; a timed variant kills at a delay after CRIU starts. A driver process builds a cold friendly session, takes a checkpoint, then arms the fault for exactly one operation. After the death the parent test records a snapshot, runs the ownership sweep, and checks the criteria. The raw snapshot of every window is kept, including every failure.
+
+### 24.2 Fault windows
+
+| ID | Where the process dies |
+|---|---|
+| W1 `restore.before_overlay` | restore: X11 link and ledger records written, overlay root not yet mounted |
+| W2 `restore.after_overlay` | restore: tmpfs stage and overlay root mounted, CRIU not started |
+| W3 `restore.during_criu:30/80/150/250` | restore: the Supervisor killed 30, 80, 150, 250 ms after CRIU started (CRIU, a child, is left to finish or not, as the kernel decides) |
+| W4 `restore.during_criu_both:30/80/150/250` | the same instants, but CRIU is killed first, so a restore is interrupted half-way |
+| W5 `restore.after_criu` | CRIU returned, the processes run, the veth is not yet addressed or tagged |
+| W6 `restore.after_register` | the session is registered, readiness not yet checked |
+| W7 `restore.mid_reseed` | after the hostname was set, before the server's random state |
+| W8 `checkpoint.after_dump` | the dump killed the processes; nothing else done |
+| W9 `checkpoint.after_root_umount` | restored root unmounted, layer not yet kept |
+| W10 `checkpoint.after_layer_bind` | the stage is bound as the layer, not yet unmounted from the slot |
+| W11 `destroy.after_kill` | teardown: processes killed, nothing unmounted |
+| W12 `destroy.after_root_umount` | teardown: root unmounted, stage still mounted |
+| W13 `teardown_of_failed_restore` | a restore that FAILS (an induced reseed error) and the Supervisor dies in the middle of its own failure teardown (`destroy.after_kill` reached from the failure path) |
+| W14 `sweep.after_kill`, W15 `sweep.after_unmount`, W16 `sweep.after_links` | the SWEEP itself is killed at that point of its run of an orphaned run; it is then run again |
+
+### 24.3 Criteria (all must hold for a window to PASS)
+
+After the (second, for W14 to W16) sweep:
+- P1 no process of the run remains (matched by argv: `--tag drums:<run>`, never by substring) and no `criu` process is left;
+- P2 no mount remains under any directory the run created (state dir, checkpoint dirs) or under a `/tmp/.criu.*` directory;
+- P3 no `dvh*` link, no nftables table of the run, no X11 link of the run;
+- P4 the ledger file is gone;
+- P5 a decoy process carrying another run's tag and a tmpfs at an unrecorded path are untouched;
+- P6 a further sweep is a no-op (idempotent).
+OWNERSHIP, checked BEFORE the sweep, independently of P1 to P6: O1 every mount under the run's directories is named in the ledger (a mount the ledger does not know is one the sweep will never remove); O2 every process of the run can be found by the tag (an untagged half-restored task cannot). A window can pass P1 to P6 and still be recorded as an ownership finding if O1 or O2 fail, because it would then have passed only by luck of what was killed.
+
+**Lifecycle after the restored-root unmount fix (a COMPLETED, undisturbed sequence, not a crash):** after a checkpoint of a restored session L1 the root mount is absent from `/proc/mounts`, the slot is absent from `_procs` and `_restored`, the slot directory is gone, and the layer is mounted; after `close()` nothing under the state directory is mounted; and the sweep run afterwards reports nothing to do. This is checked by looking at the mount table, the Supervisor's own accounting and the directory, not only the process list.
+
+### 24.4 Expected outcome, stated in advance so it can lose
+
+About 60% that every window passes at first run. The most likely failures: (a) W4: CRIU killed half-way leaves a half-restored task tree that carries no tag (its command line is restored last) and mounts under `/tmp/.criu.mntns.*` that the ledger does not know, so the tag-based sweep cannot reach them; (b) W1 or W2: a mount or link created in the instant before its ledger record. If a window fails, the first failure is kept as raw data and a fix with a regression test follows. A pass establishes survival of that window only.
