@@ -177,7 +177,7 @@ def test_two_REAL_unprivileged_daemons_from_the_generated_config_have_distinct_i
         for n in (1, 2):
             sock = tmp_path / f"bus{n}.sock"
             conf = tmp_path / f"bus{n}.conf"
-            conf.write_text(SI.private_system_conf(base, str(tmp_path), str(sock)))
+            conf.write_text(SI.private_system_conf(base, str(tmp_path), str(sock), str(tmp_path / f"bus{n}.pid")))
             r = sp.run(SI.system_bus_command(str(conf)), capture_output=True, text=True, timeout=20)
             assert r.returncode == 0, r.stderr  # the REAL daemon accepts this command line (it rejects --system together with --config-file)
             toks = r.stdout.split()
@@ -201,3 +201,68 @@ def test_two_REAL_unprivileged_daemons_from_the_generated_config_have_distinct_i
                 os.kill(p, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+
+
+STOCK_LIKE = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>system</type>
+  <fork/>
+  <auth>EXTERNAL</auth>
+  <listen>unix:path=/var/run/dbus/system_bus_socket</listen>
+  <policy context="default"><allow user="*"/><deny own="*"/><deny send_type="method_call"/><allow send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus"/></policy>
+  <policy user="root"><allow send_destination="*" eavesdrop="true"/></policy>
+  <includedir>system.d</includedir>
+  <include ignore_missing="yes">/etc/dbus-1/system-local.conf</include>
+  <standard_system_servicedirs/>
+  <servicehelper>/usr/lib/dbus-1.0/dbus-daemon-launch-helper</servicehelper>
+  <selinux><associate own="org.freedesktop.DBus" context="x"/></selinux>
+  <include if_selinux_enabled="yes" selinux_root_relative="yes">contexts/dbus_contexts</include>
+</busconfig>
+"""
+
+
+def test_a_stock_shaped_config_with_relative_policy_dirs_and_the_conditional_selinux_include_is_transformed(tmp_path):
+    (tmp_path / "system.d").mkdir()
+    (tmp_path / "system.d" / "a.conf").write_text("<busconfig><policy user='messagebus'><allow own='org.a'/></policy></busconfig>")
+    out = SI.private_system_conf(STOCK_LIKE, str(tmp_path))  # no contexts/dbus_contexts exists: the conditional SELinux include is dropped, not followed
+    assert "messagebus" in out and "selinux" not in out and "servicehelper" not in out and "servicedirs" not in out and "<include" not in out and "/var/run/dbus" not in out
+    assert out.count("<listen>") == 1 and '<policy context="default">' in out and "<fork" in out
+    assert SI.private_system_conf(STOCK_LIKE.replace("<fork/>", "<fork/><pidfile>/run/dbus/pid</pidfile>"), str(tmp_path), "/s", "/p.pid").count("<pidfile>/p.pid</pidfile>") == 1 and "/run/dbus/pid" not in SI.private_system_conf(STOCK_LIKE.replace("<fork/>", "<fork/><pidfile>/run/dbus/pid</pidfile>"), str(tmp_path))
+    with pytest.raises(SystemExit, match="attribute this policy does not understand"):
+        SI.private_system_conf("<busconfig><type>system</type><include whatever='1'>x</include></busconfig>", str(tmp_path))
+    with pytest.raises(SystemExit, match="selinux_root_relative without if_selinux_enabled"):
+        SI.private_system_conf("<busconfig><type>system</type><include selinux_root_relative='yes'>x</include></busconfig>", str(tmp_path))
+
+
+def test_the_actually_installed_stock_system_conf_transforms_without_effects():
+    path = "/usr/share/dbus-1/system.conf"
+    if not os.path.exists(path):
+        pytest.skip("no stock system.conf on this machine")
+    out = SI.private_system_conf(open(path).read(), "/usr/share/dbus-1")
+    assert "<type>system</type>" in out and "servicehelper" not in out and "servicedir" not in out and "<include" not in out and out.count("<listen>") == 1
+
+
+def test_the_host_validation_tool_proves_two_buses_on_this_machine(tmp_path):
+    import shutil
+    if not (shutil.which("dbus-daemon") and shutil.which("dbus-send") and os.path.exists("/usr/share/dbus-1/system.conf")):
+        pytest.skip("dbus tools or stock system.conf missing")
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "compare"))
+    from drums_compare import bus_validate as bv
+    import json
+    # the stock config's own policy forbids connecting as an ordinary client in some builds; the tool reports that as a problem rather than hiding it
+    r = bv.run("/usr/share/dbus-1/system.conf")
+    json.dumps(r)
+    assert set(r) >= {"host_socket_before", "host_socket_after", "buses", "problems", "ok", "image_activatable_inventory"}
+    assert r["host_socket_before"] == r["host_socket_after"]  # the host socket is never touched either way
+    import time
+    for _ in range(50):
+        if not pgrep_left(r):
+            break
+        time.sleep(0.1)
+    assert not pgrep_left(r)  # both daemons were killed
+
+
+def pgrep_left(r):
+    import subprocess
+    return [b["pid"] for b in r["buses"] if os.path.exists(f"/proc/{b['pid']}") and "Z" not in open(f"/proc/{b['pid']}/stat").read().rsplit(")", 1)[1].split()[0]]

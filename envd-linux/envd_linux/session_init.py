@@ -147,6 +147,13 @@ def _inline(elem, base_dir, depth=0):
         if tag not in ALLOWED_TAGS:
             raise SystemExit(f"the system bus configuration has an element this policy does not understand: <{tag}>")
         if tag in ("include", "includedir"):
+            odd = set(child.attrib) - {"ignore_missing", "if_selinux_enabled", "selinux_root_relative"}
+            if odd:
+                raise SystemExit(f"the system bus configuration has an <{tag}> attribute this policy does not understand: {sorted(odd)}")
+            if child.get("if_selinux_enabled") is not None:
+                continue  # a conditional SELinux include (the stock file's contexts/dbus_contexts): an LSM hook, dropped like the other hooks, never followed unconditionally
+            if child.get("selinux_root_relative") is not None:
+                raise SystemExit(f"<{tag}> uses selinux_root_relative without if_selinux_enabled: not understood")
             path = (child.text or "").strip()
             path = path if os.path.isabs(path) else os.path.join(base_dir, path)
             files = sorted(glob.glob(os.path.join(path, "*.conf"))) if tag == "includedir" else ([path] if os.path.exists(path) else [])
@@ -158,13 +165,13 @@ def _inline(elem, base_dir, depth=0):
                     raise SystemExit(f"{f} is not a busconfig file")
                 out += _inline(sub, os.path.dirname(f), depth + 1)
             continue
-        if tag == "listen":
-            continue  # replaced by the one private socket below
+        if tag in ("listen", "pidfile"):
+            continue  # replaced by the one private socket and the one private pid file below (the stock /run/dbus/pid would collide, or touch the host's, outside a private /run)
         out.append(child)
     return out
 
 
-def private_system_conf(text, base_dir="/usr/share/dbus-1", socket_path=None):
+def private_system_conf(text, base_dir="/usr/share/dbus-1", socket_path=None, pidfile_path=None):
     """A FLATTENED, NON-ACTIVATING system bus configuration built from the image's own system.conf: includes and include directories are inlined and checked, `<standard_system_servicedirs/>`,
     `<servicedir>`, `<servicehelper>` and the SELinux/AppArmor hooks are dropped, the only listen address is the private socket, and any element outside a fixed allow-list raises. Authentication, limits
     and policy rules of the image are kept. DIFFERENCES from the stock bus (documented): no service activation of any kind, no LSM hooks, no other listen address. Raises if the file is not a system bus config."""
@@ -176,6 +183,7 @@ def private_system_conf(text, base_dir="/usr/share/dbus-1", socket_path=None):
     for e in kept:
         new.append(e)
     ET.SubElement(new, "listen").text = f"unix:path={socket_path or SYSTEM_BUS_SOCKET}"
+    ET.SubElement(new, "pidfile").text = pidfile_path or "/run/drums-system-bus.pid"
     out = ET.tostring(new, encoding="unicode")
     for bad in ("servicedir", "servicehelper", "<include", "selinux", "apparmor"):
         if bad in out:
