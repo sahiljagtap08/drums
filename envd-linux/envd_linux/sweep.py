@@ -205,40 +205,72 @@ def _kill_tagged(tag):
     return killed
 
 
-def _kill_strays(entry):
-    """Processes of a dead run that carry NO tag: a CRIU restore killed half-way leaves a restorer and half-restored tasks whose command lines are CRIU's (the
-    session's own command line is restored last). Ownership is still by recorded paths, never by name alone: a `criu` process whose command line names this
-    run's state directory or one of its recorded mounts, and any process in a mount namespace OTHER than ours that holds a mount under this run's state
-    directory. Nothing is matched by substring of a tag, and an unrecorded path matches nothing (docs/l1-shared-runtime-design.md section 24)."""
-    paths = [entry.get("state_dir")] + list(entry.get("mounts", []))
-    paths = [p for p in paths if p]
-    if not paths:
-        return []
-    me, my_ns = os.getpid(), os.readlink("/proc/self/ns/mnt")
+def _under(path, candidate):
+    """True when `candidate` IS `path` or lies below it, compared by path COMPONENTS, never by substring: `/tmp/run1` owns `/tmp/run1/img` and not `/tmp/run10`."""
+    if not path or not candidate:
+        return False
+    path = path.rstrip("/") or "/"
+    return candidate == path or candidate.startswith(path + "/")
+
+
+def _arg_names(paths, argv):
+    """An argv element names an owned path if it is that path or below it, or has the form option=PATH."""
+    return any(_under(p, a) or _under(p, a.split("=", 1)[-1]) for p in paths for a in argv)
+
+
+def _holds_under(mountinfo, state_dir):
+    """True when a mount in this /proc/<pid>/mountinfo has its mount point, or its source root, at or below `state_dir` (by components)."""
+    for ln in mountinfo.splitlines():
+        f = ln.split()
+        if len(f) > 4 and (_under(state_dir, f[4].replace("\\040", " ")) or _under(state_dir, f[3].replace("\\040", " "))):
+            return True
+    return False
+
+
+def _discover_strays(paths, state_dir, me, my_ns):
     victims = set()
     for d in os.listdir("/proc"):
         if not d.isdigit() or int(d) == me:
             continue
         try:
             argv = open(f"/proc/{d}/cmdline", "rb").read().decode(errors="ignore").split("\0")
-            if argv and os.path.basename(argv[0]) == "criu" and any(p in a for p in paths for a in argv):
+            if argv and os.path.basename(argv[0]) == "criu" and _arg_names(paths, argv[1:]):
                 victims.add(int(d))
                 continue
-            if os.readlink(f"/proc/{d}/ns/mnt") != my_ns and entry.get("state_dir") and entry["state_dir"] in open(f"/proc/{d}/mountinfo").read():
+            if state_dir and os.readlink(f"/proc/{d}/ns/mnt") != my_ns and _holds_under(open(f"/proc/{d}/mountinfo").read(), state_dir):
                 victims.add(int(d))
         except OSError:
             continue
-    for _ in range(3):  # a half-restored tree can still be forking
-        for pid in victims:
+    return victims
+
+
+def _kill_strays(entry):
+    """Processes of a dead run that carry NO tag: a CRIU restore killed half-way leaves restorer tasks whose command lines are CRIU's (the session's own command line
+    is restored last). Ownership is by RECORDED PATHS compared by path components, never by name or substring alone: a `criu` process with an argument at or below
+    this run's state directory or one of its recorded mounts, and any process in a mount namespace other than ours that holds a mount at or below the state
+    directory. An unrecorded path, and a path that merely shares a prefix (`/tmp/run10` against `/tmp/run1`), match nothing.
+    RESIDUAL: discovery is repeated until a pass finds nothing new (at most 5 passes), but a task forked in the instant after the last scan is not seen; the entry
+    is then kept only if a victim we found is still alive, so such a straggler is reaped by the NEXT sweep only if some other survivor kept the entry (docs/l1-shared-runtime-design.md 24b)."""
+    paths = [p for p in [entry.get("state_dir")] + list(entry.get("mounts", [])) if p]
+    if not paths:
+        return []
+    me, my_ns = os.getpid(), os.readlink("/proc/self/ns/mnt")
+    seen = set()
+    for _ in range(5):
+        new = _discover_strays(paths, entry.get("state_dir"), me, my_ns) - seen
+        if not new:
+            break
+        seen |= new
+        for pid in new:
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
         time.sleep(0.1)
     deadline = time.time() + 5
-    while time.time() < deadline and not all(_zombie_or_gone(p) for p in victims):
+    while time.time() < deadline and not all(_zombie_or_gone(p) for p in seen):
         time.sleep(0.05)
-    return sorted(victims)
+    return sorted(seen)
 
 
 def _unmount(points):

@@ -6,9 +6,9 @@
 
 | # | Item | Who | Needs a host? |
 |---|---|---|---|
-| I1 | A composition manifest generator: pinned versions of OS packages, browser build, LibreOffice, Python packages, the guest-server and `desktop_env` commits, for the Drums rootfs, plus the same manifest format for the VM to be filled in and diffed | internal | no |
-| I2 | A read-only host preflight checker (CPU virtualization flags, VirtualBox presence and version, kernel features Drums and CRIU need, free RAM and disk, cgroup version) that prints go / no-go with reasons; run on any candidate host the owner names | internal | no (its first run here must report NO-GO for the missing virtualization) |
-| I3 | The first-pass matched-check driver: alternating blocks, concurrency 1, same local task and scripted agent, both arms with baseline reuse ON, raw faults, pins, resource and cost capture including pool build, setup, save and revert | internal | the Drums arm yes (here); the incumbent arm only on the real host |
+| I1 | **BUILT** (`envd-linux/envd_linux/composition.py`, test `tests/test_composition.py`; the Drums arm's manifest is `docs/data/l1-criu/drums_composition_manifest.json`). A composition manifest generator: pinned versions of OS packages, browser build, LibreOffice, Python packages, the guest-server and `desktop_env` commits, for the Drums rootfs, plus the same manifest format for the VM to be filled in and diffed | internal | no |
+| I2 | **BUILT** (`envd-linux/envd_linux/preflight.py`, test `tests/test_preflight.py`). A read-only host preflight checker (CPU virtualization flags, VirtualBox presence and version, kernel features Drums and CRIU need, free RAM and disk, cgroup version) that prints go / no-go with reasons; run on any candidate host the owner names | internal | no (its first run here must report NO-GO for the missing virtualization) |
+| I3 | **BUILT for the driver and its accounting** (`compare/drums_compare/first_check.py`, exercised with fake adapters; the real incumbent arm is wired but cannot run here). The first-pass matched-check driver: alternating blocks, concurrency 1, same local task and scripted agent, both arms with baseline reuse ON, raw faults, pins, resource and cost capture including pool build, setup, save and revert | internal | the Drums arm yes (here); the incumbent arm only on the real host |
 | O1 | An existing owner-authorized host, or a rental (decided later, section 8) | owner | n/a |
 | O2 | The VM image: the official one (licence field blank) or a self-built one (licence composition unaudited) | owner | n/a |
 | O3 | Hypervisor: VirtualBox base package (GPLv3) is the proposed default; VMware Workstation Pro is the alternative (free, Broadcom account needed) | owner | n/a |
@@ -20,9 +20,11 @@ I1 to I3 proceed without any decision; O1 to O4 gate only the real incumbent run
 
 A **non-virtualized x86-64 Linux machine with administrator rights, authorized by its owner**, because the documented-supported way to run VirtualBox or VMware is a non-virtualized host (OSWorld README, "Installation: VMware/VirtualBox (Desktop, Laptop, Bare Metal Machine)"; AWS lists only KVM and Hyper-V as nested L1 hypervisors, GCE only KVM: see `l1-shared-runtime-design.md` section 23.4). Needed on it:
 - **CPU virtualization** exposed (`vmx` or `svm` in `/proc/cpuinfo`; the sandbox has none and no `/dev/kvm`).
-- **VirtualBox base package** (GPLv3; Guest Additions GPLv3). **The Extension Pack is not assumed and not needed**: it is under a separate licence (PUEL, personal and educational use; commercial use for a fee) per `https://www.virtualbox.org/wiki/Licensing_FAQ` (accurate for 7.1 and later, last updated 12 September 2024). Whether anything the first pass needs lives in the Extension Pack is a check (I2), not an assumption.
+- **VirtualBox base package** (GPLv3; Guest Additions GPLv3). **The Extension Pack is NOT ASSUMED**: it is under a separate licence (PUEL, personal and educational use; commercial use for a fee) per `https://www.virtualbox.org/wiki/Licensing_FAQ` (accurate for 7.1 and later, last updated 12 September 2024). Whether the first pass needs a feature that lives in the Extension Pack is UNTESTED (the preflight lists it as `untested`); "not assumed" is not "not needed".
 - **For the Drums arm on the same host:** root; PID, mount, IPC, UTS and network namespaces; overlayfs with `redirect_dir`; `pivot_root`; veth and `nft`; cgroups (v1 or v2: the v2 path of `limits.py` has never run on a real v2 kernel); Xvfb; and a private CRIU 4.2 install (4.1.1 fails on kernel 6.18; the kernel needs `CHECKPOINT_RESTORE`; see section 15 of the design doc). Nothing is installed system-wide by Drums.
 - **Co-residence is unverified:** that VirtualBox and the Drums arm run correctly on the same host at the same time (Oracle's manual warns against running other hypervisors alongside VirtualBox; Drums uses namespaces, not KVM, so no conflict is expected, but it is expected, not tested). The first pass runs the arms in alternating blocks, never simultaneously, which sidesteps interference.
+
+**Preflight result vocabulary (I2).** Every check is `ok` (checked, present), `unsupported` (checked, absent or failing: a capability the host lacks) or `untested` (not checked: unknown, never to be read as either). A `go_*` answer needs every needed check `ok`; an `untested` item keeps it at no-go. **Run on the current sandbox it answers NO-GO for the incumbent** (`unsupported`: no `vmx`/`svm`, no `VBoxManage`; `untested`: the Extension Pack question, VirtualBox beside Drums on one host, VirtualBox on a nested or cloud host, and the CRIU install when no path is given) and no-go for a joint run. It asserts no minimum RAM or disk.
 
 ## 3. Capacity: establish before claiming
 
@@ -31,6 +33,18 @@ A **non-virtualized x86-64 Linux machine with administrator rights, authorized b
 ## 4. Common software composition (authorized, pinned, and not the same disk)
 
 Both arms must run the SAME pinned software, but they are different artefacts: the incumbent VM boots its own kernel and disk; the Drums session shares the host kernel and uses an overlay root. **It is not claimed that the VM disk runs inside a namespace, nor that the two environments are byte-identical.** What is made equal and recorded: OS release and package versions (from a manifest, I1), the browser build, LibreOffice and other applications, the public guest-server files at the pinned `desktop_env` commit (`04718ea` is what Drums runs now), the evaluator code and Python package versions, screen size, and the task files. Differences that cannot be removed (kernel, init system, GNOME vs the session's openbox desktop, display driver, clock source) are listed as known non-equivalences in the run record. Any application added to the Drums rootfs must be one the owner is authorized to use; the manifest, not memory, is the evidence.
+
+### 4a. Currently NOT the same (recorded; "same software" is a TARGET, not a state)
+
+| Aspect | Drums arm today (measured: `docs/data/l1-criu/drums_composition_manifest.json`) | Incumbent VM (the official image is not obtained; nothing is known from a run) |
+|---|---|---|
+| OS | Ubuntu 24.04 (noble), the host's kernel 6.18.44 | the image's own release and kernel; the server README mentions both Ubuntu 20.04 and 22.04: the actual release is UNVERIFIED |
+| Desktop | **openbox 3.6.1, no GNOME shell** (a window manager started by the session) | GNOME (the OSWorld setup instructions install `ubuntu-desktop` with GNOME) |
+| Browser | Playwright Chromium 141.0.7390.37; **no `google-chrome`** | tasks launch `google-chrome` (79 public tasks do, each with a `socat` helper): not runnable on the Drums arm as it stands |
+| Office | LibreOffice 24.2.7.2 (the `gen` VCL plugin only: no accessibility tree) | unknown; the real image is built for an accessibility tree, which the benchmark's evaluators and observations use |
+| Guest server | unmodified public files at OSWorld commit `04718eab9327856efe8192cc58161acc7a7627e2` in a Python 3.12.3 venv | the image's own copy and Python: identity UNVERIFIED |
+| Package identities | recorded in the manifest (`dpkg` versions) | not available until the image exists and its manifest is generated |
+Consequence: these are **flags that preclude any broad benchmark claim** and any statement that the two arms ran "the same environment". The first pass compares the REUSE paths on one local task only; it must carry this table in its run record, and any later widening has to remove each difference or justify it.
 
 ## 5. Licence position (unresolved items stay labelled unresolved)
 

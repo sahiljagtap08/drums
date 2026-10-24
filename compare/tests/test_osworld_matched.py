@@ -414,3 +414,25 @@ def test_the_canary_still_sees_nothing_after_a_snapshot_revert_and_catches_a_lea
 def test_an_unknown_reuse_mode_is_refused():
     with pytest.raises(ValueError):
         om.DesktopEnvAdapter("x", lambda w: None, reuse="magic")
+
+
+# ---- first matched check driver (fake adapters; HARNESS VALIDATION) ----
+def test_alternating_blocks_keep_first_rollout_work_in_every_block_and_make_no_claim(tmp_path):
+    from drums_compare import first_check as fc
+    clk = Clock()
+
+    def arm(reuse):
+        def make():
+            SnapEnv.clock = clk
+            return om.DesktopEnvAdapter("x", om.incumbent_factory("vmware", path_to_vm="/vm", desktop_env_module=SnapModule), reuse=reuse)
+        return make
+    SnapEnv.log = []
+    tasks = {"a": {"id": "a", "config": [{"type": "launch"}]}}
+    s = fc.run_alternating({"A": arm("post_setup"), "B": arm("none")}, tasks, ["a", "a", "a"], lambda: om.ScriptedAgent({}), 4,
+                           {"A": PRICE, "B": PRICE}, str(tmp_path), {"pin": "x"}, clock=clk)
+    assert [o[1] for o in s["block_order"]] == ["A", "B", "B", "A", "A", "B", "B", "A"]  # ABBA ABBA: alternating, drift hits both
+    assert s["arms"]["A"]["blocks"] == 4 and s["arms"]["A"]["rollouts"] == 12
+    assert s["arms"]["A"]["first_rollout_work_s"] > 0 and s["arms"]["B"]["first_rollout_work_s"] == 0  # a new adapter per block: the setup is paid in every block
+    assert s["engineering_validation_only"] and s["no_headline_claim"] and s["no_training_claim"] and "win" not in json.dumps(s)
+    assert (tmp_path / "pins.json").exists() and (tmp_path / "block3_A.json").exists() and (tmp_path / "summary.json").exists()
+    assert s["arms"]["A"]["interference"] == 0

@@ -1,0 +1,103 @@
+{
+ "format": 1,
+ "os_release": {
+  "NAME": "Ubuntu",
+  "VERSION_ID": "24.04",
+  "VERSION_CODENAME": "noble"
+ },
+ "kernel": "6.18.44-fc-v153",
+ "machine": "x86_64",
+ "dpkg": {
+  "libreoffice-core": "4:24.2.7-0ubuntu0.24.04.7",
+  "xvfb": "2:21.1.12-1ubuntu1.9",
+  "openbox": "3.6.1-12build5",
+  "at-spi2-core": "2.52.0-1build1",
+  "dbus": "1.14.10-4ubuntu4.1",
+  "wmctrl": "1.07-7ubuntu3",
+  "xclip": "0.13-3",
+  "python3": "3.12.3-0ubuntu2.1",
+  "nftables": "1.0.9-1ubuntu0.1",
+  "iproute2": null,
+  "soffice_version_string": "LibreOffice 24.2.7.2 420(Build:2)"
+ },
+ "browsers": {
+  "/opt/pw-browsers/chromium-1194/chrome-linux/chrome": "Chromium 141.0.7390.37"
+ },
+ "python": {
+  "interpreter": "Python 3.12.3",
+  "packages": [
+   "Flask==3.1.3",
+   "Jinja2==3.1.6",
+   "MarkupSafe==3.0.4",
+   "MouseInfo==0.1.3",
+   "PyAutoGUI==0.9.54",
+   "PyGObject==3.48.2",
+   "PyGetWindow==0.0.9",
+   "PyJWT==2.7.0",
+   "PyMsgBox==2.0.1",
+   "PyRect==0.2.0",
+   "PyScreeze==1.0.1",
+   "PyYAML==6.0.1",
+   "Werkzeug==3.1.9",
+   "argcomplete==3.1.4",
+   "blinker==1.9.0",
+   "certifi==2026.10.23",
+   "charset-normalizer==3.5.2",
+   "click==8.5.0",
+   "cryptography==41.0.7",
+   "dbus-python==1.3.2",
+   "distro==1.9.0",
+   "httplib2==0.20.4",
+   "idna==3.20",
+   "itsdangerous==2.2.0",
+   "launchpadlib==1.11.0",
+   "lazr.restfulclient==0.14.6",
+   "lazr.uri==1.0.6",
+   "lxml==6.1.3",
+   "numpy==2.5.4",
+   "oauthlib==3.2.2",
+   "packaging==24.0",
+   "pillow==10.2.0",
+   "psutil==7.2.2",
+   "pyparsing==3.1.1",
+   "pyperclip==1.11.0",
+   "python-apt==2.7.7+ubuntu5.3",
+   "python-xlib==0.33",
+   "python3-xlib==0.15",
+   "pytweening==1.2.0",
+   "requests==2.34.2",
+   "setuptools==68.1.2",
+   "six==1.16.0",
+   "toml==0.10.2",
+   "urllib3==2.8.0",
+   "wadllib==1.3.6",
+   "wheel==0.42.0",
+   "xmltodict==0.13.0",
+   "yq==3.1.0"
+  ]
+ },
+ "guest_server": {
+  "what": "unmodified copies of the OSWorld guest server files, plus a build-time virtualenv",
+  "source_repo": "https://github.com/xlang-ai/OSWorld",
+  "source_commit": "04718eab9327856efe8192cc58161acc7a7627e2",
+  "source_commit_date": "2026-10-23T08:07:05+08:00",
+  "license": "Apache-2.0",
+  "license_file": "LICENSE",
+  "license_file_sha256": "a8d1d88a0f9cce3cdbff73b03a80dc5e5d69e3ba2443946c268815a550c9e0ec",
+  "notice_file": null,
+  "notice_note": "the source repository ships no NOTICE file at this commit (only LICENSE)",
+  "fetched_or_built_at_utc": "2026-10-23T15:20:41+00:00",
+  "files_copied_unmodified": {
+   "main.py": "efd969e8b3b272b3694cb66450ddb7c90818970c98bd153f5a2050363cdb88c7",
+   "pyxcursor.py": "87d09a465bf87c3766ac3b8584f80c3288890e874b45d9a56b811b0a4268e840",
+   "screen_recording.py": "68ad468287b11cd1583df361bb06126151f93af97f1807dcd6ed1885bb890d06",
+   "__init__.py": "74a63beb9b241af3b2e7e379d7fcf849e40829378c2d7a130699b2560ce97369"
+  },
+  "modified": false,
+  "distribution": "BUILD-TIME ONLY. The kit lives on the host that built it (default /opt/drums-osworld-real), is NOT committed to the Drums repository, and is NOT redistributed by it. It reaches sessions on that host through the shared lower layer. If a kit is ever shipped to another party (an image, an archive), this directory, with LICENSE, NOTICE (if any) and this manifest, must go with it unmodified.",
+  "python_dependencies": "installed from PyPI into venv/ at build time under their own licences (not copied here)"
+ },
+ "desktop_env": {
+  "git_commit": "04718eab9327856efe8192cc58161acc7a7627e2"
+ }
+}

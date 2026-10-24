@@ -267,3 +267,43 @@ def test_standalone_cli_reports_json_and_exits_zero(world):
     r2 = subprocess.run([sys.executable, "-m", "envd_linux.sweep", "--ledger", world.ledger],
                         capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=PKG))
     assert r2.returncode == 0 and json.loads(r2.stdout) == sw.EMPTY
+
+
+# ---- ownership by path components (docs/l1-shared-runtime-design.md section 24b) ----
+def test_path_ownership_is_by_components_not_substring():
+    from envd_linux import sweep as sw
+    assert sw._under("/tmp/run1", "/tmp/run1") and sw._under("/tmp/run1", "/tmp/run1/img/x") and sw._under("/tmp/run1/", "/tmp/run1/img")
+    assert not sw._under("/tmp/run1", "/tmp/run10") and not sw._under("/tmp/run1", "/tmp/run10/img") and not sw._under("/tmp/run1", "/tmp/xrun1")
+    assert sw._arg_names(["/tmp/run1"], ["restore", "-D", "/tmp/run1/img"]) and sw._arg_names(["/tmp/run1"], ["--root=/tmp/run1/root"])
+    assert not sw._arg_names(["/tmp/run1"], ["restore", "-D", "/tmp/run10/img"]) and not sw._arg_names(["/tmp/run1"], ["--root=/tmp/run10/root"])
+    mi = "10 1 0:5 / /tmp/run10/root rw - overlay overlay rw\n11 1 0:6 /tmp/run10/x11 /tmp/.X11-unix rw - ext4 /dev/vda rw\n"
+    assert not sw._holds_under(mi, "/tmp/run1")
+    assert sw._holds_under(mi, "/tmp/run10") and sw._holds_under("12 1 0:5 / /tmp/run1/root rw - overlay o rw\n", "/tmp/run1")
+    assert sw._holds_under("13 1 0:7 /tmp/run1/x11 /tmp/.X11-unix rw - ext4 /dev/vda rw\n", "/tmp/run1")  # a bind whose SOURCE is below the state dir
+
+
+def test_a_criu_process_of_an_unrelated_prefix_colliding_run_is_not_killed(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    from envd_linux import sweep as sw
+    def criu_like(*args):  # argv[0] is "criu", as in the real restorer tasks (a shebang script would show the interpreter instead)
+        return subprocess.Popen(["criu", "-c", "import time; time.sleep(300)", *args], executable=sys.executable)
+    run1, run10 = str(tmp_path / "run1"), str(tmp_path / "run10")
+    mine = criu_like("restore", "-D", run1 + "/img", "--root", run1 + "/root")
+    other = criu_like("restore", "-D", run10 + "/img", "--root", run10 + "/root")
+    unrelated = criu_like("restore", "-D", str(tmp_path / "elsewhere"))
+    try:
+        time.sleep(0.5)
+        killed = sw._kill_strays({"state_dir": run1, "mounts": [run1 + "/root"]})
+        time.sleep(0.3)
+        assert mine.pid in killed and mine.poll() is not None  # the run's own restorer is reaped
+        assert other.poll() is None and other.pid not in killed  # /tmp/run10 is not /tmp/run1
+        assert unrelated.poll() is None
+    finally:
+        for p in (mine, other, unrelated):
+            if p.poll() is None:
+                p.kill()
+            p.wait()
