@@ -440,7 +440,7 @@ saving is under 8%. Merging also introduces a strong, measured cross-session tim
 | M-K4 create latency | OFF / K1 / K2 | p95 3.20 / 2.68 / 2.28 s (60 creations each) | K2 p95 <= 1.10 x OFF | **PASS**, but K2 being FASTER than OFF is not a benefit I claim: the arms were interleaved yet creation latency here also depends on host state, and I did not isolate why |
 | M-K5 side channel | probes in two sessions | see below | reported | **A strong channel EXISTS** |
 
-**Overall verdict by the pre-registered rules: no K arm is a product mechanism.** K1 fails M-K1 and M-K2. K2 passes M-K1, M-K3 and M-K4 but fails
+**Overall verdict by the pre-registered rules: K1 fails CPU, K2 fails CPU and is a security regression; no K arm is shippable.** K1 fails M-K1 and M-K2 (and carries the timing channel). K2 passes M-K1, M-K3 and M-K4 but fails
 M-K2, and in addition is not shippable on security grounds (next subsection). The measured saving at K2 is real; the cost to obtain it is not
 acceptable.
 

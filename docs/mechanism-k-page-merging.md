@@ -1,7 +1,7 @@
 # Mechanism K: kernel page merging across sessions
 
-**Status: BUILT as a prototype. MEASURED on one host (raw data: `docs/data/l1-ksm/`). Verdict: no arm is a product mechanism. K2 is benchmark-sandbox
-only, a security regression, not shippable.** Pre-registration: `l1-shared-runtime-design.md` section 12 (commit `8062ff0`). Results: section 13.
+**Status: BUILT as a prototype. MEASURED on one host (raw data: `docs/data/l1-ksm/`). Verdict: K1 fails CPU, K2 fails CPU and is a security regression; no K arm is shippable. K2 is benchmark-sandbox
+only.** Pre-registration: `l1-shared-runtime-design.md` section 12 (commit `8062ff0`). Results: section 13.
 `drums_level` stays L0; this is not an L1 proof, and it makes no claim against any incumbent (their VMs can use page merging too).
 
 ## The idea in plain English

@@ -60,6 +60,22 @@ try:
                      mem_reader=used_kib, mem_period=0.5)
     out["summary"] = res["summary"]
     out["scores"] = [r["score"] for r in res["rows"]]
+    out["canary_rows"] = [{"seq": r["seq"], "worker": r["worker"], "canary": r["canary"], "seen": r["canary_seen"]} for r in res["rows"]]
+    # positive control on a REAL lease: a marker written is visible to the probe (so "clean" above means "absent", not "probe blind"),
+    # and what a second reset does to it is recorded either way
+    pc = om.DesktopEnvAdapter("drums-canary-control", om.drums_factory(pool, screen_size=(1280, 800), desktop_env_module=de,
+                                                                       cache_dir=os.path.join(tmp, "cache"), require_a11y_tree=False))
+    pc.open(1)
+    lease = pc.acquire(0)
+    lease.reset(task)
+    before = lease.canary_probe()
+    lease.canary_write("positive-control")
+    visible = lease.canary_probe()
+    lease.reset(task)
+    after_reset = lease.canary_probe()
+    lease.release()
+    pc.close()
+    out["canary_control"] = {"empty_before_write": before == [], "visible_after_write": visible, "after_reset": after_reset}
 except BaseException as e:
     import traceback
     out["error"] = f"{type(e).__name__}: {str(e)[-400:]}"

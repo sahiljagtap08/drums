@@ -96,7 +96,7 @@ flowchart LR
   (`/tmp/.drums_canary` and `~/.drums_canary`, over the public `DesktopEnv.controller.run_bash_script`), then writes its own. A marker found
   after a reset is state that survived the revert: the rollout is invalid with fault `interference`, counted, and still paid for. The first rollout
   on a slot cannot see anything by construction. The check covers two file locations only; it does not look for leaked processes, browser state or
-  clipboard. Tested with fake adapters that reset cleanly and that leak, a failing probe (a fault, never a pass), and the controller path.
+  clipboard. Tested with fake adapters that reset cleanly and that leak, a failing probe (a fault, never a pass), and the controller path, AND exercised in the real-session dry run (`test_osworld_matched_dryrun.py`): 4 of 4 rollouts probed clean on real Drums sessions, with a positive control (a written marker is seen by the probe; a Drums reset removes it). The incumbent adapter's canary has run against fakes only.
 
 ## 5. Verdict rule (fixed now)
 

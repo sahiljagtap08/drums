@@ -48,3 +48,8 @@ def test_runner_drives_the_drums_arm_through_the_real_desktop_env_four_valid_rol
     assert s["rollouts"] == 4 and s["valid"] == 4 and not s["faults"], s
     assert out["scores"] == [1.0, 1.0, 1.0, 1.0]
     assert s["valid_per_hour"] > 0 and s["cost_per_valid_usd"] > 0 and s["memory"]["samples"] > 0
+    # interference canary on REAL sessions (READINESS): every rollout probed, none saw a marker from an earlier rollout on its slot
+    assert s["canary_enabled"] and s["canary_clean"] == 4 and s["canary_unsupported"] == 0 and s["interference_count"] == 0, s
+    ctl = out["canary_control"]
+    assert ctl["empty_before_write"] and ctl["visible_after_write"] == ["positive-control"], ctl  # the probe can see a marker
+    assert ctl["after_reset"] == [], ctl  # and a Drums reset wipes it

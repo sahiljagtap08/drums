@@ -77,7 +77,7 @@ sequenceDiagram
 | systemd as PID 1 in a session | `gnome-namespace-investigation.md` | one run; findings and a host-side-effect incident |
 | Sharing mechanism F (fork server) | `mechanism-f-fork-server.md` | BUILT as a prototype, MEASURED: FAILED its thresholds |
 | Sharing mechanism B (shared browser) | `mechanism-b-shared-browser.md` | BUILT as a prototype, MEASURED: FAILED isolation |
-| Sharing mechanism K (page merging) | `mechanism-k-page-merging.md` | BUILT as a prototype, MEASURED: K2 saves memory only with ASLR off (not shippable) and fails CPU; K1 saves 7%; introduces a strong timing channel |
+| Sharing mechanism K (page merging) | `mechanism-k-page-merging.md` | BUILT as a prototype, MEASURED: K2 saves memory only with ASLR off (not shippable) and fails CPU; K1 saves 7% and fails CPU; no K arm shippable; introduces a strong timing channel |
 | Per-session resource limits and interference canary | `matched-comparison-protocol.md` section 4a | BUILT (READINESS, not a result) |
 | The matched comparison against an incumbent | `matched-comparison-protocol.md` | PRE-REGISTERED; runner BUILT, never run |
 | The path to a real training smoke | `training-integration-runbook.md` | PLAN |
