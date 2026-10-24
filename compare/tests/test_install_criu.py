@@ -93,3 +93,36 @@ def test_criu_detects_exactly_one_version_directory_and_refuses_ambiguity(tmp_pa
 def test_bootstrap_uses_the_new_script_and_no_longer_hardcodes_the_version_name():
     s = open(os.path.join(D, "bootstrap.sh")).read()
     assert "install_criu_private.sh" in s and "x-4.2" not in s and "CRIU_DEB_URLS" not in s
+
+
+def test_check_reports_availability_plainly_and_a_missing_candidate_is_exit_3_not_a_stack_of_errors(env, tmp_path):
+    ev = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "HOME": "/nonexistent"}
+    ok = subprocess.run(["bash", SH, str(tmp_path / "d"), "--check"], capture_output=True, text=True, env=ev)
+    assert ok.returncode == 0 and "apt candidate for criu: 3.19-4build2" in ok.stdout  # (a FAKE apt in this test)
+    none = subprocess.run(["bash", SH, str(tmp_path / "d"), "--check"], capture_output=True, text=True, env=dict(ev, FAKE_CAND="(none)"))
+    assert none.returncode == 3 and "NO candidate" in none.stderr and "--debs" in none.stderr and not os.path.exists(tmp_path / "d" / "dl")
+    r = env(tmp_path / "e", FAKE_CAND="(none)")
+    assert r.returncode == 2 and "--debs" in r.stderr  # the apt mode names the way out
+
+
+def test_debs_mode_works_with_no_apt_candidate_verifies_hashes_and_fetches_only_missing_depends(env, tmp_path):
+    import hashlib
+    pool = tmp_path / "given"
+    pool.mkdir()
+    make_deb(pool, "criu", "4.2-1~noble1", {"/usr/sbin/criu": "#!/bin/sh\necho 'Version: 4.2'\n"})
+    d = pool / "criu_4.2-1~noble1_amd64.deb"
+    ctl = (pool / "criu_tree" / "DEBIAN" / "control")
+    ctl.write_text(ctl.read_text() + "Depends: libc6 (>= 2.34), libprotobuf-c1 | libother\n")
+    subprocess.run(["dpkg-deb", "-b", str(pool / "criu_tree"), str(d)], check=True, capture_output=True)
+    sums = pool / "SHA256SUMS"
+    sums.write_text(f"{hashlib.sha256(d.read_bytes()).hexdigest()}  {d.name}\n")
+    ev = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "HOME": "/nonexistent", "FAKE_CAND": "(none)"}
+    dest = tmp_path / "ok"
+    r = subprocess.run(["bash", SH, str(dest), "--debs", str(pool), str(sums)], capture_output=True, text=True, env=ev)
+    assert r.returncode == 0, r.stderr
+    assert (dest / "x-4.2-1~noble1" / "usr/sbin/criu").exists() or any(p.name.startswith("x-4.2") for p in dest.iterdir())
+    assert open(tmp_path / "fetched").read().split() == ["libprotobuf-c1"]  # libc6 is installed, the criu deb is the given one: only the missing Depends is fetched
+    assert "source: debs" in (dest / "CRIU_PROVENANCE.txt").read_text()
+    sums.write_text("0" * 64 + f"  {d.name}\n")
+    bad = subprocess.run(["bash", SH, str(tmp_path / "bad"), "--debs", str(pool), str(sums)], capture_output=True, text=True, env=ev)
+    assert bad.returncode == 2 and "sha256" in bad.stderr and not os.path.exists(tmp_path / "bad" / "CRIU_PROVENANCE.txt")
