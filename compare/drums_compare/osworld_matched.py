@@ -416,12 +416,9 @@ CANARY_PATHS = ("/tmp/.drums_canary", "~/.drums_canary")
 
 
 def _bash(env, script):
-    out = env.controller.run_bash_script(script, timeout=30)  # public DesktopEnv controller API
-    if isinstance(out, dict):
-        if out.get("status") == "error":
-            raise RuntimeError(str(out.get("output") or out.get("error"))[:200])
-        return str(out.get("output", ""))
-    return str(out or "")
+    """Canary probes run through the SAME helper as the gates: the public /execute endpoint, one bounded attempt, any fault raised (never blank output)."""
+    from .guestexec import sh_out
+    return sh_out(env, script, timeout=30)
 
 
 def _desktop_canary_probe(env):

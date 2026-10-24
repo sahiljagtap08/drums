@@ -159,6 +159,11 @@ class FakeDesktopEnv:
         self.controller = self
         FakeDesktopEnv.built.append(self)
 
+    def post_execute(self, payload, timeout):
+
+        return 200, dict(self.run_bash_script(payload['command'], timeout), returncode=0)
+
+
     def run_bash_script(self, script, timeout=30):  # the public controller call the canary uses
         if script.startswith("cat"):
             return {"status": "success", "output": "\n".join(self.markers.values())}
@@ -278,6 +283,9 @@ def test_desktop_env_lease_canary_uses_the_public_controller_and_sees_markers():
     store = {}
 
     class Ctl:
+        def post_execute(self, payload, timeout):
+            return 200, dict(self.run_bash_script(payload['command'], timeout), returncode=0)
+
         def run_bash_script(self, script, timeout=30):
             if script.startswith("cat"):
                 return {"status": "success", "output": "\n".join(store.values()) + "\n"}
@@ -339,6 +347,9 @@ class SnapEnv:
         env = self
 
         class C:
+            def post_execute(self, payload, timeout):
+                return 200, dict(self.run_bash_script(payload['command'], timeout), returncode=0)
+
             def run_bash_script(self, script, timeout=30):
                 if script.startswith("cat"):
                     return {"status": "success", "output": "\n".join(env.markers.values())}

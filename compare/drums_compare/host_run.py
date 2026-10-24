@@ -103,6 +103,8 @@ def compute_inputs(cfg, runner=sh):
     d["osworld_head"] = head.strip() if rc == 0 else None
     d.update(source_identity(runner))
     if cfg.get("incumbent") == "docker_kvm":
+        st = os.stat(cfg["qcow2"]) if cfg.get("qcow2") and os.path.exists(cfg["qcow2"]) else None
+        d["qcow2_stat"] = [st.st_size, st.st_mtime_ns] if st else None
         d["qcow2_expected"] = [cfg.get("qcow2_bytes"), cfg.get("qcow2_sha256")]
         d["docker_image_digest"] = cfg.get("docker_image_digest")
     return d
@@ -394,6 +396,9 @@ def _check_docker(cfg, d, out, src):
         if cfg.get("verify_sha256", True):
             sha = d["sha256"](q) if "sha256" in d else file_sha256(q)
             out.append(chk("qcow2_sha256_matches_record", sha == cfg.get("qcow2_sha256"), f"{sha[:16]} recorded {str(cfg.get('qcow2_sha256'))[:16]}"))
+        else:  # skipping the multi-minute hash needs an explicit owner statement of the earlier verification; the size check above still runs and the file's stat is bound into the inputs
+            earlier = cfg.get("qcow2_sha256_verified_earlier")
+            out.append(chk("qcow2_sha256_matches_record", bool(earlier), f"NOT RECOMPUTED here; owner-stated earlier verification: {earlier!r} (size still checked; file stat bound into the stamp)" if earlier else "verify_sha256 is false but no qcow2_sha256_verified_earlier statement is recorded"))
     try:
         env = d["docker_env"](src) if "docker_env" in d else docker_provider_env(src)
         want_env = {"CPU_CORES": str(cfg.get("guest_cpus", 4)), "RAM_SIZE": f"{cfg.get('guest_memory_mib', 4096) // 1024}G"}
@@ -461,7 +466,7 @@ def gui_state_gate(lease, task, sh_out, step, shot, thresholds=GUI_THRESHOLDS, t
     step("import subprocess; subprocess.Popen(['libreoffice','--writer','--norestore','--nologo'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)")
     pid1 = ""
     for _ in range(60):
-        pid1 = sh_out("pgrep -f soffice.bin | head -1").strip()
+        pid1 = sh_out("pgrep -x soffice.bin | head -1").strip()
         win = sh_out("wmctrl -l 2>/dev/null | grep -ci writer").strip()
         if pid1 and (win not in ("", "0") or (changed_pixels_(blank, shot()) or 0) > 5000):
             break
@@ -485,7 +490,7 @@ def gui_state_gate(lease, task, sh_out, step, shot, thresholds=GUI_THRESHOLDS, t
     lease.restore_branch(name, task)
     sleep(3.0)
     s3 = shot()
-    pid3 = sh_out("pgrep -f soffice.bin | head -1").strip()
+    pid3 = sh_out("pgrep -x soffice.bin | head -1").strip()
     d12, d13, d23 = changed_pixels_(s1, s2), changed_pixels_(s1, s3), changed_pixels_(s2, s3)
     saved = sh_out("find $HOME /tmp -maxdepth 2 -newer /tmp/gate_gui_start \\( -name '*.odt' -o -name '*.docx' \\) 2>/dev/null | wc -l").strip()
     res.update({"snapshot_name": name, "d12_typed_to_mutated_px": d12, "d13_typed_to_restored_px": d13, "d23_mutated_to_restored_px": d23, "same_soffice_pid": bool(pid1) and pid1 == pid3,
@@ -539,7 +544,7 @@ def cold_isolation_gate(lease, task, sh_out, step, port=47653):
     lease.reset(task)
     time.sleep(2)
     res.update({"holder_gone": sh_out("python3 -c %r 2>/dev/null" % (ASK % port)).strip() == "", "marker_gone": sh_out("cat /tmp/gate_marker 2>/dev/null").strip() == "",
-                "writer_gone": sh_out("pgrep -f soffice.bin | head -1").strip() == ""})
+                "writer_gone": sh_out("pgrep -x soffice.bin | head -1").strip() == ""})
     res["pass"] = all(res[k] for k in ("state_existed", "holder_gone", "marker_gone", "writer_gone"))
     return res
 

@@ -11,6 +11,7 @@ import os
 import subprocess
 import time
 
+from . import guestexec
 from . import host_run as hr
 
 CORRECT = "import os; os.rename(os.path.expanduser('~/Desktop/todo_list_Jan_1'), os.path.expanduser('~/Desktop/todo_list_Jan_2'))"
@@ -93,11 +94,13 @@ def run_gates(cfg, out):
         for arm, factory in arm_factories(cfg, pool, de).items():
             env = factory(0)
             lease = om._DesktopEnvLease(env)
-            sh_out = lambda script, env=env: env.controller.run_bash_script(script, timeout=30).get("output", "")
+            sh_out = lambda script, env=env: guestexec.sh_out(env, script)  # /execute via the shared helper; a fault raises, it never returns blank output
             shot = lambda env=env: env.controller.get_screenshot()
             try:
                 lease.reset(task)
-                a = {}
+                a = {"guest_exec_selftest": guestexec.selftest(lambda script, env=env: guestexec.guest_run(env, script))}
+                if not a["guest_exec_selftest"]["pass"]:
+                    raise guestexec.GuestExecError(f"the probe helper failed its own selftest on {arm}: {a['guest_exec_selftest']}")
                 if arm == "drums":
                     pd = hr.parity_decision(arm, cpus, mem, limits_readback=drums_limits_readback(sup))
                 elif inc == "virtualbox":
