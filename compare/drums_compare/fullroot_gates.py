@@ -101,7 +101,7 @@ def parse_bus(cap, i):
     return (None if problems else f), problems
 
 
-def bus_problems(captures):
+def bus_problems(captures, allow_same_id=False):
     """EXACTLY two valid captures are required. Judged on (device, inode), mount namespaces, bus IDs and activation names. NARROW: it does not capture the host socket before/after or the bus's child
     processes (the offline `bus_validate` and the session's own record do); a pass here is not a security pass."""
     from .bus_validate import identity_problems
@@ -114,7 +114,8 @@ def bus_problems(captures):
         buses.append(f)
     if problems:
         return problems
-    problems += identity_problems(buses)
+    ids_problems = identity_problems(buses)
+    problems += [p for p in ids_problems if not (allow_same_id and p == 'the two buses have the same ID')]  # CRIU clones carry the SAME daemon state, so the same bus GUID is declared, not a fault
     if buses[0]["mnt_ns"] == buses[1]["mnt_ns"]:
         problems.append("the two sessions share one mount namespace")
     for i, f in enumerate(buses):
@@ -238,7 +239,7 @@ def two_session_gate(a, b, proc="/proc", proc_b=None):
 
 class PhaseClock:
     """Separate MONOTONIC clocks per phase; `unavailable(name, why)` records null (not 0) for a phase this configuration really does not have."""
-    PHASES = ("cold_setup", "initial_reset", "selftest", "parity_capture", "reset_setup", "task", "evaluation", "hygiene", "two_session_gate", "checkpoint_save", "restore")
+    PHASES = ("cold_setup", "initial_reset", "selftest", "parity_capture", "state_setup", "reset_setup", "task", "evaluation", "hygiene", "two_session_gate", "checkpoint_save", "restore", "reseed")
 
     def __init__(self, clock=time.monotonic):
         self.clock, self.t, self.why = clock, {}, {}

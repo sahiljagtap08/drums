@@ -63,7 +63,7 @@ class Supervisor:
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
                  ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True,
-                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user="", system_bus=False, image_sha256=None):
+                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user="", system_bus=False, image_sha256=None, image_receipt=None):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -95,6 +95,9 @@ class Supervisor:
                 raise ValueError("base_root other than / needs root_mode='full'")
             if (criu_friendly or restore_from is not None) and not (isinstance(image_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", image_sha256)):
                 raise ValueError("base_root other than / with CRIU needs image_sha256 (the pinned image's sha256): a checkpoint records the base it ran on and a restore refuses a different one (envd_linux/baseid.py)")
+            if (criu_friendly or restore_from is not None) and not (isinstance(image_receipt, dict) and image_receipt.get("verified") is True and image_receipt.get("computed_sha256") == image_sha256
+                                                                    and image_receipt.get("base_root") == base_root):
+                raise ValueError("base_root other than / with CRIU needs a VERIFIED image receipt (baseid.verify_image_binding: the computed sha256 of the served qcow2 equals image_sha256 for this exact mount)")
             for name, val in (("base_root", base_root), ("home", home), ("state_dir", state_dir), ("lower_home", lower_home or "/")):  # these reach overlayfs mount OPTIONS, where : , \\ and newlines are separators
                 if not (isinstance(val, str) and re.fullmatch(r"[A-Za-z0-9_./-]+", val)):
                     raise ValueError(f"{name} {val!r} may use only letters, digits and _ . / - when base_root is not / (overlay options would otherwise be injectable)")
@@ -109,7 +112,7 @@ class Supervisor:
                 found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb, uid=uid, gid=gid, user=user, home=home, system_bus=system_bus, criu=bool(criu_friendly or restore_from is not None), pkg_dir=PKG_DIR, init_python=init_python)
                 if found["problems"]:
                     raise ValueError("the new base root cannot run the session: " + "; ".join(found["problems"]))
-        self.home, self.base_root, self.image_sha256 = home, base_root, image_sha256
+        self.home, self.base_root, self.image_sha256, self.image_receipt = home, base_root, image_sha256, image_receipt
         self.desktop, self.uid, self.gid, self.user, self.system_bus = desktop, uid, gid, user, system_bus
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None
@@ -371,6 +374,10 @@ class Supervisor:
         checkpoint's read-only layer, release the slot. `clean` declares that the session holds no task setup and no login (its browser
         may be reset on restore); a checkpoint of real task state must leave it False. Returns the criu.Checkpoint."""
         from . import criu as cr
+        if self.base_root != "/":  # the root must still be the verified image BEFORE the processes are dumped (the dump kills them)
+            bad = baseid.rebind_problems(self.image_receipt)
+            if bad:
+                raise SessionError("refusing to checkpoint: " + "; ".join(bad))
         ck = cr.Checkpoint(path)
         os.makedirs(path, exist_ok=True)
         info = self.info(slot)
@@ -407,7 +414,7 @@ class Supervisor:
         from . import criu as cr
         from . import sweep as sw
         meta, d = ck.meta(), self._dir(slot)
-        problems = baseid.check_restore(meta, baseid.current_identity(self))
+        problems = baseid.check_restore(meta, baseid.current_identity(self)) + (baseid.rebind_problems(self.image_receipt) if self.base_root != "/" else [])
         if problems:  # judged BEFORE any directory, mount, link or process exists
             raise SessionError("refusing to restore this checkpoint: " + "; ".join(problems))
         layers = list(meta.get("layers") or [os.path.join(ck.path, "layer", "upper")])

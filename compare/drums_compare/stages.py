@@ -36,6 +36,11 @@ def desktop_kw(cfg):
     return kw
 
 
+def image_kw(cfg):
+    """The pinned image hash and its VERIFIED receipt for CRIU on an image base root; empty (the defaults) unless the config carries them."""
+    return {"image_sha256": cfg["image_sha256"], "image_receipt": cfg.get("image_receipt")} if cfg.get("image_sha256") else {}
+
+
 def build_drums(cfg, work):
     """Supervisor, template and pool with cgroup limits at the guest budget (cpus and memory from the config). Returns (supervisor, pool, prep_seconds): prep is EXTERNAL."""
     from envd_linux import limits as lim
@@ -58,9 +63,10 @@ def build_drums(cfg, work):
     if cfg.get("drums_template_overlay"):  # the owner-prepared, rootcheck-verified kit/runtime tree that must be visible inside a custom base root
         subprocess.run(["cp", "-a", cfg["drums_template_overlay"].rstrip("/") + "/.", tpl + "/"], check=True)
     limits = lim.Limits(cpus=float(cfg.get("guest_cpus", 2)), memory_bytes=int(cfg.get("guest_memory_mib", 4096)) * MIB)
+    crit = cfg.get("incumbent") == "virtualbox" or bool(cfg.get("drums_criu"))
     sup = Supervisor(os.path.join(work, "state"), tpl, root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
-                     init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120, criu_friendly=(cfg.get("incumbent") == "virtualbox"),
-                     criu=Criu() if cfg.get("incumbent") == "virtualbox" else None, sweep_dir=os.path.join(work, "led"), limits=limits, home=home, base_root=base_root, **desktop_kw(cfg))
+                     init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120, criu_friendly=crit,
+                     criu=Criu() if crit else None, sweep_dir=os.path.join(work, "led"), limits=limits, home=home, base_root=base_root, **desktop_kw(cfg), **image_kw(cfg))
     pool = DrumsSessionPool(sup, 4, health_timeout=90, eager_reset=False)
     return sup, pool, time.time() - t0
 
