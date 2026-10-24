@@ -281,6 +281,30 @@ class Supervisor:
         os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))
         return info
 
+    # ---- test-only fault injection (docs/l1-shared-runtime-design.md section 24): a no-op unless a test arms it AND sets DRUMS_FAULT_AT to this point
+    fault_armed = False
+
+    def _fault(self, point):
+        if self.fault_armed and os.environ.get("DRUMS_FAULT_AT", "") == point:
+            os.kill(os.getpid(), signal.SIGKILL)
+
+    def _fault_timed(self, point):
+        """`<point>:<ms>` kills this process <ms> after now; `<point>_both:<ms>` kills any CRIU child of ours first, so a restore is interrupted half-way."""
+        spec = os.environ.get("DRUMS_FAULT_AT", "")
+        if not self.fault_armed or ":" not in spec:
+            return
+        name, _, ms = spec.partition(":")
+        if name not in (point, point + "_both"):
+            return
+        import threading
+
+        def kill():
+            time.sleep(int(ms) / 1000.0)
+            if name.endswith("_both"):
+                subprocess.run(["pkill", "-KILL", "-x", "-P", str(os.getpid()), "criu"], check=False)
+            os.kill(os.getpid(), signal.SIGKILL)
+        threading.Thread(target=kill, daemon=True).start()
+
     def _stage(self, d):
         """Mount a tmpfs at <d>/stage (ledgered first) and make upper/ and work/ in it. Returns (upper, work)."""
         from . import sweep as sw
@@ -312,15 +336,18 @@ class Supervisor:
             raise SessionError(f"criu dump failed: {res['log'][-3:]}")
         proc = self._procs.pop(slot, None)
         d = self._dir(slot)
+        self._fault("checkpoint.after_dump")
         root = self._restored.pop(slot, None)
         if root is not None:  # a restored session's overlay root must be unmounted BEFORE anything walks its directory: removing the slot directory through it
             self._umount(root)  # would delete the whole tree via the overlay and fill the layer being kept with whiteouts (found by a chained checkpoint)
+        self._fault("checkpoint.after_root_umount")
         from . import sweep as sw
         layer = os.path.join(path, "layer")
         os.makedirs(layer, exist_ok=True)
         sw.record(self._ledger, "mounts", layer)
         subprocess.run(["mount", "--bind", os.path.join(d, "stage"), layer], check=True)  # the tmpfs outlives the slot: it IS the layer
         self._ckpt_layers.append(layer)
+        self._fault("checkpoint.after_layer_bind")
         self._umount(os.path.join(d, "stage"))
         link = f"/tmp/.X11-unix/X{self.display(slot)}"
         if os.path.islink(link):
@@ -352,16 +379,20 @@ class Supervisor:
         sw.record(self._ledger, "x11_links", host_link)
         os.symlink(os.path.join(x11, f"X{meta['display']}"), host_link)
         sw.record(self._ledger, "mounts", root)  # recorded before the mount exists
+        self._fault("restore.before_overlay")
         t0 = time.time()
         subprocess.run(["mount", "-t", "overlay", "overlay", "-o",
                         f"lowerdir={':'.join(layers)}:{meta['lower']}:/,upperdir={upper},workdir={work},redirect_dir=on", root],
                        check=True)
+        self._fault("restore.after_overlay")
         sw.record(self._ledger, "links", f"dvh{slot}")  # CRIU creates the host end; recorded first
         end = time.time() + 10
         while os.path.exists(f"/sys/class/net/dvh{slot}") and time.time() < end:  # the previous session's veth goes away asynchronously after its namespace dies
             time.sleep(0.05)
         pidfile = os.path.join(d, "pid")
+        self._fault_timed("restore.during_criu")
         res = cr.restore(self.criu, ck.img, root, x11, f"dvh{slot}", pidfile, inner_if=meta["inner_if"])
+        self._fault("restore.after_criu")
         if res["rc"] != 0:
             self._umount(root)
             self._umount(os.path.join(d, "stage"))
@@ -386,6 +417,7 @@ class Supervisor:
             raise SessionError(f"restored session network setup failed: {e}") from e
         self._procs[slot] = proc
         self._restored[slot] = root
+        self._fault("restore.after_register")
         try:  # from here the session is registered: any failure must tear it down, never leave processes, mounts or a veth behind
             self._epochs[slot] = self._epochs.get(slot, 0) + 1
             self._slot_layers[slot] = layers  # a checkpoint of this session stacks on these read-only layers
@@ -407,7 +439,8 @@ class Supervisor:
                 from . import clone
                 tr = time.time()
                 try:
-                    info["reseed"] = clone.reseed(info, slot, clean=bool(meta.get("clean")) and bool(meta.get("has_browser")), python=self.python, pkg_dir=PKG_DIR)
+                    info["reseed"] = clone.reseed(info, slot, clean=bool(meta.get("clean")) and bool(meta.get("has_browser")), python=self.python, pkg_dir=PKG_DIR,
+                                                    fault=lambda: self._fault("restore.mid_reseed"))
                 except Exception:
                     self.destroy(slot)  # never leave a registered-but-unusable session behind
                     raise
@@ -441,6 +474,7 @@ class Supervisor:
                 proc.kill()
         if isinstance(proc, _ForkedProc):
             proc.wait(10)  # a restored session's mount can be released only after its processes are gone
+        self._fault("destroy.after_kill")
         if proc is not None and not isinstance(proc, _ForkedProc):
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -457,6 +491,7 @@ class Supervisor:
         root = self._restored.pop(slot, None)
         if root is not None:  # a restored session's overlay root was mounted on the host by us
             self._umount(root)
+        self._fault("destroy.after_root_umount")
         stage = os.path.join(d, "stage")
         if os.path.ismount(stage):
             self._umount(stage)

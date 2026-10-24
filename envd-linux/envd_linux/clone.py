@@ -105,7 +105,7 @@ def rng_probe(init_pid, timeout=5):
     return res
 
 
-def reseed(info, slot, clean, python="/usr/bin/python3", pkg_dir=None, page=PAGE):
+def reseed(info, slot, clean, python="/usr/bin/python3", pkg_dir=None, page=PAGE, fault=None):
     """Apply the per-sibling reseed to a freshly restored session. Returns what was done."""
     pid = info["init_pid"]
     done = {"hostname": None, "server_reseeded": 0, "browser": "preserved (checkpoint not declared clean, or it has no browser)"}
@@ -114,6 +114,8 @@ def reseed(info, slot, clean, python="/usr/bin/python3", pkg_dir=None, page=PAGE
     # the new name must resolve locally, or sudo and getent wait ~24 s for DNS the session does not have (the session's own /etc/hosts, in its private overlay)
     subprocess.run(["nsenter", "-t", str(pid), "-m", "--", "sh", "-c", f"sed -i '/^127.0.1.1 /d' /etc/hosts && echo '127.0.1.1 {name}' >> /etc/hosts"], check=True)
     done["hostname"] = name
+    if fault:
+        fault()  # test-only crash point (section 24): after the hostname, before the server's random state
     for p in server_pids(pid):
         os.kill(p, signal.SIGUSR1)
         done["server_reseeded"] += 1

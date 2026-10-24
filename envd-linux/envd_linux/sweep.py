@@ -56,6 +56,12 @@ EMPTY = {"killed": [], "links": [], "unmounted": [], "tables": [], "ip_forward_r
          "entries_removed": [], "live_supervisors": [], "x11_links": [], "sysfs_restored": [], "cgroups": []}
 
 
+def _fault(point):
+    """Test-only (docs/l1-shared-runtime-design.md section 24): the sweep kills itself at a named point when DRUMS_SWEEP_FAULT names it."""
+    if os.environ.get("DRUMS_SWEEP_FAULT", "") == point:
+        os.kill(os.getpid(), 9)
+
+
 def ledger_dir(path=None):
     return path or os.environ.get("DRUMS_SWEEP_DIR") or DEFAULT_LEDGER
 
@@ -255,8 +261,11 @@ def sweep(ledger=None, force=False):
 
     for e in sorted(dead, key=lambda e: e.get("t", 0)):
         rep["killed"] += _kill_tagged(e["tag"])
+        _fault("sweep.after_kill")
         rep["unmounted"] += _unmount(e.get("mounts", []))
+        _fault("sweep.after_unmount")
         rep["links"] += _delete_links(e["tag"], e.get("links", []))
+        _fault("sweep.after_links")
         for t in e.get("tables", []):
             if _delete_table(t):
                 rep["tables"].append(t)
