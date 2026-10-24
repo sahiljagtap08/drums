@@ -1,0 +1,60 @@
+# Incumbent arm: minimal preflight and decision package
+
+**Status: PLAN. HYPOTHESIS-UNTESTED. Nothing here is approved, provisioned, authenticated, priced or run. Engineering validation only: no headline win, no training claim, no benchmark claim.** Current host availability is UNKNOWN (no host or image has been confirmed). No outreach to anyone has been made or is proposed. No AWS re-authentication is requested.
+
+## 1. What remains: internal work vs owner decisions (kept apart)
+
+| # | Item | Who | Needs a host? |
+|---|---|---|---|
+| I1 | A composition manifest generator: pinned versions of OS packages, browser build, LibreOffice, Python packages, the guest-server and `desktop_env` commits, for the Drums rootfs, plus the same manifest format for the VM to be filled in and diffed | internal | no |
+| I2 | A read-only host preflight checker (CPU virtualization flags, VirtualBox presence and version, kernel features Drums and CRIU need, free RAM and disk, cgroup version) that prints go / no-go with reasons; run on any candidate host the owner names | internal | no (its first run here must report NO-GO for the missing virtualization) |
+| I3 | The first-pass matched-check driver: alternating blocks, concurrency 1, same local task and scripted agent, both arms with baseline reuse ON, raw faults, pins, resource and cost capture including pool build, setup, save and revert | internal | the Drums arm yes (here); the incumbent arm only on the real host |
+| O1 | An existing owner-authorized host, or a rental (decided later, section 8) | owner | n/a |
+| O2 | The VM image: the official one (licence field blank) or a self-built one (licence composition unaudited) | owner | n/a |
+| O3 | Hypervisor: VirtualBox base package (GPLv3) is the proposed default; VMware Workstation Pro is the alternative (free, Broadcom account needed) | owner | n/a |
+| O4 | Price inputs for the cost accounting (the owner's own price sheet; none is assumed here) | owner | n/a |
+
+I1 to I3 proceed without any decision; O1 to O4 gate only the real incumbent run. Main will raise the host-or-rental question at a convenient moment, not overnight.
+
+## 2. Candidate host: requirements (stated as requirements, not as availability)
+
+A **non-virtualized x86-64 Linux machine with administrator rights, authorized by its owner**, because the documented-supported way to run VirtualBox or VMware is a non-virtualized host (OSWorld README, "Installation: VMware/VirtualBox (Desktop, Laptop, Bare Metal Machine)"; AWS lists only KVM and Hyper-V as nested L1 hypervisors, GCE only KVM: see `l1-shared-runtime-design.md` section 23.4). Needed on it:
+- **CPU virtualization** exposed (`vmx` or `svm` in `/proc/cpuinfo`; the sandbox has none and no `/dev/kvm`).
+- **VirtualBox base package** (GPLv3; Guest Additions GPLv3). **The Extension Pack is not assumed and not needed**: it is under a separate licence (PUEL, personal and educational use; commercial use for a fee) per `https://www.virtualbox.org/wiki/Licensing_FAQ` (accurate for 7.1 and later, last updated 12 September 2024). Whether anything the first pass needs lives in the Extension Pack is a check (I2), not an assumption.
+- **For the Drums arm on the same host:** root; PID, mount, IPC, UTS and network namespaces; overlayfs with `redirect_dir`; `pivot_root`; veth and `nft`; cgroups (v1 or v2: the v2 path of `limits.py` has never run on a real v2 kernel); Xvfb; and a private CRIU 4.2 install (4.1.1 fails on kernel 6.18; the kernel needs `CHECKPOINT_RESTORE`; see section 15 of the design doc). Nothing is installed system-wide by Drums.
+- **Co-residence is unverified:** that VirtualBox and the Drums arm run correctly on the same host at the same time (Oracle's manual warns against running other hypervisors alongside VirtualBox; Drums uses namespaces, not KVM, so no conflict is expected, but it is expected, not tested). The first pass runs the arms in alternating blocks, never simultaneously, which sidesteps interference.
+
+## 3. Capacity: establish before claiming
+
+**2 vCPU and 4 GiB per environment is the PARITY setting taken from the shipped ScaleCUA worker config, not a host minimum.** Before any capacity statement the following are measured on the candidate host, and reported as measured: image size on disk after extraction and after first boot; per-VM resident memory at idle and under the task; per-VM disk growth with a snapshot taken (a running-VM snapshot stores the memory state, which "can be as large as the memory size of the virtual machine"); free RAM and disk headroom with the Drums arm's own footprint (about 235 MiB per added session in our measurements, a different number on a different host); and how many VMs can coexist without swapping. The first pass uses concurrency 1, so these numbers inform the next step and nothing else.
+
+## 4. Common software composition (authorized, pinned, and not the same disk)
+
+Both arms must run the SAME pinned software, but they are different artefacts: the incumbent VM boots its own kernel and disk; the Drums session shares the host kernel and uses an overlay root. **It is not claimed that the VM disk runs inside a namespace, nor that the two environments are byte-identical.** What is made equal and recorded: OS release and package versions (from a manifest, I1), the browser build, LibreOffice and other applications, the public guest-server files at the pinned `desktop_env` commit (`04718ea` is what Drums runs now), the evaluator code and Python package versions, screen size, and the task files. Differences that cannot be removed (kernel, init system, GNOME vs the session's openbox desktop, display driver, clock source) are listed as known non-equivalences in the run record. Any application added to the Drums rootfs must be one the owner is authorized to use; the manifest, not memory, is the evidence.
+
+## 5. Licence position (unresolved items stay labelled unresolved)
+
+- The official image's Hugging Face card has a blank License field: that is **uncertainty, not a ban on local research use**, and it is not treated as permission either. No outreach is made. The decision between using it as published and building an image is the owner's (O2).
+- A self-built image is **not automatically licence-clean**: the OSWorld server README is explicitly incomplete, the application set includes components with their own terms (a browser, an editor, media and mail clients), and upstream setup steps download files. Its licence composition is **UNVERIFIED until audited**, component by component.
+- OSWorld code is Apache-2.0. VirtualBox base GPLv3. VMware Workstation Pro: free for all uses, Broadcom account required for download (not done).
+
+## 6. Route fact: VirtualBox running-VM snapshots keep memory
+
+From Oracle's own documentation (the manual's snapshot chapter, Snapshot Contents; the VirtualBox source docs `snapshots-take-restore-delete`; and the current manual page you named, `https://www.virtualbox.org/manual/topics/working-with-vms.html`, whose fetched text in this session was truncated before the snapshot section, so the wording below is taken from the 6.0 manual `https://docs.oracle.com/en/virtualization/virtualbox/6.0/user/snapshots.html` and the upstream DITA source): a snapshot taken while the machine is running also saves its memory state, and restoring it resumes execution at exactly the point the snapshot was taken; `VBoxManage snapshot <vm> take|restore` and `--live` exist. **How the public OSWorld provider uses it** (`desktop_env/providers/virtualbox/provider.py`, as shipped): `save_state` = `VBoxManage snapshot <uuid> take <name>` then a fixed 3 s sleep; `revert_to_snapshot` = `controlvm savestate`, 3 s, `snapshot restore <name>`, 3 s; `start_emulator` = `startvm` with further 3 s waits. **So the as-shipped incumbent revert carries fixed sleeps of roughly 9 s or more per revert.** The first pass uses the provider AS SHIPPED and records this; shortening the sleeps is a tuning of the incumbent that, if done, must be disclosed and run as a separate labelled arm.
+
+## 7. First-pass gate (all must hold before any timing is read as meaningful)
+
+1. The real public `DesktopEnv` boots the incumbent VM through the VirtualBox provider on the chosen host.
+2. An application, an unsaved token typed into it and a live background process survive a snapshot revert (the same three things checked on the Drums arm).
+3. The real local evaluator scores the correct continuation 1.0 and the wrong one 0.0, from the reverted state.
+4. The interference canary is clean on both arms.
+5. Resource parity is applied and recorded on both arms (2 vCPU, 4 GiB: the VM settings on one side, the cgroup on the other) and the measured CPU and memory of each are reported.
+6. Costs are counted on both arms including pool build, first setup, save and every revert, from the owner's price inputs (O4), and the first-rollout work is shown apart and kept in the totals.
+
+## 8. First matched check (engineering validation)
+
+Concurrency 1; the same local task (`e0df059f`) and the same scripted agent on both arms; alternating blocks (ABAB...) so host drift hits both; baseline reuse ON for both (post-setup snapshot via the public snapshot API); every fault, pin (versions, commits, settings) and raw row kept. It validates that the comparison path works end to end and what each side's reuse costs on one trivial task. **It supports no headline win, no throughput claim, no training claim and no benchmark claim.**
+
+## 9. If no suitable existing host or image exists
+
+A rental proposal is written LATER, only after the owner confirms what is already available and after access, quota and price checks have been done by the owner. It would be a bounded, priced proposal (host type, duration, shutdown, cost ceiling). **It is not approved, not priced and not requested here.**

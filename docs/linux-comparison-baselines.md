@@ -6,17 +6,11 @@ Checked 2026-10-23 from the owning repos, papers and project docs reachable from
 sandbox. Nothing below was installed or run. "Verified" means I read it in the owner's own
 source; "unverified" means I could not, and says what I did read instead.
 
-## What the repo has (this checkout, branch `claude/linux-comparison-prep`)
+## What the repo has
 
-- Exists and tested: `envd/` (Swift, macOS-only), `verify-server/`, and the comparison
-  harness under `compare/`.
-- Stubs: `Makefile` targets `setup-host`, `probes`, `sweep`, `reproduce` only print
-  "see Task N".
-- Referenced by `pyproject.toml` but absent from this checkout: `drumsctl`, `metrics`,
-  `report`, `envd-linux`. The owner says the setup may exist elsewhere; read this as
-  "missing here", not "never built".
-- Not in this checkout: `baseline-linux/`, Gate/probe code, task definitions, any
-  Studio-based Linux baseline.
+**Current (updated; this branch's tree):** `envd-linux/` IS present and tested (sessions, the real OSWorld guest-server kit, the OSWorld provider, the CRIU prototypes; its suite is the main test run), `compare/` now holds the matched runner `osworld_matched.py` with the OSWorld split, and `envd/` (Swift, macOS-only) and `verify-server/` are present. `drumsctl`, `metrics` and `report` are still referenced by `pyproject.toml` and absent here. `Makefile` targets `setup-host`, `probes`, `sweep`, `reproduce` are still stubs that print "see Task N". Not in this checkout: `baseline-linux/`, Gate/probe code, any Studio-based Linux baseline. Still true: none of the incumbent setups below was configured or run by us; for the current incumbent route see `docs/incumbent-preflight-plan.md`.
+
+**HISTORICAL, as of the 2026-10-23 research (kept for the record, not the current state):** the checkout had `envd/`, `verify-server/` and the comparison harness under `compare/`; `envd-linux` was listed as referenced by `pyproject.toml` but absent; the owner said the setup might exist elsewhere, to be read as "missing here", not "never built".
 
 ## What "runnable" requires
 
