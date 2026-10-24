@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 15 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 16 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -643,3 +643,45 @@ I put the chance that Chromium checkpoints cleanly at about 30% and said the mos
 - **Restored siblings are clones.** They start with identical in-process state: random-number generator state, in-memory tokens, browser profile contents and the same hostname. Whether that contaminates rollouts was not tested. Clock behaviour of restored processes was not tested.
 - **Portability.** CRIU images depend on the kernel and CPU; restore on another host was not tested. A checkpoint also records the template's mount path and the host's tag baked into the session command line, so a checkpoint cannot yet be reused across supervisor runs.
 - **Tested scope:** one host, one kernel, no GPU, `--no-sandbox` Chromium, one task, one checkpoint image per arm.
+
+
+## 16. Mechanism C follow-up: registered revision 2 (amended C3 rule), cleanup test and clone hygiene
+
+**Status: PRE-REGISTERED before any of these checks is run. PROTOTYPE. Nothing here is a result yet; results will be section 17.**
+This follows reviewer directives on `ca07330`. Section 15's record stands unchanged: **C3 under the original wording is a recorded FAIL** (two host
+device nodes shared). Nothing below rewrites it.
+
+### 16.1 C3, revision 2 (a NEW rule, registered now, applied only to retests from now on)
+
+The original rule said any shared writable object fails. Revision 2 changes exactly one thing: a shared writable object is tolerated IF all three hold:
+(a) it is one of the six host character-device nodes that every L0 session bind-mounts from the host (`/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`, `/dev/tty`);
+(b) a control audit of two COLD sessions run in the same pass shows the same object shared (so L0 already shares it and restore added nothing);
+(c) nothing else is shared: no pipe, socket or eventfd inode, no regular file, no lock entry, no write in one sibling visible in the other.
+Justification, stated before the retest: these are stateless kernel devices (`/dev/null` discards, `/dev/urandom` is the kernel's generator with no per-reader state that
+another reader can observe), the sharing is a property of the L0 design and not of restore, and the control is what proves restore added none. The amended rule is a judgement about
+L0 that the reviewer may reject; if rejected, C3 stays FAIL. Retest: one pass of the audit on two restored siblings and two cold sessions; outcome recorded under both rules.
+
+### 16.2 Orphan cleanup after a supervisor crash (the regression friendly mode introduced)
+
+Friendly sessions cleared `unshare --kill-child`, so the kernel no longer kills them when the Supervisor dies. Test: a Supervisor runs in its own process, creates a cold friendly
+session, checkpoints it, restores two siblings; it is killed with SIGKILL; the sessions must still be alive (this confirms the regression); the ownership sweep is run; then:
+- PASS needs ALL of: no session process of that run remains; every mount recorded for the run (overlay roots, tmpfs stages, checkpoint layer, template tmpfs) is gone; the `dvh*` links, the run's nftables table and the X11 links are gone; the ledger entry is removed;
+- and a decoy that is NOT ours (a process whose command line carries a different run tag, and a tmpfs mount at an unrecorded path) is untouched.
+Expected outcome, stated in advance so it can lose: about 75% that it passes first time; the likely failure is a CRIU-created object the ledger does not know (the restored veth if its alias was not yet set when the supervisor died) or a restored process the tag match misses.
+No cleanup-readiness claim is made until this is demonstrated.
+
+### 16.3 Clone hygiene: per-sibling reseed that keeps task semantics
+
+Restored siblings are clones: identical in-process random-number state, in-memory tokens, browser state and hostname. The reseed is applied automatically to every restored sibling and consists of:
+- hostname set to a per-sibling value;
+- the long-lived Python guest-server process reseeds `random` (and `numpy.random` if loaded) from fresh `os.urandom`, through a signal handler installed before the checkpoint;
+- the browser: cookies and storage of the default context cleared, and a NEW browser context (a new renderer process, so a new V8 isolate and fresh randomness) opened on the same page, with the old page closed.
+It does NOT touch the wall clock, `/dev/urandom` semantics or the task's files, so time- and entropy-dependent tasks see real time and real entropy (fresher, not frozen).
+Known not fixable without restarting the process: Python's string-hash seed and the address-space layout are identical across clones; recorded as a limit, not fixed.
+
+**Hygiene test (F-style, direct observation, thresholds fixed now):**
+1. Without reseed, the clone problem must be SHOWN: two siblings from one checkpoint report identical hostname, identical next `random.random()`/numpy draw from the server process, identical `Math.random()` sequence in the pre-checkpoint page, and the same pre-checkpoint cookie. (If they do not, the problem was not real and that is reported.)
+2. With reseed: hostnames differ; the server process's next draws differ in Python (and numpy if loaded); the new-context page's `Math.random()` and `crypto.randomUUID()` differ; the pre-checkpoint cookie is absent in both; the browser still shows the page (screenshot changed fraction > 10% vs blank and page title present).
+3. SEMANTICS: public task `e0df059f` scores 0.0 then 1.0 through the real evaluator from a reseeded restored session, and the wall clock inside the session equals the host's to within 2 s.
+4. LATENCY with reseed ON, 20 starts per arm interleaved (the section 15 figure of 2.09x was WITHOUT any reseed and is not the number for a usable restore): target restore p50 <= 0.50 x cold p50.
+Expected outcome in advance: 1 holds (about 90%); 2 holds (about 70%, the browser step is the risk); 3 holds (about 80%). **4 is expected to FAIL**: the reseed adds a browser-context round trip of an estimated 0.2 to 0.4 s to a 0.98 s restore, so I expect a ratio near 1.5 to 1.7x. If it fails, that is the result.
