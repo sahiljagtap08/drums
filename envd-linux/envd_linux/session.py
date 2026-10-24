@@ -135,6 +135,9 @@ class Supervisor:
     def close(self):
         for slot in list(self._procs):
             self.destroy(slot)
+        for slot, root in list(self._restored.items()):  # a restored root whose slot was released by a checkpoint (not by destroy) is still ours to unmount
+            self._umount(root)
+            self._restored.pop(slot, None)
         for layer in self._ckpt_layers:
             self._umount(layer)
         self._ckpt_layers = []

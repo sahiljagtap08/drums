@@ -51,9 +51,16 @@ SERVER = textwrap.dedent('''
         c, a = s.accept(); c.sendall(("seen " + a[0]).encode()); c.close()
 ''')
 CLIENT = ("import socket,sys\n"
-          "s=socket.socket(); s.settimeout(3)\n"
-          "try:\n s.connect((sys.argv[1],int(sys.argv[2]))); s.sendall(b'GET /platform HTTP/1.0\\r\\n\\r\\n'); print(s.recv(4000).decode().replace(chr(10),' '))\n"
-          "except Exception as e: print('FAIL', type(e).__name__)\n")
+          "s=socket.socket(); s.settimeout(3); d=b''\n"
+          "try:\n"
+          " s.connect((sys.argv[1],int(sys.argv[2]))); s.sendall(b'GET /platform HTTP/1.0\\r\\n\\r\\n')\n"
+          " while True:\n"
+          "  c=s.recv(4000)\n"
+          "  if not c: break\n"
+          "  d+=c\n"
+          "except Exception as e:\n"
+          " if not d: print('FAIL', type(e).__name__); sys.exit()\n"
+          "print(d.decode().replace(chr(10),' '))\n")  # read until the peer closes: a one-shot recv could return the headers without the body (a flaky control test); a reset after data is not a failure
 UPLINK = textwrap.dedent('''
     import sys
     from pyroute2 import IPRoute
