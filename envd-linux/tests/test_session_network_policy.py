@@ -52,7 +52,7 @@ SERVER = textwrap.dedent('''
 ''')
 CLIENT = ("import socket,sys\n"
           "s=socket.socket(); s.settimeout(3)\n"
-          "try:\n s.connect((sys.argv[1],int(sys.argv[2]))); s.sendall(b'GET /platform HTTP/1.0\\r\\n\\r\\n'); print(s.recv(300).decode().replace(chr(10),' '))\n"
+          "try:\n s.connect((sys.argv[1],int(sys.argv[2]))); s.sendall(b'GET /platform HTTP/1.0\\r\\n\\r\\n'); print(s.recv(4000).decode().replace(chr(10),' '))\n"
           "except Exception as e: print('FAIL', type(e).__name__)\n")
 UPLINK = textwrap.dedent('''
     import sys
