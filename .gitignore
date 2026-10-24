@@ -7,3 +7,6 @@ results/**/screenshots/
 results/**/*.png
 tasks/golden/work/
 .DS_Store
+
+# generated smoke working trees (a throwaway Chromium first-run profile and session state): never evidence, never tracked
+docs/data/l1-criu/*/work/
