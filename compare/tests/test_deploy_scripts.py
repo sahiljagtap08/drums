@@ -171,12 +171,24 @@ def test_every_failure_runs_exactly_the_owned_cleanup_in_order_and_leaves_no_sta
         assert r.returncode == 130
 
 
-def test_an_unwritable_state_location_after_attach_still_disconnects_exactly_the_attached_device(mount_env, tmp_path):
-    blocker = tmp_path / "a_file"
-    blocker.write_text("x")
-    r, log = mount_env(mount_env.img, mount_env.mp, DRUMS_IMAGE_STATE_DIR=blocker / "sub")
+def test_a_state_write_failure_after_attach_still_disconnects_exactly_the_attached_device(mount_env):
+    import hashlib
+    blocked = mount_env.statedir / f"drums-image-rootfs.{hashlib.sha256(str(mount_env.mp).encode()).hexdigest()[:16]}.state"
+    blocked.mkdir()  # the record cannot be written: a directory sits where the file must go
+    r, log = mount_env(mount_env.img, mount_env.mp)
     assert r.returncode != 0 and mounts_and_attaches(log) == [f"qemu-nbd --read-only --connect=/dev/nbd0 {mount_env.img}", "qemu-nbd --disconnect /dev/nbd0"]
     assert not mount_env.mp.exists() and not (mount_env.dir / "attached").exists()
+
+
+def test_a_second_invocation_is_refused_before_it_touches_anything_while_the_lock_is_held(mount_env):
+    import fcntl
+    fd = open(mount_env.statedir / "drums-image-rootfs.lock", "w")
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    for args in ((mount_env.img, mount_env.mp), ("--unmount", mount_env.mp)):
+        r, log = mount_env(*args)
+        assert r.returncode == 2 and "holds the lock" in r.stderr and not log and not mount_env.states() and not mount_env.mp.exists()
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    assert mount_env(mount_env.img, mount_env.mp)[0].returncode == 0  # released: the same call now works
 
 
 def test_a_failed_unmount_in_cleanup_keeps_the_state_never_disconnects_and_says_how_to_recover(mount_env):

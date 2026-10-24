@@ -152,3 +152,15 @@ def test_a_refused_construction_creates_no_state_directory(tmp_path):
     with pytest.raises(ValueError, match="built for python 3.12"):
         S.Supervisor(str(tmp_path / "state3"), t, root_mode="full", base_root=r, osworld_real_kit=KIT, sweep_on_start=False)
     assert not os.path.exists(tmp_path / "state3")
+
+
+def test_the_gnome_desktop_adds_its_own_programs_and_openbox_stays_the_default(tmp_path):
+    assert "openbox" in rc.desktop_programs() and "gnome-session" not in rc.desktop_programs()
+    g = rc.desktop_programs(desktop="gnome")
+    assert {"gnome-session", "gnome-shell", "xprop", "dbus-daemon"} <= set(g) and "openbox" not in g
+    with pytest.raises(ValueError, match="unknown desktop"):
+        rc.desktop_programs(desktop="kde")
+    r = image_root(tmp_path, programs=("dbus-daemon", "wmctrl"))  # a root with GNOME session programs and no openbox
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    probs = rc.check_userland([t, r], kit=KIT, desktop="gnome")["problems"]
+    assert any("gnome-session" in p for p in probs) and not any("openbox" in p for p in probs)

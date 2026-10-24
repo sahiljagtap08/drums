@@ -24,13 +24,23 @@ def _call_first_literals(func):
     return out
 
 
-def desktop_programs(source=None):
-    """What `start_real_desktop` starts inside the session root, read from its source (default: session_init.py next to this file)."""
+def desktop_programs(source=None, desktop="openbox"):
+    """What `start_real_desktop` starts inside the session root, read from its source (default: session_init.py next to this file), plus the chosen desktop's own commands (`WM_COMMANDS`)."""
     if source is None:
         source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_init.py")).read()
-    for n in ast.parse(source).body:
+    tree = ast.parse(source)
+    wm = {}
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "WM_COMMANDS" for t in n.targets):
+            wm = ast.literal_eval(n.value)
+    extra = []
+    if wm:
+        if desktop not in wm:
+            raise ValueError(f"unknown desktop {desktop!r}")
+        extra = [wm[desktop][0]] + (["gnome-shell", "xprop"] if desktop == "gnome" else [])  # gnome-session starts gnome-shell; xprop reads the window manager's name for the identity record
+    for n in tree.body:
         if isinstance(n, ast.FunctionDef) and n.name == "start_real_desktop":
-            return sorted(set(_call_first_literals(n)))
+            return sorted(set(_call_first_literals(n)) | set(extra))
     raise ValueError("start_real_desktop not found")
 
 
@@ -112,7 +122,7 @@ def _python_minor_problems(kit, layers, interp):
     return out
 
 
-def check_userland(layers, kit=None, programs=None, server_main_source=None):
+def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox"):
     """{"problems": [...], "warnings": [...]}. Problems are things the session needs at start-up and would not find; warnings are per-task needs."""
     layers = [L for L in layers if L and os.path.isdir(L)]
     problems, warnings = [], []
@@ -120,7 +130,7 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None):
         return {"problems": ["no layer to look in"], "warnings": []}
     if resolve(LOADER, layers) is None:
         problems.append(f"the dynamic loader {LOADER} is not in the new root: no dynamically linked program can start")
-    for prog in (programs if programs is not None else desktop_programs()):
+    for prog in (programs if programs is not None else desktop_programs(desktop=desktop)):
         if find_program(prog, layers) is None:
             problems.append(f"{prog} is not an executable in the new root (the session starts it after the pivot); add it deliberately or use a different base root")
     if kit:

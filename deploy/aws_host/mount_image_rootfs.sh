@@ -16,6 +16,8 @@ die() { echo "REFUSED: $*" >&2; exit 2; }
 STATE_DIR=${DRUMS_IMAGE_STATE_DIR:-/run}
 SYSBLOCK=${DRUMS_SYS_BLOCK:-/sys/block}
 SAFE='^[A-Za-z0-9_./-]+$'
+# ONE lock covers device selection, attach, state operations and --unmount: a second invocation is refused before it touches anything. The lock fd is NOT inherited by qemu-nbd (9>&-).
+mkdir -p "$STATE_DIR" && exec 9>"$STATE_DIR/drums-image-rootfs.lock" && flock -n 9 || die "another image-mount invocation holds the lock (or $STATE_DIR is unusable)"
 statefile() { echo "$STATE_DIR/drums-image-rootfs.$(printf '%s' "$1" | sha256sum | cut -c1-16).state"; }
 canonical_ok() {  # absolute, only safe characters, already canonical (no .., no //, no symlink in ANY component)
   [[ "$1" =~ $SAFE ]] || return 1
@@ -91,7 +93,7 @@ for n in $(seq 0 15); do
 done
 [ -n "$DEV" ] || die "no free /dev/nbdN device (all are busy)"
 ATTACHED=1   # set BEFORE the attach: if qemu-nbd half-succeeds, the cleanup still disconnects exactly this device
-qemu-nbd --read-only --connect="$DEV" "$Q"
+qemu-nbd --read-only --connect="$DEV" "$Q" 9>&-
 echo "$MP $DEV attaching -" > "$S"
 blockdev --setro "$DEV"
 [ "$(blockdev --getro "$DEV")" = "1" ] || die "the block device $DEV is not read-only"

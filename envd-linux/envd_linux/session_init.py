@@ -7,6 +7,7 @@ process tree, IPC and hostname. Shared with the host: kernel, the rest of the ro
 filesystem, and (in this spike) the network namespace."""
 
 import argparse
+import re
 import json
 import os
 import signal
@@ -83,6 +84,58 @@ def mark(name, **kw):
         TIMING["f"].flush()
 
 
+# The window manager / shell the session starts. "openbox" is the default and unchanged; "gnome" starts the image's own gnome-session (UNVALIDATED: no live run has shown it works under Xvfb).
+WM_COMMANDS = {"openbox": ["openbox"], "gnome": ["gnome-session", "--builtin", "--session=ubuntu-xorg", "--disable-acceleration-check"]}
+
+
+def drop_privileges(uid, gid):
+    """preexec for every desktop/server child: supplementary groups, then gid, then uid, BEFORE the exec. None (no change at all) when uid < 0."""
+    if uid < 0:
+        return None
+
+    def drop():
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
+    return drop
+
+
+def process_table():
+    """[(pid, euid, comm)] of what is running in this session's PID namespace, read from /proc."""
+    out = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            comm = open(f"/proc/{pid}/comm").read().strip()
+            uid = [int(l.split()[2]) for l in open(f"/proc/{pid}/status") if l.startswith("Uid:")][0]
+        except (OSError, IndexError):
+            continue
+        out.append((int(pid), uid, comm))
+    return out
+
+
+def record_identity(a, env):
+    """Identity of what actually runs, recorded as a timing mark: the uid of the desktop processes and the WINDOW MANAGER name read from X (_NET_SUPPORTING_WM_CHECK -> _NET_WM_NAME), never just a binary version."""
+    wm, deadline = None, time.time() + (60 if a.desktop == "gnome" else 5)
+    while time.time() < deadline and wm is None:
+        try:
+            chk = subprocess.run(["xprop", "-root", "_NET_SUPPORTING_WM_CHECK"], capture_output=True, text=True, env=env, timeout=5).stdout
+            m = re.search(r"window id # (0x[0-9a-f]+)", chk)
+            if m:
+                nm = subprocess.run(["xprop", "-id", m.group(1), "_NET_WM_NAME"], capture_output=True, text=True, env=env, timeout=5).stdout
+                q = re.search(r'= "(.*)"', nm)
+                wm = q.group(1) if q else None
+        except (OSError, subprocess.SubprocessError):
+            break
+        if wm is None:
+            time.sleep(0.5)
+    procs = process_table()
+    want = ("gnome-shell", "gnome-session-binary", "gnome-session") if a.desktop == "gnome" else (WM_COMMANDS[a.desktop][0],)
+    mark("identity", desktop=a.desktop, wm_name=wm, uid_requested=a.uid, desktop_procs=sorted({(c, u) for _, u, c in procs if c in want}),
+         server_uids=sorted({u for _, u, c in procs if c.startswith("python")}), user=env.get("USER"), home=env.get("HOME"))
+
+
 def http_ok(url, timeout=0.5):
     import urllib.request
     try:
@@ -106,7 +159,7 @@ def lo_up():
         s.close()
 
 
-def start_server(a, env, kit):
+def start_server(a, env, kit, pre=None):
     """The real OSWorld server, one of three ways (the arms of the L1-F prototype)."""
     log = open("/tmp/osworld-real-server.log", "wb")
     server_dir = f"{kit}/server"
@@ -115,10 +168,12 @@ def start_server(a, env, kit):
     if a.criu_friendly:  # signal handlers the per-sibling reseed of a restored session uses (clone.py); installed before any checkpoint
         from .clone import SERVER_HOOK
         entry = SERVER_HOOK + entry
+    if pre is not None and a.server_mode == "fork":
+        raise SystemExit("--uid needs server mode asshipped or module: the fork arm runs the server inside this root process")
     if a.server_mode == "asshipped":  # `python main.py`: OSWorld's debug reloader, so two interpreters
-        return subprocess.Popen([py, "main.py"], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+        return subprocess.Popen([py, "main.py"], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT, preexec_fn=pre)
     if a.server_mode == "module":  # fresh interpreter, same entry as the fork arm
-        return subprocess.Popen([py, "-c", entry], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+        return subprocess.Popen([py, "-c", entry], cwd=server_dir, env=env, stdout=log, stderr=subprocess.STDOUT, preexec_fn=pre)
     pid = os.fork()  # "fork": this process was itself forked from the zygote, so flask, lxml, ... are already mapped
     if pid == 0:
         try:
@@ -149,28 +204,40 @@ def start_real_desktop(a):
     The server is Flask on port 5000; `python`/`python3` on PATH are the kit's virtualenv python, which has
     pyautogui, as OSWorld tasks expect (`python -c "import pyautogui ..."`)."""
     kit = a.osworld_real
-    runtime = "/run/drums-xdg"
+    pre = drop_privileges(a.uid, a.gid)
+    runtime = f"/run/user/{a.uid}" if a.uid >= 0 else "/run/drums-xdg"
     os.makedirs(runtime, mode=0o700, exist_ok=True)
+    if a.uid >= 0:
+        os.chown(runtime, a.uid, a.gid)
     env = dict(os.environ, DISPLAY=f":{a.display}", HOME=a.home, LANG="C.UTF-8", LC_ALL="C.UTF-8",
                XDG_RUNTIME_DIR=runtime, PATH=f"{kit}/bin:" + os.environ.get("PATH", ""),
                GTK_MODULES="gail:atk-bridge", NO_AT_BRIDGE="0", ACCESSIBILITY_ENABLED="1")
+    if a.uid >= 0:
+        env.update(USER=a.user, LOGNAME=a.user, XDG_SESSION_TYPE="x11")
+        if a.desktop == "gnome":
+            env.update(XDG_CURRENT_DESKTOP="ubuntu:GNOME", GNOME_SHELL_SESSION_MODE="ubuntu", XDG_SESSION_DESKTOP="ubuntu")
     os.makedirs(a.home, exist_ok=True)  # an image root may not have the home yet; harmless otherwise
     open(os.path.join(a.home, ".Xauthority"), "a").close()  # python-xlib insists on the file existing
+    if a.uid >= 0:
+        os.chown(a.home, a.uid, a.gid)
+        os.chown(os.path.join(a.home, ".Xauthority"), a.uid, a.gid)
     bus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
-                         capture_output=True, text=True, env=env, check=True).stdout.split()
+                         capture_output=True, text=True, env=env, check=True, preexec_fn=pre).stdout.split()
     env["DBUS_SESSION_BUS_ADDRESS"] = bus[0]
-    quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+    quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, preexec_fn=pre)
     subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately"], **quiet)
-    subprocess.Popen(["openbox"], **quiet)
+    subprocess.Popen(WM_COMMANDS[a.desktop], **quiet)
     time.sleep(0.5)
     lo_up()
     mark("desktop_stack_started")
-    start_server(a, env, kit)
+    start_server(a, env, kit, pre)
     mark("server_spawned")
     deadline = time.time() + 60
     while time.time() < deadline and not http_ok("http://127.0.0.1:5000/platform")[0]:
         time.sleep(0.02)
     mark("server_ready")
+    if a.desktop != "openbox" or a.uid >= 0:
+        record_identity(a, env)
     if a.workload == "chromium":
         start_chromium(a, env)
         mark("chromium_spawned")
@@ -198,6 +265,10 @@ def main(argv=None):
     ap.add_argument("--root", choices=["home", "full"], default="home")
     ap.add_argument("--base-root", default="/")
     ap.add_argument("--osworld-port", type=int, default=0)
+    ap.add_argument("--desktop", choices=sorted(WM_COMMANDS), default="openbox")
+    ap.add_argument("--uid", type=int, default=-1)  # >= 0: the desktop and server children drop groups, gid and uid before exec; this root process only sets up
+    ap.add_argument("--gid", type=int, default=-1)
+    ap.add_argument("--user", default="")
     ap.add_argument("--pkg", default="")
     ap.add_argument("--python", default="/usr/bin/python3")
     ap.add_argument("--osworld-real", default="")  # kit dir (realkit.py): run the REAL OSWorld server instead of the stub

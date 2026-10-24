@@ -62,7 +62,7 @@ class Supervisor:
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
                  ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True,
-                 home=HOME, base_root="/"):
+                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user=""):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -79,6 +79,12 @@ class Supervisor:
         Supervisor then writes a ledger entry (in sweep_dir) so a later sweep can undo its changes if it dies."""
         if not (isinstance(home, str) and os.path.isabs(home) and os.path.normpath(home) == home and home != "/"):
             raise ValueError(f"home must be a normalized absolute path other than /: {home!r}")
+        if desktop not in ("openbox", "gnome"):
+            raise ValueError(f"desktop must be 'openbox' or 'gnome': {desktop!r}")
+        if uid >= 0 and not (isinstance(uid, int) and uid > 0 and isinstance(gid, int) and gid >= 0 and re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user or "")):
+            raise ValueError("uid needs a non-root integer uid, a gid and a plain user name (it only drops privileges for the desktop and server children)")
+        if uid >= 0 and server_mode == "fork":
+            raise ValueError("uid is not supported with server_mode 'fork': that arm runs the server inside the root init process")
         if not (isinstance(base_root, str) and os.path.isabs(base_root) and os.path.normpath(base_root) == base_root):
             raise ValueError(f"base_root must be a normalized absolute path: {base_root!r}")
         if base_root != "/":
@@ -97,10 +103,11 @@ class Supervisor:
                 raise ValueError("base_root other than / needs osworld_real_kit so that the python the session will run can be resolved and version-checked inside the new root before any mount")
             if osworld_real_kit:  # BEFORE any mount: would the programs the session starts exist inside the new root? (the host's kit and python 3.12 vanish at the pivot)
                 from . import rootcheck
-                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit)
+                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop)
                 if found["problems"]:
                     raise ValueError("the new base root cannot run the session: " + "; ".join(found["problems"]))
         self.home, self.base_root = home, base_root
+        self.desktop, self.uid, self.gid, self.user = desktop, uid, gid, user
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None
         if exec_systemd and not (netns and os.environ.get("DRUMS_ALLOW_SYSTEMD_PROBE") == "1"):
@@ -249,6 +256,8 @@ class Supervisor:
                  *(["--exec-systemd"] if self.exec_systemd else []),
                  *(["--server-mode", self.server_mode] + ([] if self.criu_friendly else ["--timing", timing]) if self.osworld_real_kit else []),
                  *(["--criu-friendly"] if self.criu_friendly else []),
+                 *(["--desktop", self.desktop] if self.desktop != "openbox" else []),
+                 *(["--uid", str(self.uid), "--gid", str(self.gid), "--user", self.user] if self.uid >= 0 else []),
                  *(["--workload", self.workload] if self.workload else []),
                  *(["--ksm"] if self.ksm else []), *(["--no-aslr"] if self.no_aslr else [])]
         cg = None
