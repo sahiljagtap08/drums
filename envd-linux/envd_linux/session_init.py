@@ -7,6 +7,8 @@ process tree, IPC and hostname. Shared with the host: kernel, the rest of the ro
 filesystem, and (in this spike) the network namespace."""
 
 import argparse
+import glob
+import hashlib
 import re
 import json
 import os
@@ -15,6 +17,7 @@ import socket
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 
 def sh(*cmd):
@@ -123,16 +126,60 @@ def check_private_run(mountinfo, socket_exists):
         raise SystemExit(f"refusing to start a system bus: {SYSTEM_BUS_SOCKET} already exists")
 
 
-def private_system_conf(text):
-    """The image's own system.conf with the two ways a bus can LAUNCH services removed: `<standard_system_servicedirs/>` (activatable names) and `<servicehelper>`. The explicit policy is therefore NO
-    activation: upower, accountsservice, polkit and logind are never started by the bus (nor by systemd, which is absent). Raises if the file is not a system bus configuration."""
-    if "<type>system</type>" not in text:
+ALLOWED_TAGS = {"busconfig", "type", "fork", "pidfile", "listen", "auth", "user", "policy", "allow", "deny", "limit", "allow_anonymous", "syslog", "keep_umask", "include", "includedir"}
+REMOVED_TAGS = {"standard_system_servicedirs", "standard_session_servicedirs", "servicedir", "servicehelper", "selinux", "apparmor", "associate"}  # every way to launch a service, plus the LSM hooks
+
+
+def system_bus_command(conf):
+    """`--system` and `--config-file` are MUTUALLY EXCLUSIVE in dbus-daemon: the generated file itself carries <type>system</type>."""
+    return ["dbus-daemon", f"--config-file={conf}", "--fork", "--print-pid=1", "--print-address=1"]
+
+
+def _inline(elem, base_dir, depth=0):
+    """Flatten every <include>/<includedir> into the tree (read from the image), drop every service-launching element, and FAIL CLOSED on any element or attribute not understood."""
+    if depth > 8:
+        raise SystemExit("system bus configuration includes are nested too deeply")
+    out = []
+    for child in list(elem):
+        tag = child.tag
+        if tag in REMOVED_TAGS:
+            continue
+        if tag not in ALLOWED_TAGS:
+            raise SystemExit(f"the system bus configuration has an element this policy does not understand: <{tag}>")
+        if tag in ("include", "includedir"):
+            path = (child.text or "").strip()
+            path = path if os.path.isabs(path) else os.path.join(base_dir, path)
+            files = sorted(glob.glob(os.path.join(path, "*.conf"))) if tag == "includedir" else ([path] if os.path.exists(path) else [])
+            if not files and not (tag == "includedir" or child.get("ignore_missing") == "yes"):
+                raise SystemExit(f"the system bus configuration includes {path}, which does not exist")
+            for f in files:
+                sub = ET.fromstring(read_text(f))
+                if sub.tag != "busconfig":
+                    raise SystemExit(f"{f} is not a busconfig file")
+                out += _inline(sub, os.path.dirname(f), depth + 1)
+            continue
+        if tag == "listen":
+            continue  # replaced by the one private socket below
+        out.append(child)
+    return out
+
+
+def private_system_conf(text, base_dir="/usr/share/dbus-1", socket_path=None):
+    """A FLATTENED, NON-ACTIVATING system bus configuration built from the image's own system.conf: includes and include directories are inlined and checked, `<standard_system_servicedirs/>`,
+    `<servicedir>`, `<servicehelper>` and the SELinux/AppArmor hooks are dropped, the only listen address is the private socket, and any element outside a fixed allow-list raises. Authentication, limits
+    and policy rules of the image are kept. DIFFERENCES from the stock bus (documented): no service activation of any kind, no LSM hooks, no other listen address. Raises if the file is not a system bus config."""
+    root = ET.fromstring(text)
+    if root.tag != "busconfig" or (root.findtext("type") or "").strip() != "system":
         raise SystemExit("the image's system.conf is not a system bus configuration")
-    out = re.sub(r"<standard_system_servicedirs\s*/>", "", text)
-    out = re.sub(r"<servicehelper>.*?</servicehelper>", "", out, flags=re.S)
-    out = re.sub(r"<servicedir>.*?</servicedir>", "", out, flags=re.S)
-    if "servicedirs" in out or "servicehelper" in out:
-        raise SystemExit("could not remove every service-launching element from the system bus configuration")
+    kept = _inline(root, base_dir)
+    new = ET.Element("busconfig")
+    for e in kept:
+        new.append(e)
+    ET.SubElement(new, "listen").text = f"unix:path={socket_path or SYSTEM_BUS_SOCKET}"
+    out = ET.tostring(new, encoding="unicode")
+    for bad in ("servicedir", "servicehelper", "<include", "selinux", "apparmor"):
+        if bad in out:
+            raise SystemExit(f"the generated system bus configuration still contains {bad!r}")
     return out
 
 
@@ -143,18 +190,17 @@ def start_system_bus(env, log):
     only to drop to `messagebus`. Facts about it (socket inode, mount namespace, conf hash) are recorded; the service processes under it are listed in the identity mark."""
     env.pop("DBUS_SYSTEM_BUS_ADDRESS", None)
     check_private_run(read_text("/proc/self/mountinfo"), os.path.exists(SYSTEM_BUS_SOCKET))
-    conf = private_system_conf(read_text("/usr/share/dbus-1/system.conf"))
+    conf = private_system_conf(read_text("/usr/share/dbus-1/system.conf"), "/usr/share/dbus-1", SYSTEM_BUS_SOCKET)
     os.makedirs("/run/dbus", exist_ok=True)
     with open(SYSTEM_BUS_CONF, "w") as f:
         f.write(conf)
-    out = subprocess.run(["dbus-daemon", "--system", f"--config-file={SYSTEM_BUS_CONF}", "--fork", "--print-pid=1"], stdout=subprocess.PIPE, stderr=log, text=True, env=env, check=True).stdout.split()
+    out = subprocess.run(system_bus_command(SYSTEM_BUS_CONF), stdout=subprocess.PIPE, stderr=log, text=True, env=env, check=True).stdout.split()
     deadline = time.time() + 5
     while not os.path.exists(SYSTEM_BUS_SOCKET):
         if time.time() > deadline:
             raise SystemExit(f"the private system bus did not create {SYSTEM_BUS_SOCKET}")
         time.sleep(0.05)
-    import hashlib
-    SYSTEM_BUS.update(pid=int(out[0]) if out else None, socket=SYSTEM_BUS_SOCKET, socket_inode=os.stat(SYSTEM_BUS_SOCKET).st_ino, mnt_ns=os.readlink("/proc/self/ns/mnt"),
+    SYSTEM_BUS.update(pid=next((int(x) for x in out if x.isdigit()), None), socket=SYSTEM_BUS_SOCKET, socket_inode=os.stat(SYSTEM_BUS_SOCKET).st_ino, mnt_ns=os.readlink("/proc/self/ns/mnt"),
                       conf=SYSTEM_BUS_CONF, conf_sha256=hashlib.sha256(conf.encode()).hexdigest(), activation="none (service directories and launch helper removed)")
     env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
 

@@ -215,13 +215,16 @@ def test_every_lazy_import_on_the_init_path_is_preloaded_before_the_pivot():
     tree = ast.parse(inspect.getsource(SI))
     lazy = set()
     for fn in ast.walk(tree):
-        if isinstance(fn, ast.FunctionDef) and fn.name in ("main", "http_ok", "lo_up", "start_real_desktop", "start_server", "record_identity", "process_table"):
+        if isinstance(fn, ast.FunctionDef) and fn.name in ("main", "http_ok", "lo_up", "start_real_desktop", "start_server", "record_identity", "process_table", "start_system_bus", "private_system_conf", "_inline", "check_private_run"):
             for n in ast.walk(fn):
                 if isinstance(n, ast.Import):
                     lazy |= {a.name for a in n.names}
     allowed_elsewhere = {"ctypes", "main"}  # ctypes is also preloaded; `main` is the OSWorld server module of the fork arm (its own kit path, refused with a uid)
     assert lazy - set(SI.PRELOAD) - allowed_elsewhere == set(), lazy - set(SI.PRELOAD)
     SI.preload()
+    import sys
+    for mod in ("hashlib", "xml.etree.ElementTree", "glob"):  # module-level imports of session_init: loaded before any pivot
+        assert mod in sys.modules
 
 
 def test_script_interpreters_and_the_elf_interpreter_are_checked_not_just_the_global_loader(tmp_path):
@@ -337,5 +340,5 @@ def test_the_system_bus_is_private_started_first_and_nothing_else_is_bound_from_
     src = inspect.getsource(SI.start_real_desktop)
     assert src.index("start_system_bus(") < src.index('"--session"') < src.index('kept("desktop")')  # system bus, then session bus, then the desktop
     body = inspect.getsource(SI.start_system_bus)
-    assert '"dbus-daemon", "--system"' in body and "/run/dbus" in body and "--bind" not in body  # no host path is bound in
+    assert "system_bus_command(" in body and '"--system"' not in body and "/run/dbus" in body and "--bind" not in body  # no host path is bound in
     assert "--system-bus" in inspect.getsource(SI.main) and SI.SYSTEM_BUS_SOCKET == "/run/dbus/system_bus_socket"

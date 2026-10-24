@@ -89,9 +89,30 @@ SYSTEM_CONF = """<!DOCTYPE busconfig>
 def test_the_generated_bus_configuration_cannot_launch_services_and_keeps_the_images_own_policy():
     out = SI.private_system_conf(SYSTEM_CONF)
     assert "servicedirs" not in out and "servicehelper" not in out and "servicedir" not in out
-    assert "<type>system</type>" in out and '<policy context="default">' in out and "system-local.conf" in out
+    assert "<type>system</type>" in out and '<policy context="default">' in out and "<listen>unix:path=/run/dbus/system_bus_socket</listen>" in out and "/var/run/dbus" not in out
     with pytest.raises(SystemExit, match="not a system bus"):
         SI.private_system_conf("<busconfig><type>session</type></busconfig>")
+
+
+def test_includes_are_inlined_and_checked_so_an_included_file_cannot_bring_launching_back(tmp_path):
+    d = tmp_path / "system.d"
+    d.mkdir()
+    (d / "evil.conf").write_text("<busconfig><servicedir>/x</servicedir><servicehelper>/h</servicehelper><policy user='root'><allow own='*'/></policy></busconfig>")
+    (tmp_path / "local.conf").write_text("<busconfig><standard_system_servicedirs/><limit name='max_incoming_bytes'>1</limit></busconfig>")
+    main = f"<busconfig><type>system</type><include>{tmp_path}/local.conf</include><includedir>{d}</includedir></busconfig>"
+    out = SI.private_system_conf(main, str(tmp_path))
+    assert "servicedir" not in out and "servicehelper" not in out and "<include" not in out and "policy user=" in out and "max_incoming_bytes" in out  # policy and limits survive, launching does not
+    for bad, why in (("<busconfig><type>system</type><bogus/></busconfig>", "does not understand: <bogus>"), (f"<busconfig><type>system</type><include>{tmp_path}/missing.conf</include></busconfig>", "does not exist")):
+        with pytest.raises(SystemExit, match=why):
+            SI.private_system_conf(bad, str(tmp_path))
+    (tmp_path / "wrong.conf").write_text("<other/>")
+    with pytest.raises(SystemExit, match="not a busconfig"):
+        SI.private_system_conf(f"<busconfig><type>system</type><include>{tmp_path}/wrong.conf</include></busconfig>", str(tmp_path))
+
+
+def test_system_and_config_file_are_never_combined():
+    cmd = SI.system_bus_command("/run/x.conf")
+    assert "--system" not in cmd and "--config-file=/run/x.conf" in cmd and "--fork" in cmd and "--print-pid=1" in cmd
 
 
 MI_OK = "36 29 0:30 / /run rw,nosuid - tmpfs tmpfs rw,mode=755\n"
@@ -124,7 +145,7 @@ def test_start_drops_an_inherited_host_address_runs_the_generated_config_and_rec
     env = {"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/var/run/dbus/system_bus_socket", "X": "1"}
     SI.start_system_bus(env, None)
     (cmd, seen), = calls
-    assert "DBUS_SYSTEM_BUS_ADDRESS" not in seen and cmd[:2] == ["dbus-daemon", "--system"] and f"--config-file={conf}" in cmd  # the host's address was dropped BEFORE the daemon ran
+    assert "DBUS_SYSTEM_BUS_ADDRESS" not in seen and cmd[0] == "dbus-daemon" and "--system" not in cmd and f"--config-file={conf}" in cmd  # the host's address was dropped BEFORE the daemon ran
     assert env["DBUS_SYSTEM_BUS_ADDRESS"] == f"unix:path={sock}" and "servicedirs" not in conf.read_text()
     assert SI.SYSTEM_BUS["pid"] == 4242 and SI.SYSTEM_BUS["socket_inode"] == os.stat(sock).st_ino and SI.SYSTEM_BUS["mnt_ns"].startswith("mnt:") and "none" in SI.SYSTEM_BUS["activation"] and len(SI.SYSTEM_BUS["conf_sha256"]) == 64
     SI.SYSTEM_BUS.clear()
@@ -134,3 +155,49 @@ def test_the_identity_mark_lists_what_the_bus_launched_and_the_init_refuses_a_bu
     import inspect
     assert "launched_children" in inspect.getsource(SI.record_identity)
     assert 'a.system_bus and a.root != "full"' in inspect.getsource(SI.main)
+
+
+def test_two_REAL_unprivileged_daemons_from_the_generated_config_have_distinct_ids_no_activation_and_leave_the_host_socket_alone(tmp_path):
+    import shutil
+    import signal
+    import subprocess as sp
+    if not (shutil.which("dbus-daemon") and shutil.which("dbus-send")):
+        pytest.skip("dbus-daemon/dbus-send are not installed")
+    host = "/run/dbus/system_bus_socket"
+    before = (os.stat(host).st_ino, os.stat(host).st_mtime_ns) if os.path.exists(host) else None
+    svc = tmp_path / "services"
+    svc.mkdir()
+    (svc / "org.example.Launch.service").write_text("[D-BUS Service]\nName=org.example.Launch\nExec=/bin/true\nUser=root\n")
+    inc = tmp_path / "inc"
+    inc.mkdir()
+    (inc / "x.conf").write_text(f"<busconfig><servicedir>{svc}</servicedir><policy context='default'><allow user='*'/><allow send_destination='*'/><allow receive_sender='*'/><allow own='*'/></policy></busconfig>")
+    base = f"<busconfig><type>system</type><auth>EXTERNAL</auth><standard_system_servicedirs/><servicedir>{svc}</servicedir><includedir>{inc}</includedir></busconfig>"
+    pids, ids = [], []
+    try:
+        for n in (1, 2):
+            sock = tmp_path / f"bus{n}.sock"
+            conf = tmp_path / f"bus{n}.conf"
+            conf.write_text(SI.private_system_conf(base, str(tmp_path), str(sock)))
+            r = sp.run(SI.system_bus_command(str(conf)), capture_output=True, text=True, timeout=20)
+            assert r.returncode == 0, r.stderr  # the REAL daemon accepts this command line (it rejects --system together with --config-file)
+            toks = r.stdout.split()
+            pids.append(next(int(t) for t in toks if t.isdigit()))
+            printed = next(t for t in toks if t.startswith("unix:"))
+            assert printed.split("=")[1].split(",")[0] == str(sock)
+            addr = f"unix:path={sock}"
+            gid = sp.run(["dbus-send", f"--bus={addr}", "--print-reply", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.GetId"], capture_output=True, text=True, timeout=20)
+            assert gid.returncode == 0, gid.stderr
+            ids.append(gid.stdout.split('"')[1])
+            act = sp.run(["dbus-send", f"--bus={addr}", "--print-reply", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.ListActivatableNames"], capture_output=True, text=True, timeout=20).stdout
+            assert "org.example.Launch" not in act  # the service file was stripped: nothing is activatable
+            start = sp.run(["dbus-send", f"--bus={addr}", "--print-reply", "--dest=org.example.Launch", "/", "org.example.Launch.Ping"], capture_output=True, text=True, timeout=20)
+            assert start.returncode != 0 and "ServiceUnknown" in start.stderr  # and asking for it does not launch it
+        assert ids[0] != ids[1] and len(set(pids)) == 2
+        after = (os.stat(host).st_ino, os.stat(host).st_mtime_ns) if os.path.exists(host) else None
+        assert before == after  # the host's own system bus socket was not touched
+    finally:
+        for p in pids:
+            try:
+                os.kill(p, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
