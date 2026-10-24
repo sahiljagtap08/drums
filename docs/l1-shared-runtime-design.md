@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 17 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 18 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -755,3 +755,42 @@ Known residual, not fixable without restarting processes: Python's string-hash s
 ### What is still NOT established
 
 No increment over an incumbent (no KVM here). Cross-run checkpoint reuse and crash-during-restore cleanup are untested. Task semantics are validated for one public task from a clean checkpoint only. One host, one kernel, no GPU, `--no-sandbox` Chromium.
+
+
+## 18. Assessment and registration: branching an expensive real task setup state (not an empty start)
+
+**Status: ASSESSMENT (static survey, MEASURED from the public files, raw data `docs/data/l1-criu/osworld_setup_survey.json`) plus a PRE-REGISTRATION of one test. Nothing in the test has been run. No benchmark claim, no isolation claim and no incumbent claim is made here.**
+
+### 18.1 Why branch a setup state instead of an empty start
+
+Section 17 showed that shaving about a second off an empty start does not move valid rollouts per hour (and with hygiene it misses its target). The recurring cost in a training run is per rollout of the same task: the guest is reset and the task's `config` is replayed
+(`desktop_env.py` `reset`: revert the snapshot if the environment was used, then `setup_controller.setup(config)`). If a group of G rollouts shares one task, the setup could be done once, the post-setup state checkpointed, and G siblings restored from it.
+
+### 18.2 What the public task files say (static survey of the 369 public tasks; counts, not durations)
+
+- 358 tasks have a setup `config`; **260 download files, all 458 files from `huggingface.co`** (the OSWorld file cache); 175 launch an application, 152 open a file; 54 involve browser tabs, logins or Google Drive.
+- The **explicit sleeps are negligible** (mean 0.08 s, maximum 5 s, none of 10 s or more): the cost of setup is not written into the configs as waits. It is downloads (cached per cache directory after the first rollout), application launches and file opens, whose durations the files do not state.
+- Launched applications: Chrome (79, each with a `socat` helper), VS Code (28), Thunderbird (25), GIMP (23), VLC (20), Nautilus (11), LibreOffice (10).
+- Only **73 tasks need nothing from the network in setup**; 46 of those launch or open something. `huggingface.co` is not reachable from this sandbox, and the licence of the file-cache dataset is unresolved here, so the 260 download tasks cannot be run and their files are not used.
+
+### 18.3 What this does and does not say about economics
+
+- **The mechanism is not unique to Drums.** The incumbent's VM stack can also snapshot AFTER setup (`save_state` with a custom snapshot name) and revert to that for each rollout of the task. A checkpoint-after-setup is prior-art territory; the only claim that could count is a measured increment over a tuned incumbent using post-setup snapshots, which needs the matched run and a real host.
+- **Possible value, by arithmetic only (not a measurement):** per rollout the saving is (setup time) minus (restore time); it applies only to rollouts 2 to G of a group, so the share is (G-1)/G, and its effect on valid rollouts per hour is that saving over the rollout length. Which tasks have a setup long enough to matter is unmeasured: the survey gives counts of steps, not seconds.
+- **Risk to real state:** the checkpoint must preserve what the task set up (open applications, files, windows). It is therefore declared NOT clean (16.4): no browser reset. Whether heavy desktop applications survive a CRIU checkpoint is unknown; Chromium did, LibreOffice has not been tried.
+
+### 18.4 The registered test (one real public task setup, run through the real setup code)
+
+**Task state under test:** the public task `e1fc0df3-c8b9-4ee7-864c-d0b590d3aa56`'s setup, which is exactly `launch libreoffice --writer` (LibreOffice 24.2.7.2 is installed in this sandbox; the task's own evaluation needs the internet to install an extension and is NOT run). The setup is executed by OSWorld's real `SetupController` against the Drums guest server. This validates branching of ONE application-launch setup state; it does not validate that task, any evaluator, or general benchmark semantics.
+
+**Arms.** SETUP: a cold friendly session plus the real setup, timed from request to agent-ready. BRANCH: a restore of a checkpoint taken after that setup, declared not clean, with the standard reseed (hostname, server RNG; the browser untouched). 10 starts per arm, interleaved. **Agent-ready** = the real accessibility tree from the guest server contains the LibreOffice Writer window AND the screenshot differs from a blank desktop in more than 10% of pixels.
+
+**Thresholds, in order:**
+1. FEASIBILITY: the checkpoint of the running LibreOffice dumps and restores without error (a failed rung is recorded with the CRIU error; no workaround is allowed that would drop LibreOffice from the checkpoint, because that would not preserve the task state).
+2. STATE PRESERVED: in each restored sibling the Writer window is present in the real accessibility tree with the same title as at checkpoint time (a document is open).
+3. IN-APP STATE WORKS AND IS PRIVATE: a unique token typed into sibling A through the real pyautogui path appears in A's accessibility tree and does NOT appear in sibling B's; the reverse too.
+4. SHARING AUDIT: the C3 audit under revision 2a (section 16.4) on two siblings, with a cold-pair control, passes. Anything beyond `/dev/null` and `/dev/urandom` shared fails it.
+5. LATENCY: BRANCH p50 <= 0.50 x SETUP p50 and p95 not worse (target at least 2x).
+6. MEMORY: restored sibling memory per added session <= 1.05 x the cold-with-setup session (same slope method, 3 trials).
+
+**Expected outcome, stated in advance so it can lose:** LibreOffice checkpoints and restores: about 40% (it forks helpers, uses many pipes and unix sockets and shared memory). If it does: threshold 2 about 85%, 3 about 70%, 4 about 60%; latency 5 about 75% (a LibreOffice cold launch is several seconds against a restore of about a second); memory 6 about 60%. Most likely failing point if it fails: the dump of the LibreOffice process tree. The economics reading, if everything passes: a measured saving of seconds per rollout for this one setup, worth (G-1)/G of it; nothing about any incumbent.
