@@ -46,7 +46,7 @@ def real_arms(pool, vbox_path_to_vm, reuse="post_setup", desktop_env_module=None
 
 
 def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, out_dir, pins, concurrency=1, max_steps=50, canary=True, clock=time.time,
-                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None, block_hooks=None, name_prefix=True):
+                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None, block_hooks=None, name_prefix=True, not_a_comparison=None):
     """arms: {name: callable -> fresh Adapter}; prices: {name: Prices} (the owner's own price inputs); pins: any JSON-able facts (versions, commits, settings);
     external_prep: {arm: seconds} of preparation done BEFORE this call (reported, and added in the 'with prep' figures). mem_reader / cpu_reader may be None to record nothing
     (then the telemetry is reported as MISSING, never as zero). env_probes: {arm: object with begin() and end() -> dict} for PER-ENVIRONMENT capture (e.g. the session cgroups
@@ -115,7 +115,9 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
         o["per_environment"] = a["per_environment_blocks"] if n in env_probes else "MISSING (no probe)"
         o["host_cpu_busy_s"] = "MISSING (no reader)" if cpu_reader is None else a["host_cpu_busy_s_blocks"]
         summary["arms"][n] = o
-    if all(per_arm[n]["valid"] for n in names):
+    if not_a_comparison:
+        summary["NOT_A_COMPARISON"] = not_a_comparison  # the cross-arm ratio is suppressed: the arms are not shown to run equivalent software
+    elif all(per_arm[n]["valid"] for n in names):
         merged = {n: {"summary": {"cost_usd": summary["arms"][n]["cost_with_prep_usd"]}, "rows": [r for res in per_arm[n]["results"] for r in res["rows"]]} for n in names}
         summary["raw_ratio_first_over_second_with_prep_NOT_A_CLAIM"] = compare(merged[names[0]], merged[names[1]])["valid_per_dollar_ratio_A_over_B"]
     json.dump(summary, open(os.path.join(out_dir, "summary.json"), "w"), indent=1, default=str)

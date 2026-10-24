@@ -12,7 +12,7 @@ ACCT = awsctl.APPROVED_ACCOUNT
 def approval(**kw):
     a = {"run_id": "r1", "approved_by": "owner", "account_id": ACCT, "stage": "vbox_metal", "quota_standard_vcpu_asserted": 96, "instance_type": "m7i.metal-24xl", "region": "us-east-1", "ceiling_hours": 4, "stop_margin_hours": 0.5,
          "budget_cap_usd": 40.0, "hourly_usd": 4.8384, "ebs_gb": 200, "ebs_usd_per_gb_month": 0.08, "public_ipv4_usd_per_hour": 0.005, "transfer_out_gb": 20,
-         "transfer_usd_per_gb": 0.09, "ssh_cidr": "203.0.113.5/32", "key_name": "k", "subnet_id": "subnet-1", "security_group_id": "sg-1", "image_id": "ami-1", "profile": "drums",
+         "transfer_usd_per_gb": 0.09, "ssh_cidr": "203.0.113.5/32", "key_name": "k", "subnet_id": "subnet-1", "security_group_id": "sg-1", "image_id": "ami-1", "ami_owner_id": "099720109477", "profile": "drums",
          "approved": True}
     a.update(kw)
     return a
@@ -24,11 +24,18 @@ def good_sg(**over):
     return sg
 
 
+def good_image(**over):
+    im = {"ImageId": "ami-1", "OwnerId": "099720109477", "State": "available", "Architecture": "x86_64", "RootDeviceType": "ebs", "VirtualizationType": "hvm", "RootDeviceName": "/dev/sda1",
+          "BlockDeviceMappings": [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 8, "SnapshotId": "snap-1"}}], "ProductCodes": [], "Name": "ubuntu-24.04"}
+    im.update(over)
+    return im
+
+
 class FakeAws:
-    def __init__(self, arn=f"arn:aws:iam::{ACCT}:user/sahil", account=ACCT, instances=(), others=(), volumes=(), addresses=(), bench_volumes=(), sg=None, subnet_vpc="vpc-1", dry="DryRunOperation"):
+    def __init__(self, arn=f"arn:aws:iam::{ACCT}:user/sahil", account=ACCT, instances=(), others=(), volumes=(), addresses=(), bench_volumes=(), sg=None, subnet_vpc="vpc-1", dry="DryRunOperation", image="default"):
         self.arn, self.account, self.instances, self.others = arn, account, list(instances), list(others)
         self.volumes, self.addresses, self.bench_volumes, self.sg, self.subnet_vpc, self.dry = list(volumes), list(addresses), list(bench_volumes), sg or good_sg(), subnet_vpc, dry
-        self.calls, self.terminated = [], False
+        self.calls, self.terminated, self.image = [], False, (good_image() if image == 'default' else image)
 
     def raw(self, *args):
         self.calls.append(args)
@@ -54,6 +61,8 @@ class FakeAws:
             return {"Addresses": self.addresses if "tag:drums-run" in args[3] else []}
         if args[:2] == ("ec2", "describe-security-groups"):
             return {"SecurityGroups": [self.sg]}
+        if args[:2] == ("ec2", "describe-images"):
+            return {"Images": [self.image] if self.image else []}
         if args[:2] == ("ec2", "describe-subnets"):
             return {"Subnets": [{"VpcId": self.subnet_vpc}]}
         if args[:2] == ("ec2", "create-tags"):
@@ -300,3 +309,58 @@ def test_the_watcher_tags_each_live_instance_with_its_beat_and_never_a_missing_o
     f2 = FakeAws()
     awsctl.watch(f2, approval(), execute=True, now=lambda: 5.0, sleep=lambda s: None, max_iters=2)
     assert getattr(f2, "tags", []) == []
+
+
+# ---- launch tracking and cost: tags, AMI root mapping, bounded disk ----
+def _run_args(f, **kw):
+    return [c for c in f.made("run-instances") if "--dry-run" not in c][0]
+
+
+def test_exactly_one_tag_specifications_flag_carries_both_specifications(tmp_path):
+    f = FakeAws()
+    awsctl.launch(f, approval(), execute=True, receipt=arm(tmp_path, f), now=lambda: 1001.0)
+    args = _run_args(f)
+    assert args.count("--tag-specifications") == 1  # a repeated list flag is replaced by the AWS CLI: the instance tags would be lost
+    i = args.index("--tag-specifications")
+    inst, vol, nxt = args[i + 1], args[i + 2], args[i + 3]
+    assert inst.startswith("ResourceType=instance,") and "Key=drums-run,Value=r1" in inst and "Key=drums-bench,Value=true" in inst and "Key=drums-deadline,Value=" in inst
+    assert vol.startswith("ResourceType=volume,") and "Key=drums-run,Value=r1" in vol
+    assert nxt.startswith("--")  # exactly two values, then the next option
+
+
+def test_the_amis_real_root_device_is_mapped_and_nothing_else(tmp_path):
+    f = FakeAws(image=good_image(RootDeviceName="/dev/xvda", BlockDeviceMappings=[{"DeviceName": "/dev/xvda", "Ebs": {"VolumeSize": 8}}]))
+    awsctl.launch(f, approval(), execute=True, receipt=arm(tmp_path, f), now=lambda: 1001.0)
+    m = json.loads(_run_args(f)[_run_args(f).index("--block-device-mappings") + 1])
+    assert [x["DeviceName"] for x in m] == ["/dev/xvda"] and m[0]["Ebs"]["DeleteOnTermination"] is True and m[0]["Ebs"]["VolumeSize"] == 200 and len(m) == 1
+
+
+@pytest.mark.parametrize("image,why", [
+    (None, "not found"), (good_image(OwnerId="111111111111"), "owner"), (good_image(ProductCodes=[{"ProductCodeId": "x", "ProductCodeType": "marketplace"}]), "Marketplace"),
+    (good_image(ImageOwnerAlias="aws-marketplace"), "Marketplace"), (good_image(Architecture="arm64"), "x86_64"), (good_image(RootDeviceType="instance-store"), "EBS-rooted"),
+    (good_image(State="pending"), "available"), (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 8}}, {"DeviceName": "/dev/sdb", "Ebs": {"VolumeSize": 100}}]), "additional devices"),
+    (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sdz", "Ebs": {"VolumeSize": 8}}]), "no EBS mapping"),
+    (good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 500}}]), "below the AMI"),
+])
+def test_ami_is_described_and_refused_when_it_is_not_what_was_approved(image, why):
+    with pytest.raises(awsctl.Refusal, match=why):
+        awsctl.launch(FakeAws(image=image), approval())
+
+
+def test_an_extra_ami_device_is_allowed_only_when_the_owner_names_it():
+    extra = good_image(BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 8}}, {"DeviceName": "/dev/sdb", "Ebs": {"VolumeSize": 10}}])
+    with pytest.raises(awsctl.Refusal):
+        awsctl.launch(FakeAws(image=extra), approval())
+    assert awsctl.launch(FakeAws(image=extra), approval(approved_extra_devices=["/dev/sdb"]))["image"]["root_device"] == "/dev/sda1"
+
+
+@pytest.mark.parametrize("bad", [7, 401, 200.5, "200", True, None])
+def test_the_approved_disk_is_a_bounded_whole_number(bad):
+    with pytest.raises(awsctl.Refusal):
+        awsctl.validate(approval(stage="docker_kvm_small", instance_type="m7i.xlarge", quota_standard_vcpu_asserted=32, ceiling_hours=1.5, budget_cap_usd=50, ebs_gb=bad))
+
+
+def test_the_amis_owner_must_be_stated_as_twelve_digits():
+    for bad in ("", "abc", "12345", 99):
+        with pytest.raises(awsctl.Refusal):
+            awsctl.validate(approval(ami_owner_id=bad))

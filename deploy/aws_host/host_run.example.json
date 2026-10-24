@@ -1,10 +1,20 @@
 {
-  "_comment": "EXAMPLE ONLY. Every value marked OWNER must be set by the owner; host_run check refuses placeholders. No price here is verified.",
+  "_comment": "EXAMPLE ONLY. incumbent virtualbox = the original live-snapshot goal (bare metal, 96 vCPU quota). Every OWNER value must be set; host_run check refuses placeholders. No price is verified. mode architecture_measurement is the honest default: it is labelled NOT_A_COMPARISON and may differ; mode comparison needs the real image manifest plus measured, digest-bound equivalence evidence for every detected software difference and NO stub.",
+  "mode": "architecture_measurement",
+  "incumbent": "virtualbox",
+  "host_kind": "baremetal",
+  "guest_cpus": 2,
+  "guest_memory_mib": 4096,
+  "memory_admission_mib": "OWNER: integer MiB of MemAvailable required at check time (an admission rule, not a derived minimum)",
   "osworld_src": "/opt/osworld-pinned",
   "vm": "Ubuntu0",
   "criu_home": "/opt/drums-criu",
   "work_dir": "/var/lib/drums-host/work",
-  "tasks": [{"id": "e0df059f-28a6-4169-924f-b9623e7184cc"}],
+  "tasks": [
+    {
+      "id": "e0df059f-28a6-4169-924f-b9623e7184cc"
+    }
+  ],
   "blocks": 4,
   "rollouts_per_task": 5,
   "seed": 1,
@@ -12,9 +22,13 @@
   "allow_stub": [],
   "prices": "/var/lib/drums-host/prices.json",
   "image_manifest": "/var/lib/drums-host/image_manifest.json",
+  "drums_manifest": "/var/lib/drums-host/drums_composition_manifest.json",
+  "equivalence": {
+    "accepted": []
+  },
   "vm_prep_s_reported": null,
   "instance_type": "OWNER: e.g. m7i.metal-24xl",
   "max_runtime_s": 7200,
   "max_runtime_cap_s": 14400,
-  "external_watcher_confirmed_by": "OWNER: name of the person who started deploy awsctl watch"
+  "external_watcher_confirmed_by": "OWNER: name of the person who started awsctl watch"
 }

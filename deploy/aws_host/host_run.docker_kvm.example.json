@@ -1,0 +1,38 @@
+{
+  "_comment": "EXAMPLE ONLY. incumbent docker_kvm = the small stage: STOCK OSWorld Docker provider (QEMU/KVM in a container, pinned image digest), COLD RESET on both arms (the provider cannot snapshot; none is claimed). 4 CPU and 4 GiB per guest, arms strictly sequential, nested virtualization (timings are not bare metal). qcow2_bytes and qcow2_sha256 come from fetch_docker_image.sh.",
+  "mode": "architecture_measurement",
+  "incumbent": "docker_kvm",
+  "host_kind": "nested_kvm",
+  "guest_cpus": 4,
+  "guest_memory_mib": 4096,
+  "memory_admission_mib": "OWNER: integer MiB of MemAvailable required at check time (an admission rule, not a derived minimum)",
+  "osworld_src": "/opt/osworld-pinned",
+  "criu_home": null,
+  "work_dir": "/var/lib/drums-host/work",
+  "tasks": [
+    {
+      "id": "e0df059f-28a6-4169-924f-b9623e7184cc"
+    }
+  ],
+  "blocks": 2,
+  "rollouts_per_task": 5,
+  "seed": 1,
+  "max_steps": 5,
+  "allow_stub": [],
+  "prices": "/var/lib/drums-host/prices.json",
+  "image_manifest": "/var/lib/drums-host/image_manifest.json",
+  "drums_manifest": "/var/lib/drums-host/drums_composition_manifest.json",
+  "equivalence": {
+    "accepted": []
+  },
+  "vm_prep_s_reported": null,
+  "instance_type": "m7i.xlarge",
+  "max_runtime_s": 2400,
+  "max_runtime_cap_s": 3600,
+  "external_watcher_confirmed_by": "OWNER: name of the person who started awsctl watch",
+  "qcow2": "/opt/vm-image/Ubuntu.qcow2",
+  "qcow2_bytes": "OWNER: from fetch_docker_image.sh",
+  "qcow2_sha256": "OWNER: from fetch_docker_image.sh",
+  "docker_image_digest": "sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9",
+  "verify_sha256": true
+}

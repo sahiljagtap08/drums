@@ -13,6 +13,9 @@ CONTROLS (each a design property with a stated failure mode in docs/aws-incumben
     or any leftover volume or address tagged drums-bench=true exists. A new run id cannot bypass it.
   * An independent WATCHER must be armed first: `watch` waits while nothing is owned (it does not exit), writes a heartbeat receipt, expires if no launch happens within
     `watch_arm_timeout_s`, and keeps watching after launch. `launch --execute` refuses without a fresh receipt from a watcher started with --execute (one that can terminate).
+  * The AMI is DESCRIBED and its real root device name is mapped (never a hard-coded one); extra mapped devices, a foreign owner or a Marketplace product code refuse the launch;
+    the approved disk is a whole number of GiB within the stage's cap.
+  * ONE --tag-specifications flag carries both the instance and the volume specification (a repeated list flag is replaced by the CLI, which would lose the instance tags).
   * The security group is INSPECTED, not trusted: only approved TCP ports, only the approved owner CIDR, no IPv6, prefix list or group sources, and the subnet must be in the same VPC.
   * A runtime CEILING in two independent places: the host shuts itself down (user data `shutdown -h +N`, instance-initiated shutdown behaviour TERMINATE) and the watcher
     terminates at the deadline. A timer is NOT a hard dollar cap: it bounds hours; a stop margin is priced in.
@@ -32,12 +35,12 @@ import time
 
 APPROVED_ACCOUNT = "463186160490"
 # Each stage is a separate, owner-approved experiment with its own instance type, vCPU count and runtime ceiling. Candidates only: selection and budget are the owner's.
-STAGES = {"docker_kvm_small": {"types": ("m7i.xlarge",), "vcpu": 4, "max_hours": 2.0},       # stock OSWorld Docker/KVM cold-reset baseline, nested virtualization
-          "vbox_metal": {"types": ("m7i.metal-24xl", "m5.metal"), "vcpu": 96, "max_hours": 12.0}}  # original VirtualBox live-snapshot goal: needs the 96 vCPU quota
+STAGES = {"docker_kvm_small": {"types": ("m7i.xlarge",), "vcpu": 4, "max_hours": 2.0, "max_ebs_gb": 400},       # stock OSWorld Docker/KVM cold-reset baseline, nested virtualization
+          "vbox_metal": {"types": ("m7i.metal-24xl", "m5.metal"), "vcpu": 96, "max_hours": 12.0, "max_ebs_gb": 500}}  # original VirtualBox live-snapshot goal: needs the 96 vCPU quota
 ALLOWED_TYPES = tuple(t for st in STAGES.values() for t in st["types"])
 REGION = "us-east-1"
 REQUIRED = ("run_id", "approved_by", "account_id", "stage", "quota_standard_vcpu_asserted", "instance_type", "region", "ceiling_hours", "stop_margin_hours", "budget_cap_usd", "hourly_usd", "ebs_gb", "ebs_usd_per_gb_month",
-            "public_ipv4_usd_per_hour", "transfer_out_gb", "transfer_usd_per_gb", "ssh_cidr", "key_name", "subnet_id", "security_group_id", "image_id", "profile", "approved")
+            "public_ipv4_usd_per_hour", "transfer_out_gb", "transfer_usd_per_gb", "ssh_cidr", "key_name", "subnet_id", "security_group_id", "image_id", "ami_owner_id", "profile", "approved")
 POSITIVE = ("ceiling_hours", "stop_margin_hours", "budget_cap_usd", "hourly_usd", "ebs_gb", "ebs_usd_per_gb_month", "public_ipv4_usd_per_hour", "transfer_usd_per_gb")
 NONNEGATIVE = ("transfer_out_gb",)
 LIVE_STATES = "pending,running,stopping,stopped,shutting-down"
@@ -78,6 +81,10 @@ def validate(a):
     st = STAGES.get(a["stage"])
     if st is None:
         raise Refusal(f"stage {a['stage']!r} is not one of {sorted(STAGES)}")
+    if isinstance(a["ebs_gb"], bool) or not isinstance(a["ebs_gb"], int) or not 8 <= a["ebs_gb"] <= st["max_ebs_gb"]:
+        raise Refusal(f"ebs_gb must be a whole number of GiB from 8 to {st['max_ebs_gb']} for stage {a['stage']} (got {a['ebs_gb']!r})")
+    if not (isinstance(a["ami_owner_id"], str) and a["ami_owner_id"].isdigit() and len(a["ami_owner_id"]) == 12):
+        raise Refusal("ami_owner_id must be the 12-digit account id of the AMI's owner, stated by the owner")
     if a["instance_type"] not in st["types"]:
         raise Refusal(f"instance_type {a['instance_type']} is not allowed for stage {a['stage']} {st['types']}")
     if not finite(a["quota_standard_vcpu_asserted"]) or a["quota_standard_vcpu_asserted"] < st["vcpu"]:
@@ -226,6 +233,47 @@ def dry_run_verdict(rc, out, err):
     return "UNKNOWN"
 
 
+def inspect_image(aws, a):
+    """The AMI is DESCRIBED before launch, never assumed: owner as stated, x86_64 HVM Linux, EBS-rooted, available, no Marketplace product code, and its block device mappings are exactly
+    the root device plus any device the owner approved BY NAME. Returns the real root device name (the launch maps THAT name, never a hard-coded /dev/sda1) and its snapshot size."""
+    imgs = aws("ec2", "describe-images", "--image-ids", a["image_id"])["Images"]
+    if len(imgs) != 1:
+        raise Refusal(f"AMI {a['image_id']} was not found in {REGION}")
+    im = imgs[0]
+    if im.get("OwnerId") != a["ami_owner_id"]:
+        raise Refusal(f"AMI owner {im.get('OwnerId')!r} is not the approved ami_owner_id {a['ami_owner_id']!r}")
+    if im.get("ProductCodes") or im.get("ImageOwnerAlias") == "aws-marketplace":
+        raise Refusal("the AMI carries a Marketplace product code or is a Marketplace image: refused (no Marketplace charge is approved)")
+    if im.get("State") != "available" or im.get("Architecture") != "x86_64" or im.get("RootDeviceType") != "ebs" or im.get("VirtualizationType") != "hvm":
+        raise Refusal("the AMI must be available, x86_64, hvm and EBS-rooted")
+    root = im.get("RootDeviceName")
+    maps = {m["DeviceName"]: m for m in im.get("BlockDeviceMappings", [])}
+    if root not in maps or "Ebs" not in maps[root]:
+        raise Refusal(f"the AMI's root device {root!r} has no EBS mapping")
+    extra = sorted(set(maps) - {root} - set(a.get("approved_extra_devices", [])))
+    if extra:
+        raise Refusal(f"the AMI maps additional devices {extra} that no manifest approves (they would be extra untracked volumes or bill); list them in approved_extra_devices only if deliberate")
+    snap_gb = maps[root]["Ebs"].get("VolumeSize") or 0
+    if a["ebs_gb"] < snap_gb:
+        raise Refusal(f"approved ebs_gb {a['ebs_gb']} is below the AMI's own root size {snap_gb}")
+    return {"root_device": root, "ami_root_gb": snap_gb, "owner": im.get("OwnerId"), "name": im.get("Name")}
+
+
+def run_instances_args(a, deadline, root_device):
+    """ONE --tag-specifications flag with BOTH specifications as its values: the AWS CLI replaces an earlier occurrence of a list option with a later one, so repeating the flag
+    would silently drop the instance tags (and leave the watcher blind). The root mapping uses the AMI's real device name and nothing else."""
+    inst_tags = "ResourceType=instance,Tags=[{Key=drums-run,Value=%s},{Key=%s,Value=true},{Key=drums-deadline,Value=%d}]" % (a["run_id"], TAG_ALL, deadline)
+    vol_tags = "ResourceType=volume,Tags=[{Key=drums-run,Value=%s},{Key=%s,Value=true}]" % (a["run_id"], TAG_ALL)
+    args = ["ec2", "run-instances", "--image-id", a["image_id"], "--instance-type", a["instance_type"], "--count", "1", "--key-name", a["key_name"],
+            "--subnet-id", a["subnet_id"], "--security-group-ids", a["security_group_id"], "--associate-public-ip-address",
+            "--instance-initiated-shutdown-behavior", "terminate", "--metadata-options", "HttpTokens=required,HttpEndpoint=enabled,InstanceMetadataTags=enabled",
+            "--block-device-mappings", json.dumps([{"DeviceName": root_device, "Ebs": {"VolumeSize": a["ebs_gb"], "VolumeType": "gp3", "DeleteOnTermination": True}}]),
+            "--tag-specifications", inst_tags, vol_tags, "--user-data", user_data(a)]
+    if a.get("cpu_options"):  # e.g. a nested-virtualization option, copied by the owner from the live describe-instance-types result; never assumed here
+        args += ["--cpu-options", a["cpu_options"]]
+    return args
+
+
 def launch(aws, a, execute=False, now=time.time, receipt=None):
     b = validate(a)
     verify_account(aws, a)
@@ -236,17 +284,10 @@ def launch(aws, a, execute=False, now=time.time, receipt=None):
     sg = inspect_security_group(aws, a)
     rc_ = check_receipt(receipt, a, now) if execute else None
     deadline = int(now() + a["ceiling_hours"] * 3600)
-    tags = "[{Key=drums-run,Value=%s},{Key=%s,Value=true},{Key=drums-deadline,Value=%d}]"
-    args = ["ec2", "run-instances", "--image-id", a["image_id"], "--instance-type", a["instance_type"], "--count", "1", "--key-name", a["key_name"],
-            "--subnet-id", a["subnet_id"], "--security-group-ids", a["security_group_id"], "--associate-public-ip-address",
-            "--instance-initiated-shutdown-behavior", "terminate", "--metadata-options", "HttpTokens=required,HttpEndpoint=enabled,InstanceMetadataTags=enabled",
-            "--block-device-mappings", json.dumps([{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": a["ebs_gb"], "VolumeType": "gp3", "DeleteOnTermination": True}}]),
-            "--tag-specifications", "ResourceType=instance,Tags=" + tags % (a["run_id"], TAG_ALL, deadline),
-            "--tag-specifications", "ResourceType=volume,Tags=[{Key=drums-run,Value=%s},{Key=%s,Value=true}]" % (a["run_id"], TAG_ALL), "--user-data", user_data(a)]
-    if a.get("cpu_options"):  # e.g. a nested-virtualization option, copied by the owner from the live describe-instance-types result; never assumed here
-        args += ["--cpu-options", a["cpu_options"]]
+    image = inspect_image(aws, a)
+    args = run_instances_args(a, deadline, image["root_device"])
     verdict = dry_run_verdict(*aws.raw(*args, "--dry-run"))
-    base = {"bill": b, "deadline_epoch": deadline, "dry_run_verdict": verdict, "security_group": sg, "inventory": inv}
+    base = {"bill": b, "deadline_epoch": deadline, "dry_run_verdict": verdict, "security_group": sg, "inventory": inv, "image": image}
     if not execute:
         return {"executed": False, **base, "note": "dry run only: nothing was created" + ("" if verdict == "allowed" else f"; the dry run says {verdict}, so --execute would be refused")}
     if verdict != "allowed":

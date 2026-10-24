@@ -9,7 +9,7 @@
   "stop_margin_hours": 0.5,
   "budget_cap_usd": 0,
   "hourly_usd": 0.2016,
-  "ebs_gb": 200,
+  "ebs_gb": 0,
   "ebs_usd_per_gb_month": 0,
   "public_ipv4_usd_per_hour": 0,
   "transfer_out_gb": 20,
@@ -28,5 +28,7 @@
   ],
   "known_other_instances": [],
   "watch_arm_timeout_s": 1800,
-  "cpu_options": "OWNER: copy any nested-virtualization launch option from the live describe-instance-types result, or delete this field if none is needed"
+  "cpu_options": "OWNER: copy any nested-virtualization launch option from the live describe-instance-types result, or delete this field if none is needed",
+  "ami_owner_id": "OWNER: 12-digit account id that owns the AMI (stated by the owner, checked against describe-images)",
+  "approved_extra_devices": []
 }

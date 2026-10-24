@@ -27,5 +27,7 @@
     22
   ],
   "known_other_instances": [],
-  "watch_arm_timeout_s": 1800
+  "watch_arm_timeout_s": 1800,
+  "ami_owner_id": "OWNER: 12-digit account id that owns the AMI (stated by the owner, checked against describe-images)",
+  "approved_extra_devices": []
 }
