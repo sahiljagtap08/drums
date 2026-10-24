@@ -20,6 +20,31 @@ from envd_linux.template import build_home_template
 HOME = os.environ.get("DRUMS_CRIU_HOME")
 
 
+def _session_inits():
+    """PIDs of real session_init processes (argv is `<python> -m envd_linux.session_init ...`). Matched on argv structure, not substring: a
+    shell whose command line merely MENTIONS the module (as the one running this test may) is not a session."""
+    out = []
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            try:
+                argv = open(f"/proc/{d}/cmdline", "rb").read().split(b"\0")
+            except OSError:
+                continue
+            if len(argv) > 2 and argv[1] == b"-m" and argv[2] == b"envd_linux.session_init":
+                out.append(int(d))
+    return out
+
+
+def _no_session_processes(timeout=8.0):
+    """True once no session_init process remains. A SIGKILLed namespace takes a moment to be reaped, so poll instead of sampling once."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if not _session_inits():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 class FakeCriu:
     def __init__(self):
         self.calls = []
@@ -95,7 +120,7 @@ def test_two_siblings_restored_from_one_checkpoint_serve_audit_clean_and_leave_n
         assert not res["shared_pipe_or_socket_inodes"] and not res["shared_lock_entries"] and not res["write_in_a_visible_in_b"]
     finally:
         sup.close()
-    assert subprocess.run(["pgrep", "-f", "envd_linux.session_init"], capture_output=True).stdout.split() == []
+    assert _no_session_processes()
     assert str(tmp_path) not in open("/proc/self/mounts").read()
 
 
@@ -118,7 +143,38 @@ def test_a_restore_that_fails_after_the_session_is_registered_leaves_nothing_beh
             sup.create(1)
         time.sleep(0.5)
         assert 1 not in sup._procs
-        assert subprocess.run(["pgrep", "-f", "envd_linux.session_init"], capture_output=True).stdout.split() == []
+        assert _no_session_processes()
         assert not [n for n in os.listdir("/sys/class/net") if n.startswith("dvh")]
+    finally:
+        sup.close()
+
+
+@pytest.mark.skipif(_prereqs() is not None, reason=str(_prereqs()))
+def test_a_failure_at_the_last_step_before_session_json_leaves_nothing_behind(tmp_path, monkeypatch):
+    """The same leak class, induced at a different point: the restored session is registered and healthy, and writing session.json fails."""
+    kit = realkit.DEFAULT_KIT
+    tpl = tmp_path / "tpl"
+    build_home_template(str(tpl / "home" / "drums"))
+    sup = Supervisor(str(tmp_path / "state"), str(tpl), root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
+                     init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120,
+                     criu_friendly=True, criu=cr.Criu(HOME), sweep_dir=str(tmp_path / "led"))
+    try:
+        sup.create(0)
+        sup.restore_from = sup.checkpoint(0, str(tmp_path / "ck"), clean=True)
+        real_replace = os.replace
+
+        def boom(src, dst, *a, **k):
+            if str(dst).endswith("session.json"):
+                raise OSError("disk full (induced)")
+            return real_replace(src, dst, *a, **k)
+        monkeypatch.setattr(os, "replace", boom)
+        with pytest.raises(OSError):
+            sup.create(1)
+        monkeypatch.setattr(os, "replace", real_replace)
+        time.sleep(0.5)
+        assert 1 not in sup._procs and 1 not in sup._restored
+        assert _no_session_processes()
+        assert not [n for n in os.listdir("/sys/class/net") if n.startswith("dvh")]
+        assert str(tmp_path / "state" / "s1") not in open("/proc/self/mounts").read()
     finally:
         sup.close()

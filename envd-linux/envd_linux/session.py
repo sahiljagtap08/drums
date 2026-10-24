@@ -372,35 +372,39 @@ class Supervisor:
             raise SessionError(f"restored session network setup failed: {e}") from e
         self._procs[slot] = proc
         self._restored[slot] = root
-        self._epochs[slot] = self._epochs.get(slot, 0) + 1
-        info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": HOME, "unshare_pid": pid,
-                "created": time.time(), "root_mode": self.root_mode, "netns": True, "osworld_port": self.osworld_port,
-                "restored": True, "criu_restore_s": res["seconds"], "restore_total_s": time.time() - t0, **net}
-        deadline = time.time() + self.ready_timeout
-        import urllib.request
-        while True:  # ready = the real guest server answers at this slot's address
-            try:
-                urllib.request.urlopen(f"http://{net['ip']}:{self.osworld_port or 5000}/platform", timeout=1).read()
-                break
-            except Exception:
-                if time.time() > deadline or proc.poll() is not None:
-                    self.destroy(slot)
-                    raise SessionError("restored session's guest server did not answer")
-                time.sleep(0.02)
-        if self.restore_reseed:
-            from . import clone
-            tr = time.time()
-            try:
-                info["reseed"] = clone.reseed(info, slot, clean=bool(meta.get("clean")) and bool(meta.get("has_browser")), python=self.python, pkg_dir=PKG_DIR)
-            except Exception:
-                self.destroy(slot)  # never leave a registered-but-unusable session behind
-                raise
-            info["reseed_s"] = time.time() - tr
-        info["ready_s"] = time.time() - t0
-        with open(os.path.join(d, "session.json.tmp"), "w") as f:
-            json.dump(info, f)
-        os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))
-        return info
+        try:  # from here the session is registered: any failure must tear it down, never leave processes, mounts or a veth behind
+            self._epochs[slot] = self._epochs.get(slot, 0) + 1
+            info = {"epoch": self._epochs[slot], "display": meta["display"], "init_pid": pid, "home": HOME, "unshare_pid": pid,
+                    "created": time.time(), "root_mode": self.root_mode, "netns": True, "osworld_port": self.osworld_port,
+                    "restored": True, "criu_restore_s": res["seconds"], "restore_total_s": time.time() - t0, **net}
+            deadline = time.time() + self.ready_timeout
+            import urllib.request
+            while True:  # ready = the real guest server answers at this slot's address
+                try:
+                    urllib.request.urlopen(f"http://{net['ip']}:{self.osworld_port or 5000}/platform", timeout=1).read()
+                    break
+                except Exception:
+                    if time.time() > deadline or proc.poll() is not None:
+                        self.destroy(slot)
+                        raise SessionError("restored session's guest server did not answer")
+                    time.sleep(0.02)
+            if self.restore_reseed:
+                from . import clone
+                tr = time.time()
+                try:
+                    info["reseed"] = clone.reseed(info, slot, clean=bool(meta.get("clean")) and bool(meta.get("has_browser")), python=self.python, pkg_dir=PKG_DIR)
+                except Exception:
+                    self.destroy(slot)  # never leave a registered-but-unusable session behind
+                    raise
+                info["reseed_s"] = time.time() - tr
+            info["ready_s"] = time.time() - t0
+            with open(os.path.join(d, "session.json.tmp"), "w") as f:
+                json.dump(info, f)
+            os.replace(os.path.join(d, "session.json.tmp"), os.path.join(d, "session.json"))
+            return info
+        except BaseException:
+            self.destroy(slot)
+            raise
 
     def set_host_knob(self, path, value):
         """Write a sysfs/proc knob with a ledger record first; undone by close() (and by the sweep after a crash)."""
