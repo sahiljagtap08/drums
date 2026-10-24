@@ -28,11 +28,21 @@ def image_root(tmp_path, with_py312=False, programs=("dbus-daemon", "wmctrl"), u
     mk(r, "/usr/lib64/ld-linux-x86-64.so.2")
     mk(r, "/usr/bin/python3.10")
     mk(r, "/usr/libexec/at-spi-bus-launcher")
-    for p in (*programs, "umount", "Xvfb"):  # the post-pivot `umount` and the X server are always required
+    for p in (*programs, "umount", "Xvfb", "xkbcomp"):  # the post-pivot `umount`, the X server and its keymap compiler are always required
         mk(r, f"/usr/bin/{p}")
+    mk(r, "/usr/share/X11/xkb/rules/evdev", "x")
     if with_py312:
         mk(r, "/usr/bin/python3.12")
     return r
+
+
+def gnome_files(r, uid=1000, gid=1000, user="user", home="/home/user"):
+    """The finite list of files the GNOME chain check names (synthetic stand-ins)."""
+    for f in ("/usr/libexec/gnome-session-binary",):
+        mk(r, f)
+    for f in ("/usr/share/gnome-session/sessions/ubuntu-xorg.session", "/usr/share/glib-2.0/schemas/gschemas.compiled", "/usr/share/gnome-shell/x"):
+        mk(r, f, "x", 0o644)
+    mk(r, "/etc/passwd", f"root:x:0:0:root:/root:/bin/bash\n{user}:x:{uid}:{gid}:U:{home}:/bin/bash\n", 0o644)
 
 
 def kit_layer(tmp_path, python_target="/usr/bin/python3.12", with_server=True, venv_version="3.12.3"):
@@ -211,3 +221,49 @@ def test_every_lazy_import_on_the_init_path_is_preloaded_before_the_pivot():
     allowed_elsewhere = {"ctypes", "main"}  # ctypes is also preloaded; `main` is the OSWorld server module of the fork arm (its own kit path, refused with a uid)
     assert lazy - set(SI.PRELOAD) - allowed_elsewhere == set(), lazy - set(SI.PRELOAD)
     SI.preload()
+
+
+def test_script_interpreters_and_the_elf_interpreter_are_checked_not_just_the_global_loader(tmp_path):
+    r = image_root(tmp_path, programs=("dbus-daemon", "openbox"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    mk(r, "/usr/bin/xvfb-run-like", "#!/usr/bin/nope\n")
+    assert any("interpreter /usr/bin/nope" in p for p in rc.interpreter_problems("x", "/usr/bin/xvfb-run-like", [r]))
+    mk(r, "/usr/bin/viaenv", "#!/usr/bin/env missingtool\n")
+    mk(r, "/usr/bin/env")
+    assert any("`missingtool` is not in the new root" in p for p in rc.interpreter_problems("x", "/usr/bin/viaenv", [r]))
+    mk(r, "/usr/bin/missingtool")
+    mk(r, "/usr/bin/shok", "#!/usr/bin/env missingtool\n")
+    assert rc.interpreter_problems("x", "/usr/bin/shok", [r]) == []
+    assert rc.shebang(os.path.join(r, "usr/bin/dbus-daemon")) is None
+    import shutil
+    shutil.copy("/usr/bin/true", os.path.join(r, "usr/bin/Xvfb"))
+    assert rc.elf_interp("/usr/bin/true").startswith("/lib")
+    mk(r, "/usr/lib/x86_64-linux-gnu/libc.so.6")
+    os.remove(os.path.join(r, "usr/lib64/ld-linux-x86-64.so.2"))
+    probs = rc.check_userland([t, r], kit=KIT)["problems"]
+    assert any("Xvfb's ELF interpreter /lib64/ld-linux-x86-64.so.2 is not in the new root" in p for p in probs), probs
+
+
+def test_xvfb_run_time_files_and_dlopen_names_are_named_and_limits_are_stated(tmp_path):
+    r = image_root(tmp_path, programs=("dbus-daemon", "openbox"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    out = rc.check_userland([t, r], kit=KIT)
+    assert out["problems"] == [] and any("may dlopen libGL.so.1" in w for w in out["warnings"]) and any("nothing here proves" in l for l in out["limits"])
+    os.remove(os.path.join(r, "usr/bin/xkbcomp"))
+    os.remove(os.path.join(r, "usr/share/X11/xkb/rules/evdev"))
+    probs = rc.check_userland([t, r], kit=KIT)["problems"]
+    assert any(p.startswith("xkbcomp is missing") for p in probs) and any("rules/evdev is missing" in p for p in probs)
+
+
+def test_the_gnome_chain_checks_a_finite_named_list_and_reports_the_unknowns_as_warnings(tmp_path):
+    r = image_root(tmp_path, programs=("dbus-daemon", "gnome-session", "gnome-shell", "xprop"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    kw = dict(kit=KIT, desktop="gnome", uid=1000, gid=1000, user="user", home="/home/user")
+    probs = rc.check_userland([t, r], **kw)["problems"]
+    for need in ("/usr/share/gnome-shell", "gschemas.compiled", "gnome-session-binary", "ubuntu-xorg.session", "'user' is not in the new root's /etc/passwd"):
+        assert any(need in p for p in probs), (need, probs)
+    gnome_files(r)
+    out = rc.check_userland([t, r], **kw)
+    assert out["problems"] == [] and any("no system bus and no logind" in w for w in out["warnings"]) and any("XDG_RUNTIME_DIR=/run/user/1000" in w for w in out["warnings"])
+    assert any("uid 1000 gid 1000, not 1001/1001" in p for p in rc.check_userland([t, r], **dict(kw, uid=1001, gid=1001))["problems"])
+    assert any("home as /home/user, not /home/other" in p for p in rc.check_userland([t, r], **dict(kw, home="/home/other"))["problems"])

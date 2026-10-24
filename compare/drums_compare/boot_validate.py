@@ -59,7 +59,7 @@ def run(a, deps=None):
         report["status"] = status
         json.dump(report, open(os.path.join(a.out, "boot_validation.json"), "w"), indent=1, default=str)
         return report
-    found = rootcheck.check_userland([a.overlay, a.root], kit=a.kit, desktop="gnome")
+    found = rootcheck.check_userland([a.overlay, a.root], kit=a.kit, desktop="gnome", uid=a.uid, gid=a.gid, user=a.user, home=a.home)
     if found["problems"]:
         report["problems"] = found["problems"]
         return finish("ABORT_ROOT")  # nothing was created or mounted

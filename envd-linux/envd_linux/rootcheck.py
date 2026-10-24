@@ -151,6 +151,101 @@ def elf_needed(path):
         return []
 
 
+def elf_interp(path):
+    """PT_INTERP (the program's own ELF interpreter path) of an ELF64 LE file, else None."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(64)
+            if h[:4] != b"\x7fELF" or h[4] != 2 or h[5] != 1:
+                return None
+            phoff, phentsize, phnum = struct.unpack_from("<Q", h, 32)[0], struct.unpack_from("<H", h, 54)[0], struct.unpack_from("<H", h, 56)[0]
+            for i in range(phnum):
+                f.seek(phoff + i * phentsize)
+                ptype, _, off, _, _, filesz, _, _ = struct.unpack("<IIQQQQQQ", f.read(56))
+                if ptype == 3:
+                    f.seek(off)
+                    return f.read(filesz).split(b"\0")[0].decode(errors="replace")
+    except (OSError, struct.error):
+        pass
+    return None
+
+
+def shebang(path):
+    """[interpreter, *args] of a `#!` script (first line only), else None."""
+    try:
+        with open(path, "rb") as f:
+            first = f.readline(256)
+    except OSError:
+        return None
+    return first[2:].decode(errors="replace").split() if first.startswith(b"#!") else None
+
+
+def interpreter_problems(prog, found, layers, depth=0):
+    """A program that is a script needs its `#!` interpreter (and, behind `/usr/bin/env`, the named program) in the root; an ELF needs its OWN PT_INTERP, not just the global loader."""
+    r = resolve(found, layers)
+    real = os.path.join(r[0], r[1].lstrip("/"))
+    out = []
+    ip = elf_interp(real)
+    if ip is not None and (resolve(ip, layers) is None):
+        out.append(f"{prog}'s ELF interpreter {ip} is not in the new root")
+    sb = shebang(real)
+    if sb and depth < 3:
+        tgt = sb[0]
+        if os.path.basename(tgt) == "env" and len(sb) > 1:
+            names = [x for x in sb[1:] if not x.startswith("-")]
+            tgt = find_program(names[0], layers) if names else None
+            if tgt is None:
+                return out + [f"{prog} is a script run through env, but `{names[0] if names else '?'}` is not in the new root"]
+        elif find_program(tgt, layers) is None:
+            return out + [f"{prog} is a script whose interpreter {tgt} is not an executable in the new root"]
+        out += interpreter_problems(f"{prog} (via {tgt})", tgt, layers, depth + 1)
+    return out
+
+
+RUNTIME_FILES = {  # (kind, path, why): checked for presence only. A file here is needed at run time and is NOT a DT_NEEDED
+    "Xvfb": [("exe", "xkbcomp", "Xvfb compiles its keymap with xkbcomp"), ("dir", "/usr/share/X11/xkb", "XKB keyboard data"), ("file", "/usr/share/X11/xkb/rules/evdev", "XKB rules")],
+}
+DLOPEN_NAMES = {  # sonames that may be dlopen()ed at run time: presence is reported as a WARNING only (whether they are needed is not known from the binary)
+    "Xvfb": ["libGL.so.1", "libGLX_mesa.so.0", "libgbm.so.1"],
+    "gnome-shell": ["libGL.so.1", "libEGL.so.1", "libGLESv2.so.2", "libgbm.so.1"],
+}
+LIMITS = ["DT_NEEDED and PT_INTERP are read statically; libraries opened with dlopen are only listed by name (DLOPEN_NAMES) and reported as warnings, never proven",
+          "ld.so.cache is not read; the search uses the standard directories plus /etc/ld.so.conf.d",
+          "programs started by other programs (gnome-session's children, Xvfb's helpers beyond xkbcomp) are not enumerated; the GNOME chain checks a finite named list, not the whole graph",
+          "nothing here proves that gnome-shell or Xvfb RUNS: only a live boot does"]
+
+
+def gnome_chain(layers, uid, gid, user, home):
+    problems, warnings = [], []
+    for d in ("/usr/share/gnome-shell", "/usr/share/glib-2.0/schemas"):
+        if resolve(d, layers) is None:
+            problems.append(f"{d} is not in the new root")
+    r = resolve("/usr/share/glib-2.0/schemas/gschemas.compiled", layers)
+    if r is None:
+        problems.append("/usr/share/glib-2.0/schemas/gschemas.compiled is missing: GSettings (gnome-shell, gnome-session) cannot start without compiled schemas")
+    if find_program("/usr/libexec/gnome-session-binary", layers) is None:
+        problems.append("/usr/libexec/gnome-session-binary is not an executable in the new root (gnome-session starts it)")
+    if resolve("/usr/share/gnome-session/sessions/ubuntu-xorg.session", layers) is None:
+        problems.append("/usr/share/gnome-session/sessions/ubuntu-xorg.session is missing (the session `--session=ubuntu-xorg` names it)")
+    pw = resolve("/etc/passwd", layers)
+    line = None
+    if pw:
+        for l in open(os.path.join(pw[0], pw[1].lstrip("/")), errors="replace"):
+            f = l.rstrip("\n").split(":")
+            if len(f) >= 6 and f[0] == user:
+                line = f
+    if line is None:
+        problems.append(f"user {user!r} is not in the new root's /etc/passwd (HOME, groups and GSettings need a real account)")
+    else:
+        if (int(line[2]) if line[2].isdigit() else -1) != uid or (int(line[3]) if line[3].isdigit() else -1) != gid:
+            problems.append(f"/etc/passwd has {user} as uid {line[2]} gid {line[3]}, not {uid}/{gid}")
+        if home and line[5] != home:
+            problems.append(f"/etc/passwd has {user}'s home as {line[5]}, not {home}")
+    warnings.append("no system bus and no logind/accountsservice/polkit run inside the session (dbus-daemon --session only); whether gnome-shell tolerates that is UNKNOWN until a live boot")
+    warnings.append(f"XDG_RUNTIME_DIR=/run/user/{uid} is created by the init (mode 0700, owned by the user) and not by logind")
+    return problems, warnings
+
+
 def lib_search_dirs(layers):
     dirs = list(LIB_DIRS)
     confd = resolve("/etc/ld.so.conf.d", layers)
@@ -219,7 +314,7 @@ def _python_minor_problems(kit, layers, interp):
     return out
 
 
-def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None):
+def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None, uid=-1, gid=-1, user="", home=None):
     """{"problems": [...], "warnings": [...]}. Problems are things the session needs at start-up and would not find; warnings are per-task needs."""
     layers = [L for L in layers if L and os.path.isdir(L)]
     problems, warnings = [], []
@@ -245,6 +340,20 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
         seen_libs.update(gone)
         if gone:
             problems.append(f"{prog} needs shared libraries that are not in the new root: {', '.join(gone)}")
+        problems += interpreter_problems(prog, found, layers)
+        base = os.path.basename(prog)
+        for kind, path, why in RUNTIME_FILES.get(base, []):
+            ok = (find_program(path, layers) is not None) if kind == "exe" else (resolve(path, layers) is not None)
+            if not ok:
+                problems.append(f"{path} is missing from the new root ({why}; needed by {base} at run time)")
+            elif kind == "exe":
+                x = resolve(find_program(path, layers), layers)
+                lost = missing_libraries(os.path.join(x[0], x[1].lstrip("/")), layers)
+                problems += [f"{path} needs shared libraries that are not in the new root: {', '.join(lost)}"] if lost else []
+        dirs = lib_search_dirs(layers)
+        for so in DLOPEN_NAMES.get(base, []):
+            if not any(resolve(f"{d}/{so}", layers) for d in dirs):
+                warnings.append(f"{base} may dlopen {so}, which is not in the new root (not proven needed)")
     if kit:
         if resolve(f"{kit}/server/main.py", layers) is None:
             problems.append(f"the kit's server ({kit}/server/main.py) is not visible in the new root: after the pivot the HOST's {kit} is gone unless it is placed in the template layer")
@@ -260,4 +369,11 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
         for prog in server_programs(server_main_source):
             if find_program(prog, layers) is None:
                 warnings.append(f"the pinned server runs `{prog}` for some tasks and it is not in the new root: those tasks would fail")
-    return {"problems": problems, "warnings": warnings}
+    if desktop == "gnome" and uid >= 0:
+        gp, gw = gnome_chain(layers, uid, gid, user, home)
+        problems += gp
+        warnings += gw
+        for so in DLOPEN_NAMES["gnome-shell"]:
+            if not any(resolve(f"{d}/{so}", layers) for d in lib_search_dirs(layers)):
+                warnings.append(f"gnome-shell may dlopen {so}, which is not in the new root (not proven needed)")
+    return {"problems": problems, "warnings": warnings, "limits": LIMITS}

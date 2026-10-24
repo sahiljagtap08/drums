@@ -41,6 +41,7 @@ def _ready_root(tmp_path):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "envd-linux", "tests"))
     import test_rootcheck as T
     r = T.image_root(tmp_path, programs=("dbus-daemon", "wmctrl", "gnome-session", "gnome-shell", "xprop"))
+    T.gnome_files(r)
     t = T.kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
     return r, t
 

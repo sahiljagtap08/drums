@@ -103,7 +103,7 @@ class Supervisor:
                 raise ValueError("base_root other than / needs osworld_real_kit so that the python the session will run can be resolved and version-checked inside the new root before any mount")
             if osworld_real_kit:  # BEFORE any mount: would the programs the session starts exist inside the new root? (the host's kit and python 3.12 vanish at the pivot)
                 from . import rootcheck
-                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb)
+                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb, uid=uid, gid=gid, user=user, home=home)
                 if found["problems"]:
                     raise ValueError("the new base root cannot run the session: " + "; ".join(found["problems"]))
         self.home, self.base_root = home, base_root
