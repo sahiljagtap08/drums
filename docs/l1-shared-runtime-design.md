@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 11 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 12 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -359,3 +359,65 @@ version with diagrams is `mechanism-b-shared-browser.md`.
 - Useful as a bound: about 125 MiB per session is browser-side state that is duplicated when each session has its own browser. That is
   the target for a mechanism that keeps per-session processes (next section).
 
+
+## 12. PROTOTYPE K pre-registration: page merging across sessions, with and without address-space randomisation (written and committed BEFORE any measurement)
+
+**PROTOTYPE of mechanism K. Not an L1 proof; `drums_level` stays L0.** Written after sections 9, 10 and 11, so the choice of mechanism
+below is argued from what those measured.
+
+### Why the evidence points here
+
+1. Section 9 (share bound): of about 231 MiB per session, the Python part that fork can reach is 51 MiB; Chromium is about 90 MiB
+   private; the rest is the other exec'd processes, 31.5 MiB of RAM-backed writable layer and kernel structures. So the cost is
+   mostly browser and desktop-stack processes that are started fresh in every session.
+2. Sections 10 and 11 (mechanism B, measured): putting every session's browser in ONE process cut the per-session memory from 229.8 to
+   104.6 MiB, so about 125 MiB per session is duplicated browser-side state. But B failed its isolation check
+   (a session that can reach the shared debugging endpoint can read and run script in its neighbours' pages) and it changes what the
+   agent observes (the browser window is not in the session's own display). A win over a tuned incumbent needs the same desktop semantics
+   and per-session isolation, so B is out as a path.
+3. Therefore the candidate must keep one browser process PER session, untouched, and remove the duplication from underneath: let the
+   kernel merge pages whose content is identical across those processes (kernel same-page merging, KSM). The sessions' processes,
+   namespaces, displays and tasks do not change, so observation semantics and process-level isolation are preserved by construction.
+4. The obstacle is address-space randomisation: identical browsers hold pointers at different random addresses, so pages that "should" be
+   identical differ. The design variant K2 turns randomisation off inside sessions so that identical startup work yields identical pages.
+   That is a security trade inside a benchmark sandbox, stated plainly, not hidden.
+
+Other candidates considered and why they rank lower on this evidence: CRIU restore reads saved pages into private memory, so it shares
+nothing by itself; userfaultfd lazy loading needs a shared base image of memory that live processes do not have; a custom browser build
+with partitioned renderers is a large build whose benefit is bounded by the same duplicated-state estimate and would change the browser
+under test. Any of them can still be tried later.
+
+**Prior art, and what counts.** Page merging is standard in virtual-machine hosts, and VM-based incumbents can use it too; per the
+project's framing a mechanism label is not the contribution. This milestone measures the INCREMENT of K over Drums' own existing arm
+(OFF), plus its CPU cost and its side channel. It does not measure an incumbent (no KVM here), so no claim against an incumbent follows
+from it; that needs the matched run (`matched-comparison-protocol.md`) with the incumbent's reuse and its own merging switched on.
+
+### Arms (identical sessions: real OSWorld guest server in module entry, per-session Chromium on its own Xvfb, overlay, namespaces)
+
+- **OFF**: no merge flag; randomisation as normal (the existing A0 arm).
+- **K1**: every session process is marked mergeable (`prctl(PR_SET_MEMORY_MERGE)` in the session's PID 1, inherited by its children);
+  randomisation as normal.
+- **K2**: K1 plus randomisation OFF for every process exec'd in the session (`personality(ADDR_NO_RANDOMIZE)`).
+
+Host settings, the same in all arms and recorded in the ledger before they are written and restored on close: KSM run = 1,
+`pages_to_scan` = 20000, `sleep_millisecs` = 2, `use_zero_pages` = 1 (aggressive on purpose, so convergence waits are short; its CPU
+cost is measured and reported, not hidden). Only processes that opt in are scanned, so the OFF arm is not merged.
+
+### Measurements
+
+| ID | Measurement | Design | PASS threshold (fixed now) |
+|---|---|---|---|
+| M-K1 memory | Marginal host memory per additional session: slope of (MemTotal - MemAvailable) against sessions at 1, 4, 8, 12, 16, 20, 3 trials per arm interleaved, after the merge counters settle (less than 1% change over 5 s, at most 90 s) | same method as sections 9 and 10 | **K2 slope <= 0.80 x OFF slope AND the 95% bootstrap interval of (OFF - K2) excludes 0.** K1 is reported against the same rule |
+| M-K2 CPU | CPU time of the merging thread divided by the trial's wall time | `/proc` accounting | <= 0.25 vCPU on average (a saving bought with more CPU than that is not free) |
+| M-K3 semantics | In K2: the session's guest contract checks and the real-server checks pass (accessibility tree, real pyautogui); one public OSWorld task still scores 0.0 then 1.0; sibling hygiene (separate PID, mount and network namespaces, own Xvfb) holds; randomisation is really off (mapping base addresses identical across two sessions) | direct checks | all hold |
+| M-K4 latency | Session create latency | 60 creations per arm from the memory trials | create p95 in K2 <= 1.10 x OFF |
+| M-K5 side channel | Can a process in one session detect, by write latency, that its page content also exists in another session | two probes in two sessions, shared-content versus unique-content pages | reported, no threshold; a clear gap means the known deduplication timing channel exists here |
+
+### Expected outcome, stated in advance so it can lose
+
+- K1: expected to FAIL M-K1 (a saving under about 10%), because pages that hold pointers differ under randomisation.
+- K2: genuinely uncertain. My estimate of the K2 to OFF slope ratio is 0.70 to 0.95, so the 0.80 threshold is not safe; I would put the chance of
+  passing near 40%. Browser startup is not fully deterministic (threads, timing), which limits identical pages even with randomisation off.
+- M-K2: the aggressive scan settings may cost more than 0.25 vCPU while sessions are being added; if so that fails M-K2 even if M-K1 passes.
+- M-K5: expected to show a clear gap (merged pages take a copy-on-write fault on write).
+- If K2 passes M-K1 only narrowly, or only at a CPU cost that fails M-K2, the report says exactly that.
