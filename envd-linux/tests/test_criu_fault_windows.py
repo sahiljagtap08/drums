@@ -109,6 +109,16 @@ def run_sweep(ledger, env, fault=None):
 @pytest.mark.skipif(_prereqs() is not None, reason=str(_prereqs()))
 @pytest.mark.parametrize("wid,op,point,sweep_fault", WINDOWS, ids=[w[0] for w in WINDOWS])
 def test_fault_window(tmp_path, wid, op, point, sweep_fault):
+    # A window is only meaningful on a clean host: a leftover CRIU, session or veth from an earlier window makes every later restore fail with "-17 File exists",
+    # which looks like a failure of the window under test (it did, in run 2). Refuse to run, and say so, instead of recording a misleading failure.
+    left = {"criu": _criu_procs(), "session_inits": [p for p, a in _argvs() if len(a) > 2 and a[1] == b"-m" and a[2] == b"envd_linux.session_init"],
+            "dvh": [n for n in os.listdir("/sys/class/net") if n.startswith("dvh")]}
+    if any(left.values()):
+        ev = os.environ.get("DRUMS_EVIDENCE_DIR")
+        if ev:
+            with open(os.path.join(ev, "fault_windows.jsonl"), "a") as f:
+                f.write(json.dumps({"window": wid, "INVALID": "host not clean before the window", "left": left}) + "\n")
+        pytest.fail(f"host not clean before window {wid}: {left}")
     state, ledger = str(tmp_path / "w"), str(tmp_path / "ledger")
     os.makedirs(state)
     env = dict(os.environ, PYTHONPATH=ROOT)

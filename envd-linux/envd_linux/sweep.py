@@ -53,7 +53,7 @@ _LOCK = threading.Lock()  # record() is read-modify-write on a file shared by al
 DEFAULT_LEDGER = "/run/drums"
 FORWARD = "/proc/sys/net/ipv4/ip_forward"
 EMPTY = {"killed": [], "links": [], "unmounted": [], "tables": [], "ip_forward_restored": None,
-         "entries_removed": [], "live_supervisors": [], "x11_links": [], "sysfs_restored": [], "cgroups": []}
+         "entries_removed": [], "live_supervisors": [], "x11_links": [], "sysfs_restored": [], "cgroups": [], "survivors": []}
 
 
 def _fault(point):
@@ -205,6 +205,42 @@ def _kill_tagged(tag):
     return killed
 
 
+def _kill_strays(entry):
+    """Processes of a dead run that carry NO tag: a CRIU restore killed half-way leaves a restorer and half-restored tasks whose command lines are CRIU's (the
+    session's own command line is restored last). Ownership is still by recorded paths, never by name alone: a `criu` process whose command line names this
+    run's state directory or one of its recorded mounts, and any process in a mount namespace OTHER than ours that holds a mount under this run's state
+    directory. Nothing is matched by substring of a tag, and an unrecorded path matches nothing (docs/l1-shared-runtime-design.md section 24)."""
+    paths = [entry.get("state_dir")] + list(entry.get("mounts", []))
+    paths = [p for p in paths if p]
+    if not paths:
+        return []
+    me, my_ns = os.getpid(), os.readlink("/proc/self/ns/mnt")
+    victims = set()
+    for d in os.listdir("/proc"):
+        if not d.isdigit() or int(d) == me:
+            continue
+        try:
+            argv = open(f"/proc/{d}/cmdline", "rb").read().decode(errors="ignore").split("\0")
+            if argv and os.path.basename(argv[0]) == "criu" and any(p in a for p in paths for a in argv):
+                victims.add(int(d))
+                continue
+            if os.readlink(f"/proc/{d}/ns/mnt") != my_ns and entry.get("state_dir") and entry["state_dir"] in open(f"/proc/{d}/mountinfo").read():
+                victims.add(int(d))
+        except OSError:
+            continue
+    for _ in range(3):  # a half-restored tree can still be forking
+        for pid in victims:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.1)
+    deadline = time.time() + 5
+    while time.time() < deadline and not all(_zombie_or_gone(p) for p in victims):
+        time.sleep(0.05)
+    return sorted(victims)
+
+
 def _unmount(points):
     done = []
     with open("/proc/self/mounts") as f:
@@ -260,7 +296,9 @@ def sweep(ledger=None, force=False):
     live_forward_setter = any(e.get("forward") for e in live)
 
     for e in sorted(dead, key=lambda e: e.get("t", 0)):
-        rep["killed"] += _kill_tagged(e["tag"])
+        k1, k2 = _kill_tagged(e["tag"]), _kill_strays(e)
+        rep["killed"] += k1 + k2
+        alive = [p for p in k1 + k2 if not _zombie_or_gone(p)]
         _fault("sweep.after_kill")
         rep["unmounted"] += _unmount(e.get("mounts", []))
         _fault("sweep.after_unmount")
@@ -294,6 +332,9 @@ def sweep(ledger=None, force=False):
                 rep["ip_forward_restored"] = fw["prior"]
         live_paths = {r["path"] for le in live for r in le.get("sysfs", [])}
         rep["sysfs_restored"] += restore_sysfs(e.get("sysfs", []), live_paths)
+        if alive:  # the run's processes could not be reaped: keep the ledger entry, or the survivors become unowned and unreachable for good
+            rep["survivors"] += alive
+            continue
         unregister(e["_path"])
         rep["entries_removed"].append(e["pid"])
     return rep
