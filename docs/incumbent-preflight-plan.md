@@ -81,6 +81,19 @@ Concurrency 1; the same local task (`e0df059f`) and the same scripted agent on b
 
 **Preflight on this host (`preflight_probe.json`).** `go_incumbent` False (no vmx/svm flag, no `/dev/kvm`, no VirtualBox), `go_drums` True, `go_drums_restore` False (no `ip` on PATH; a private `ip` exists in the CRIU directory but the static check looks at PATH), `go_joint_run_on_this_host` False. The three Drums runtime probes (namespaces, overlay, cgroup limits) succeeded; the VirtualBox hardware probe is unsupported; the four gates are untested.
 
+## 8c. Per-session resource capture on the Drums smoke (MEASURED as a driver run; raw data `docs/data/l1-criu/first_check_smoke_limits/` (invalid first attempt) and `first_check_smoke_v1/` (corrected))
+
+`envd_linux/cgroup_telemetry.py` samples (every 0.2 s) the ACTUAL session cgroups of the Drums arm and reads back what the kernel holds. **First attempt kept raw and INVALID for CPU and memory:** this host is cgroup v1 and the probe only read v2 files, so those figures were zeros (see that directory's README). Corrected run (same two ABBA blocks, task `e0df059f`, 12 of 12 valid, no faults, session cgroups at the incumbent shape):
+
+| Observed per Drums session (this host, this one trivial task) | Value |
+|---|---|
+| limits as read back from the kernel | cfs quota 200000 per period 100000 (2 CPU), memory limit 4294967296 (4 GiB), memsw limit 4 GiB (no swap), pids 4096 |
+| processes in the session cgroup | 9 to 10 at the sampled moments; 0 empty samples in every block, including the checkpoint-reuse arm after restores |
+| memory peak | about 86 to 95 MiB (sampled and kernel `max_usage_in_bytes`) |
+| CPU | 1.0 to 4.0 s per block, a LOWER BOUND: summed from `/proc/<pid>/stat` of pids seen in the cgroup, because on cgroup v1 `cpuacct` is a separate mount the sessions are not placed in (so there is no per-session CPU counter without a product change, not made) |
+
+**What this does and does not show.** The Drums side's limits are applied and the sessions stay inside them on this host. **Resource parity is still NOT claimed** (`resource_parity_claimed: false`): the incumbent VM's vCPU and RAM settings are unverified (no VM exists here), the VM has no per-environment capture, the memory figure is 2 percent of the limit on a trivial task (it says nothing about limit pressure), and CPU is a sampled lower bound.
+
 ## 9. If no suitable existing host or image exists
 
 A rental proposal is written LATER, only after the owner confirms what is already available and after access, quota and price checks have been done by the owner. It would be a bounded, priced proposal (host type, duration, shutdown, cost ceiling). **It is not approved, not priced and not requested here.**

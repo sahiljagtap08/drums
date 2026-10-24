@@ -1,0 +1,104 @@
+{
+ "summary": {
+  "arm": "drums_post_setup",
+  "rollouts": 3,
+  "valid": 3,
+  "faults": {},
+  "wall_s": 11.997236490249634,
+  "open_s": 1.7553026676177979,
+  "valid_per_hour": 900.2073109734356,
+  "cost_usd": 11.997236490249634,
+  "cost_per_valid_usd": 3.9990788300832114,
+  "rollout_wall_p50_s": 3.0583415031433105,
+  "rollout_wall_p95_s": 4.1518659591674805,
+  "reuse": {
+   "phases": {
+    "setup+save": {
+     "n": 1,
+     "reset_sum_s": 1.9433016777038574,
+     "reset_mean_s": 1.9433016777038574
+    },
+    "revert": {
+     "n": 2,
+     "reset_sum_s": 1.6893846988677979,
+     "reset_mean_s": 0.8446923494338989
+    }
+   },
+   "valid_by_state_kind": {
+    "setup_only": 3
+   },
+   "first_rollout_work_s": 1.9433016777038574
+  },
+  "interference_count": 0,
+  "canary_clean": 3,
+  "canary_unsupported": 0,
+  "canary_enabled": true,
+  "reset_mean_s": 1.2108954588572185,
+  "memory": {
+   "baseline_kib": 1594936,
+   "samples": 11,
+   "peak_kib": 1705820,
+   "mean_kib": 1667714.5454545454,
+   "peak_delta_per_env_mib": 108.28515625
+  },
+  "prices": {
+   "host_usd_per_hour": 3600.0,
+   "hosts": 1,
+   "fixed_usd": 0.0,
+   "label": "driver smoke placeholder, not a price"
+  }
+ },
+ "rows": [
+  {
+   "arm": "drums_post_setup",
+   "task_id": "e0df059f-28a6-4169-924f-b9623e7184cc",
+   "seq": 0,
+   "worker": 0,
+   "reset_s": 1.9433016777038574,
+   "wall_s": 4.1518659591674805,
+   "steps": 1,
+   "score": 1.0,
+   "fault": null,
+   "valid": true,
+   "t_start": 1792841943.9183128,
+   "reuse_phase": "setup+save",
+   "state_kind": "setup_only",
+   "canary": "clean",
+   "canary_seen": []
+  },
+  {
+   "arm": "drums_post_setup",
+   "task_id": "e0df059f-28a6-4169-924f-b9623e7184cc",
+   "seq": 1,
+   "worker": 0,
+   "reset_s": 0.8338384628295898,
+   "wall_s": 3.0308687686920166,
+   "steps": 1,
+   "score": 1.0,
+   "fault": null,
+   "valid": true,
+   "t_start": 1792841948.0701888,
+   "reuse_phase": "revert",
+   "state_kind": "setup_only",
+   "canary": "clean",
+   "canary_seen": []
+  },
+  {
+   "arm": "drums_post_setup",
+   "task_id": "e0df059f-28a6-4169-924f-b9623e7184cc",
+   "seq": 2,
+   "worker": 0,
+   "reset_s": 0.855546236038208,
+   "wall_s": 3.0583415031433105,
+   "steps": 1,
+   "score": 1.0,
+   "fault": null,
+   "valid": true,
+   "t_start": 1792841951.101064,
+   "reuse_phase": "revert",
+   "state_kind": "setup_only",
+   "canary": "clean",
+   "canary_seen": []
+  }
+ ]
+}

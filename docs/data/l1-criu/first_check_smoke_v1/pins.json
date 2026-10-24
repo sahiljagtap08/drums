@@ -1,0 +1,12 @@
+{
+ "smoke": true,
+ "task": "e0df059f-28a6-4169-924f-b9623e7184cc",
+ "sequence": [
+  "e0df059f-28a6-4169-924f-b9623e7184cc",
+  "e0df059f-28a6-4169-924f-b9623e7184cc",
+  "e0df059f-28a6-4169-924f-b9623e7184cc"
+ ],
+ "composition_manifest": "docs/data/l1-criu/drums_composition_manifest.json",
+ "prices": "placeholder 3600 USD/hour, so cost == seconds; not a price",
+ "pool": "DrumsSessionPool(4, eager_reset=False)"
+}
