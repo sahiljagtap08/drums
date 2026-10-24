@@ -259,3 +259,56 @@ hit every one of the findings above, and it is exec'd in every arm. That is an i
 - Open, not run: whether another mechanism (page merging, checkpoint/restore, a different process model for the browser) reaches the
   Chromium memory; none was attempted. The design doc's section 3 entries K and R remain candidates with unknown feasibility.
 
+## 10. PROTOTYPE B pre-registration: shared browser branching (written and committed BEFORE any measurement)
+
+**PROTOTYPE of mechanism B. Not an L1 proof; `drums_level` stays L0.** Section 9 showed that mechanism F cannot reach the browser, where
+most per-session memory is. Mechanism B changes the unit of sharing: ONE warmed Chromium browser process tree per host, each session
+attached as its own PROFILE inside it, instead of one exec'd browser per session.
+
+### The design under test, and its honest constraints
+
+- One Chromium started once on the host, with remote debugging, one `--user-data-dir`. A session is attached by launching
+  `chrome --user-data-dir=<shared> --profile-directory=<SlotN> <url>`, which hands off to the running browser and opens a window
+  of that profile there. Each profile directory is a copy of the template profile (the copy cost is part of the attach latency).
+- **The isolation unit becomes a Chromium profile. That is WEAKER than process isolation**: the browser process, the network service,
+  the GPU process, the DNS and socket machinery and the debugging endpoint are shared by every session.
+- **A shared browser cannot draw into per-session X servers.** It connects to one X display, so every profile's windows live in
+  one host-level Xvfb, not in the sessions' own Xvfb (which the sessions still have, for the guest server and the desktop stack).
+  Consequence to be shown, not assumed: a session's own screenshot does not contain its browser window, so an OSWorld-style
+  observation (an X screenshot of the session) would be blank for the browser, and browser files (downloads, profile data) live
+  outside the session's filesystem. Making the observation work would need per-target capture over CDP, which is a different
+  observation path. This prototype measures memory, latency and isolation only; it does not claim OSWorld equivalence.
+- The shared debugging endpoint is reachable from each session's network namespace through its gateway address (the firewall
+  allows a session to reach its own gateway on any port). It is a candidate cross-profile channel and is tested as one.
+
+### Arms (identical in everything else: same sessions, real OSWorld guest server in `module` entry, Xvfb, openbox, D-Bus, AT-SPI, overlay, network namespaces, template profile)
+
+- **A0 (cold, the existing arm)**: each session execs its own Chromium (as C1 in section 9), headful on the session's Xvfb.
+- **B (shared browser)**: the sessions run no browser; one shared headful Chromium on a host Xvfb; session k attaches profile `Slot<k>`.
+
+### Measurements, N >= 20 per arm, arms interleaved
+
+| ID | Measurement | Design | PASS threshold (fixed now) |
+|---|---|---|---|
+| M1 memory | Marginal host memory per additional session: slope of (MemTotal - MemAvailable) against attached sessions at 1, 4, 8, 12, 16, 20; 4 trials per arm; the shared browser's fixed cost (browser started, zero extra profiles) is measured separately and reported, and excluded from the slope but included in the total at N = 20 | same method as section 9(a) | B slope <= 0.80 x A0 slope AND the 95% bootstrap interval of (A0 - B) over trials excludes 0 |
+| M2 latency | Browser-ready latency, same interval in both arms: A0 = Chromium spawn to its page title visible; B = attach command (including the profile copy) to the profile's page title visible over CDP; 20 per arm, 2 discarded warm-ups, interleaved | in-session marks for A0, host-side polling for B | B p95 < A0 p95 AND B p50 <= 0.7 x A0 p50 |
+| M3 storage isolation | 20 profiles attached at once; profile k writes a unique tag to cookies, localStorage, IndexedDB and a cached HTTP resource of the SAME origin; every profile then reads back | 20 x 4 stores; the server also logs the Cookie header and cache hits | 0 foreign tags observed anywhere and 0 cross-profile cache hits |
+| M4 targets and routing | The 20 page targets: distinct target ids, distinct browser-context ids, each opened in the intended profile (verified through `chrome://version` Profile Path); 20 concurrent attaches, 3 repetitions | CDP | 60 of 60 correct |
+| M5 shared-channel exposure | From INSIDE a session's network namespace: can it reach the shared debugging endpoint; can it list sibling targets (titles, URLs); can it execute script in a sibling target; what does `SystemInfo.getProcessInfo` reveal about other profiles' processes | direct tests; also enumerate by process tree what is shared by design (network service, GPU, utility processes) and test cross-profile socket reuse (client source ports seen by the server) | **Any cross-profile observation or influence path counts as a leak = the isolation check FAILS** (reported, not patched over) |
+| M6 display and observation | A session's own screenshot before and after its profile is attached: is the browser window in it | hash comparison | reported (expected: no) |
+| M7 blast radius | Kill one profile's renderer; kill the GPU process; kill the browser main process: which other attached profiles survive | direct tests with 4 profiles | reported |
+
+### Expected outcome, stated in advance so it can lose
+
+- M1: a real saving is expected (the browser, GPU, network and zygote processes are not repeated per session), but modest, because every
+  profile window still gets its own renderer process. My estimate of the slope ratio is 0.65 to 0.85, so the 0.80 threshold is close to a
+  coin flip; the fixed cost of the shared browser will eat part of it at small N.
+- M2: probably FAIL. Handing off to a running browser still starts a transient browser process and copies a profile, which I expect to cost
+  about as much as the cold launch (0.35 s) it replaces.
+- M3 and M4: expected PASS (Chromium keeps cookie, storage and cache state per profile; target mapping should hold unless concurrent
+  handoffs race on the singleton lock).
+- M5: expected to FAIL the isolation check: one debugging endpoint serves every target, so a session that can reach it can enumerate and
+  drive its siblings. A per-session filtering proxy would be needed and is NOT part of this milestone.
+- If the browser process model blocks safe branching (crashes, profile cross-talk, target confusion), the failure is documented in
+  hazard-test style as a result.
+
