@@ -32,7 +32,9 @@ def import_desktop_env():
 de = import_desktop_env()
 from drums_compare import first_check as fc  # noqa: E402
 from drums_compare import osworld_matched as om  # noqa: E402
+from envd_linux import limits as lim  # noqa: E402
 from envd_linux import realkit  # noqa: E402
+from envd_linux.cgroup_telemetry import CgroupProbe  # noqa: E402
 from envd_linux.criu import Criu  # noqa: E402
 from envd_linux.scalecua.pool import DrumsSessionPool  # noqa: E402
 from envd_linux.session import Supervisor  # noqa: E402
@@ -40,12 +42,13 @@ from envd_linux.template import build_home_template  # noqa: E402
 
 task_file, out_dir = sys.argv[1], sys.argv[2]
 blocks = int(sys.argv[3]) if len(sys.argv) > 3 else 2
+with_limits = len(sys.argv) > 4 and sys.argv[4] == "limits"  # session cgroups at the incumbent shape (2 CPU, 4 GiB) plus per-session capture
 os.makedirs(out_dir, exist_ok=True)
 tmp = os.path.join(out_dir, "work")
 os.makedirs(tmp, exist_ok=True)
 task = json.load(open(task_file))
 RENAME = "import os; os.rename(os.path.expanduser('~/Desktop/todo_list_Jan_1'), os.path.expanduser('~/Desktop/todo_list_Jan_2'))"
-result = {"driver_smoke_only": True, "task": task["id"], "blocks": blocks}
+result = {"driver_smoke_only": True, "task": task["id"], "blocks": blocks, "session_cgroup_limits": with_limits}
 sup = None
 try:
     t0 = time.time()
@@ -55,7 +58,7 @@ try:
     os.makedirs(os.path.join(tpl, "home", "drums", "Desktop"), exist_ok=True)
     sup = Supervisor(os.path.join(tmp, "state"), tpl, root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
                      init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120,
-                     criu_friendly=True, criu=Criu(), sweep_dir=os.path.join(tmp, "led"))
+                     criu_friendly=True, criu=Criu(), sweep_dir=os.path.join(tmp, "led"), limits=lim.INCUMBENT_SHAPE if with_limits else None)
     pool = DrumsSessionPool(sup, 4, health_timeout=90, eager_reset=False)
     prep_s = time.time() - t0
     result["prep_s_before_driver_clock"] = prep_s
@@ -70,7 +73,8 @@ try:
     pins = {"smoke": True, "task": task["id"], "sequence": seq, "composition_manifest": "docs/data/l1-criu/drums_composition_manifest.json",
             "prices": "placeholder 3600 USD/hour, so cost == seconds; not a price", "pool": "DrumsSessionPool(4, eager_reset=False)"}
     summary = fc.run_alternating(arms, {task["id"]: task}, seq, lambda: om.ScriptedAgent({task["id"]: [RENAME]}), blocks, {n: price for n in arms}, out_dir, pins,
-                                 concurrency=1, max_steps=3, external_prep={n: prep_s for n in arms})
+                                 concurrency=1, max_steps=3, external_prep={n: prep_s for n in arms},
+                                 env_probes={n: CgroupProbe(lambda: [d for cg in list(sup._cgroups.values()) for d in cg.dirs]) for n in arms} if with_limits else None)
     result["summary"] = summary
 except Exception as e:  # kept raw
     result["error"] = f"{type(e).__name__}: {e}"

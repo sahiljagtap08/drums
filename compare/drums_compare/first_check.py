@@ -8,8 +8,9 @@ creates sessions lazily on first use unless it was warmed beforehand), the first
 the factory time is measured per block (`adapter_build_s`) and any earlier preparation is passed in as `external_prep` ({arm: seconds}); the summary carries cost and cost per valid
 rollout both WITHOUT and WITH that preparation, and the raw ratio uses the WITH figures. Nothing here says that all pool or image build is counted.
 
-RESOURCES. Host-wide memory (sampled from /proc/meminfo during each block) and host-wide CPU (busy time from /proc/stat across each block) are recorded. Per-environment figures (a
-VM process against a session cgroup) are NOT captured: `resource_parity_claimed` is False and the per-environment capture is marked MISSING.
+RESOURCES. Host-wide memory (sampled from /proc/meminfo during each block) and host-wide CPU (busy time from /proc/stat across each block) are recorded. PER-ENVIRONMENT capture
+is recorded only for an arm given an `env_probes` entry (for Drums: the session cgroups, `envd_linux/cgroup_telemetry.py`); an arm without one is MISSING, and there is none for a VM.
+`resource_parity_claimed` is False and stays False until the VM's settings and the Drums cgroup limits are both verified as applied and both arms have per-environment capture.
 
 Real arms (needs a host that can run the incumbent: see the preflight plan) are built with `real_arms`; the fake-adapter test shows the driver's own accounting."""
 
@@ -45,10 +46,12 @@ def real_arms(pool, vbox_path_to_vm, reuse="post_setup", desktop_env_module=None
 
 
 def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, out_dir, pins, concurrency=1, max_steps=50, canary=True, clock=time.time,
-                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0):
+                    external_prep=None, mem_reader=host_used_kib, cpu_reader=host_cpu_busy_s, mem_period=1.0, env_probes=None):
     """arms: {name: callable -> fresh Adapter}; prices: {name: Prices} (the owner's own price inputs); pins: any JSON-able facts (versions, commits, settings);
     external_prep: {arm: seconds} of preparation done BEFORE this call (reported, and added in the 'with prep' figures). mem_reader / cpu_reader may be None to record nothing
-    (then the telemetry is reported as MISSING, never as zero)."""
+    (then the telemetry is reported as MISSING, never as zero). env_probes: {arm: object with begin() and end() -> dict} for PER-ENVIRONMENT capture (e.g. the session cgroups
+    of a Drums arm); an arm without a probe is reported as MISSING for it."""
+    env_probes = env_probes or {}
     external_prep = external_prep or {}
     names = list(arms)
     if len(names) != 2:
@@ -56,7 +59,7 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
     os.makedirs(out_dir, exist_ok=True)
     json.dump(pins, open(os.path.join(out_dir, "pins.json"), "w"), indent=1, default=str)
     per_arm = {n: {"blocks": 0, "rollouts": 0, "valid": 0, "faults": {}, "wall_s": 0.0, "cost_usd": 0.0, "first_rollout_work_s": 0.0, "interference": 0, "adapter_build_s": 0.0,
-                   "external_prep_s": float(external_prep.get(n, 0.0)), "host_memory_blocks": [], "host_cpu_busy_s_blocks": [], "results": []} for n in names}
+                   "external_prep_s": float(external_prep.get(n, 0.0)), "host_memory_blocks": [], "host_cpu_busy_s_blocks": [], "per_environment_blocks": [], "results": []} for n in names}
     order = []
     for i in range(blocks):
         for n in (names if i % 2 == 0 else names[::-1]):
@@ -65,8 +68,13 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
             adapter = arms[n]()
             per_arm[n]["adapter_build_s"] += time.time() - tb
             c0 = cpu_reader() if cpu_reader else None
+            probe = env_probes.get(n)
+            if probe:
+                probe.begin()
             res = run_arm(adapter, tasks_by_id, sequence, agent_factory, concurrency, prices[n], max_steps=max_steps, clock=clock, canary=canary,
                           mem_reader=mem_reader, mem_period=mem_period)
+            if probe:
+                per_arm[n]["per_environment_blocks"].append(probe.end())
             if cpu_reader:
                 per_arm[n]["host_cpu_busy_s_blocks"].append(cpu_reader() - c0)
             per_arm[n]["host_memory_blocks"].append(res["summary"].get("memory"))
@@ -84,7 +92,8 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
             a["results"].append(res)
     summary = {"engineering_validation_only": True, "no_headline_claim": True, "no_training_claim": True, "block_order": order, "concurrency": concurrency, "arms": {},
                "resource_parity_claimed": False,
-               "per_environment_resource_capture": "MISSING: only host-wide memory and CPU are recorded; no per-VM or per-session figures, so no resource-parity statement can be made",
+               "per_environment_resource_capture": {n: ("captured (see arms[].per_environment)" if n in env_probes else "MISSING") for n in names},
+               "resource_parity_requires": "the incumbent VM's settings verified (vCPU, RAM) AND the Drums cgroup limits verified as applied to every live session, plus per-environment capture on BOTH arms; none of that holds",
                "preparation_note": "run_arm clock excludes anything done before run_alternating and the arm-factory time; those are reported as external_prep_s and adapter_build_s and added in the *_with_prep figures"}
     for n, a in per_arm.items():
         o = {k: v for k, v in a.items() if k != "results"}
@@ -96,6 +105,7 @@ def run_alternating(arms, tasks_by_id, sequence, agent_factory, blocks, prices, 
         o["valid_per_hour_run_arm_only"] = (a["valid"] / (a["wall_s"] / 3600)) if a["wall_s"] else None
         o["valid_per_hour_with_prep"] = (a["valid"] / ((a["wall_s"] + prep_s) / 3600)) if (a["wall_s"] + prep_s) else None
         o["host_memory"] = "MISSING (no reader)" if mem_reader is None else [m for m in a["host_memory_blocks"]]
+        o["per_environment"] = a["per_environment_blocks"] if n in env_probes else "MISSING (no probe)"
         o["host_cpu_busy_s"] = "MISSING (no reader)" if cpu_reader is None else a["host_cpu_busy_s_blocks"]
         summary["arms"][n] = o
     if all(per_arm[n]["valid"] for n in names):

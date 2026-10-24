@@ -436,7 +436,7 @@ def test_alternating_blocks_keep_first_rollout_work_in_every_block_and_make_no_c
     assert s["engineering_validation_only"] and s["no_headline_claim"] and s["no_training_claim"] and "win" not in json.dumps(s)
     assert (tmp_path / "pins.json").exists() and (tmp_path / "block3_A.json").exists() and (tmp_path / "summary.json").exists()
     assert s["arms"]["A"]["interference"] == 0
-    assert s["resource_parity_claimed"] is False and s["per_environment_resource_capture"].startswith("MISSING")
+    assert s["resource_parity_claimed"] is False and s["per_environment_resource_capture"] == {"A": "MISSING", "B": "MISSING"} and s["arms"]["A"]["per_environment"] == "MISSING (no probe)"
 
 
 
@@ -459,3 +459,27 @@ def test_first_check_reports_preparation_and_telemetry_instead_of_hiding_them(tm
     s2 = fc.run_alternating({"A": arm, "B": arm}, tasks, ["a"], lambda: om.ScriptedAgent({}), 2, {"A": PRICE, "B": PRICE}, str(tmp_path / "n"), {}, clock=clk,
                             mem_reader=None, cpu_reader=None)
     assert s2["arms"]["A"]["host_memory"] == "MISSING (no reader)" and s2["arms"]["A"]["host_cpu_busy_s"] == "MISSING (no reader)"
+
+
+def test_a_per_environment_probe_is_recorded_for_its_arm_only_and_never_implies_parity(tmp_path):
+    from drums_compare import first_check as fc
+
+    class Probe:
+        n = 0
+
+        def begin(self):
+            Probe.n += 1
+
+        def end(self):
+            return {"cgroups": {"x": {"cpu_s_lower_bound": 1.0}}, "block": Probe.n}
+
+    clk = Clock()
+
+    def make():
+        SnapEnv.clock = clk
+        return om.DesktopEnvAdapter("x", om.incumbent_factory("vmware", path_to_vm="/vm", desktop_env_module=SnapModule), reuse="none")
+    SnapEnv.log = []
+    s = fc.run_alternating({"A": make, "B": make}, {"a": {"id": "a", "config": []}}, ["a"], lambda: om.ScriptedAgent({}), 2, {"A": PRICE, "B": PRICE}, str(tmp_path), {},
+                           clock=clk, mem_reader=None, cpu_reader=None, env_probes={"A": Probe()})
+    assert [b["block"] for b in s["arms"]["A"]["per_environment"]] == [1, 2] and s["arms"]["B"]["per_environment"] == "MISSING (no probe)"
+    assert s["per_environment_resource_capture"]["B"] == "MISSING" and s["resource_parity_claimed"] is False
