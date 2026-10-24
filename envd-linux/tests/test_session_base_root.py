@@ -35,10 +35,10 @@ def test_another_base_root_needs_full_mode_an_existing_directory_and_no_crio_or_
     # constructing full mode would mount the template; every refusal below must stop BEFORE that
     with pytest.raises(ValueError, match="needs root_mode='full'"):
         sup(tmp_path, root_mode="home", base_root=str(img))
-    with pytest.raises(ValueError, match="incompatible with CRIU"):
+    with pytest.raises(ValueError, match="needs image_sha256"):
         sup(tmp_path, root_mode="full", base_root=str(img), criu_friendly=True)
-    with pytest.raises(ValueError, match="incompatible with CRIU"):
-        sup(tmp_path, root_mode="full", base_root=str(img), restore_from=object())
+    with pytest.raises(ValueError, match="needs image_sha256"):
+        sup(tmp_path, root_mode="full", base_root=str(img), restore_from=object(), image_sha256="short")
     with pytest.raises(ValueError, match="not a directory"):
         sup(tmp_path, root_mode="full", base_root=str(tmp_path / "missing"))
     with pytest.raises(ValueError, match="must not contain one another"):

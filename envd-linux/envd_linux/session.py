@@ -10,6 +10,7 @@ overlay of the whole root filesystem, a window manager."""
 import json
 import os
 import re
+from . import baseid
 import uuid
 import shutil
 import signal
@@ -62,7 +63,7 @@ class Supervisor:
                  sweep_on_start=True, sweep_dir=None, osworld_real_kit=None, exec_systemd=False,
                  zygote=None, init_python=None, server_mode="asshipped", workload="", ready_timeout=30,
                  ksm=False, no_aslr=False, limits=None, cgroup_root=None, criu_friendly=False, criu=None, restore_from=None, restore_reseed=True,
-                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user="", system_bus=False):
+                 home=HOME, base_root="/", desktop="openbox", uid=-1, gid=-1, user="", system_bus=False, image_sha256=None):
         """root_mode "home": overlay on $HOME only. "full": private copy-on-write view of the
         whole root filesystem (pivot_root). netns: a network namespace per session (veth,
         10.200.<slot>.0/30). osworld_port: start the OSWorld guest-server stub in the session.
@@ -92,8 +93,8 @@ class Supervisor:
         if base_root != "/":
             if root_mode != "full":
                 raise ValueError("base_root other than / needs root_mode='full'")
-            if criu_friendly or restore_from is not None:
-                raise ValueError("base_root other than / is incompatible with CRIU: the restore path assumes '/' as a lower layer")
+            if (criu_friendly or restore_from is not None) and not (isinstance(image_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", image_sha256)):
+                raise ValueError("base_root other than / with CRIU needs image_sha256 (the pinned image's sha256): a checkpoint records the base it ran on and a restore refuses a different one (envd_linux/baseid.py)")
             for name, val in (("base_root", base_root), ("home", home), ("state_dir", state_dir), ("lower_home", lower_home or "/")):  # these reach overlayfs mount OPTIONS, where : , \\ and newlines are separators
                 if not (isinstance(val, str) and re.fullmatch(r"[A-Za-z0-9_./-]+", val)):
                     raise ValueError(f"{name} {val!r} may use only letters, digits and _ . / - when base_root is not / (overlay options would otherwise be injectable)")
@@ -105,10 +106,10 @@ class Supervisor:
                 raise ValueError("base_root other than / needs osworld_real_kit so that the python the session will run can be resolved and version-checked inside the new root before any mount")
             if osworld_real_kit:  # BEFORE any mount: would the programs the session starts exist inside the new root? (the host's kit and python 3.12 vanish at the pivot)
                 from . import rootcheck
-                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb, uid=uid, gid=gid, user=user, home=home, system_bus=system_bus)
+                found = rootcheck.check_userland([lower_home, base_root], kit=osworld_real_kit, desktop=desktop, xvfb=xvfb, uid=uid, gid=gid, user=user, home=home, system_bus=system_bus, criu=bool(criu_friendly or restore_from is not None), pkg_dir=PKG_DIR, init_python=init_python)
                 if found["problems"]:
                     raise ValueError("the new base root cannot run the session: " + "; ".join(found["problems"]))
-        self.home, self.base_root = home, base_root
+        self.home, self.base_root, self.image_sha256 = home, base_root, image_sha256
         self.desktop, self.uid, self.gid, self.user, self.system_bus = desktop, uid, gid, user, system_bus
         self.root_mode, self.netns, self.osworld_port = root_mode, netns, osworld_port
         self.sweep_dir, self._ledger = sweep_dir, None
@@ -397,7 +398,8 @@ class Supervisor:
         shutil.rmtree(d, ignore_errors=True)
         ck.write_meta(clean=bool(clean), has_browser=(self.workload == "chromium"), inner_if=info.get("inner_if", f"dvs{slot}"),
                       layers=[os.path.join(layer, "upper")] + list(self._slot_layers.get(slot, [])), display=info["display"], lower=self.lower, root_mode=self.root_mode, dump_seconds=res["seconds"],
-                      source_ip=info.get("ip"), image_bytes=sum(os.path.getsize(os.path.join(ck.img, f)) for f in os.listdir(ck.img)))
+                      source_ip=info.get("ip"), image_bytes=sum(os.path.getsize(os.path.join(ck.img, f)) for f in os.listdir(ck.img)),
+                      **baseid.current_identity(self))
         del proc
         return ck
 
@@ -405,6 +407,9 @@ class Supervisor:
         from . import criu as cr
         from . import sweep as sw
         meta, d = ck.meta(), self._dir(slot)
+        problems = baseid.check_restore(meta, baseid.current_identity(self))
+        if problems:  # judged BEFORE any directory, mount, link or process exists
+            raise SessionError("refusing to restore this checkpoint: " + "; ".join(problems))
         layers = list(meta.get("layers") or [os.path.join(ck.path, "layer", "upper")])
         shutil.rmtree(d, ignore_errors=True)
         for sub in ("x11", "root"):
@@ -424,7 +429,7 @@ class Supervisor:
         self._fault("restore.before_overlay")
         t0 = time.time()
         subprocess.run(["mount", "-t", "overlay", "overlay", "-o",
-                        f"lowerdir={':'.join(layers)}:{meta['lower']}:/,upperdir={upper},workdir={work},redirect_dir=on", root],
+                        f"lowerdir={baseid.restore_lowerdir(layers, meta['lower'], meta.get('base_root') or '/')},upperdir={upper},workdir={work},redirect_dir=on", root],
                        check=True)
         self._fault("restore.after_overlay")
         sw.record(self._ledger, "links", f"dvh{slot}")  # CRIU creates the host end; recorded first

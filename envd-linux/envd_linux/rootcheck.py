@@ -320,6 +320,35 @@ def find_program(name, layers):
     return None
 
 
+STAGE2_MODULES = ("session_init.py", "clone.py")
+
+
+def stage2_problems(layers, pkg_dir, init_python):
+    """A CRIU-friendly session RE-EXECUTES its init after the pivot (`os.execv(sys.executable, [..., "-m", "envd_linux.session_init", ...])`), so the interpreter and the `envd_linux` package must exist at the
+    SAME paths inside the new root, and the modules that exec runs must parse under THAT root's Python (the host's 3.12 is gone after the pivot)."""
+    out = []
+    if not pkg_dir:
+        return ["the stage-2 exec needs the envd_linux package directory (pkg_dir) to check"]
+    ip = resolve(init_python, layers) if init_python else None
+    if ip is None or not os.access(os.path.join(ip[0], ip[1].lstrip("/")), os.X_OK):
+        out.append(f"the stage-2 interpreter {init_python} does not resolve to an executable in the new root")
+    py = resolve("/usr/bin/python3", layers)
+    got = _minor(os.path.basename(py[1]).replace("python", "")) if py else None
+    if got is None:
+        out.append("the new root has no /usr/bin/python3 resolving to a python3.X: the stage-2 modules cannot be judged against its Python")
+    for m in STAGE2_MODULES:
+        r = resolve(f"{pkg_dir}/envd_linux/{m}", layers)
+        if r is None:
+            out.append(f"{pkg_dir}/envd_linux/{m} is not visible in the new root: the stage-2 exec (-m envd_linux.session_init) would fail after the pivot; place the package in the template layer at the same path")
+            continue
+        if got:
+            try:
+                ast.parse(open(os.path.join(r[0], r[1].lstrip("/"))).read(), feature_version=got)
+            except SyntaxError as e:
+                out.append(f"{m} does not parse under the new root's python {got[0]}.{got[1]}: {e.msg} (line {e.lineno})")
+    return out
+
+
 def _minor(text):
     m = re.search(r"(\d+)\.(\d+)", text or "")
     return (int(m.group(1)), int(m.group(2))) if m else None
@@ -347,7 +376,7 @@ def _python_minor_problems(kit, layers, interp):
     return out
 
 
-def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None, uid=-1, gid=-1, user="", home=None, system_bus=False):
+def check_userland(layers, kit=None, programs=None, server_main_source=None, desktop="openbox", xvfb="Xvfb", post_pivot=None, uid=-1, gid=-1, user="", home=None, system_bus=False, criu=False, pkg_dir=None, init_python=None):
     """{"problems": [...], "warnings": [...]}. Problems are things the session needs at start-up and would not find; warnings are per-task needs."""
     layers = [L for L in layers if L and os.path.isdir(L)]
     problems, warnings = [], []
@@ -402,6 +431,8 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
         for prog in server_programs(server_main_source):
             if find_program(prog, layers) is None:
                 warnings.append(f"the pinned server runs `{prog}` for some tasks and it is not in the new root: those tasks would fail")
+    if criu:
+        problems += stage2_problems(layers, pkg_dir, init_python or (f"{kit}/venv/bin/python" if kit else None))
     if system_bus:
         for f in ("/usr/share/dbus-1/system.conf",):
             if resolve(f, layers) is None:
