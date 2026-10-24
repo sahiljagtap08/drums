@@ -685,3 +685,18 @@ Known not fixable without restarting the process: Python's string-hash seed and 
 3. SEMANTICS: public task `e0df059f` scores 0.0 then 1.0 through the real evaluator from a reseeded restored session, and the wall clock inside the session equals the host's to within 2 s.
 4. LATENCY with reseed ON, 20 starts per arm interleaved (the section 15 figure of 2.09x was WITHOUT any reseed and is not the number for a usable restore): target restore p50 <= 0.50 x cold p50.
 Expected outcome in advance: 1 holds (about 90%); 2 holds (about 70%, the browser step is the risk); 3 holds (about 80%). **4 is expected to FAIL**: the reseed adds a browser-context round trip of an estimated 0.2 to 0.4 s to a 0.98 s restore, so I expect a ratio near 1.5 to 1.7x. If it fails, that is the result.
+
+
+### 16.4 Corrections to the section 16 registration (made after `080a893`, before any retest or hygiene run)
+
+The text above is left as committed; these corrections take precedence over it. **Nothing was run under the broader rule:** the C3 audit code in `ca07330` implements only the
+literal wording and the cold control, the amended-rule code does not exist yet, and no C3 retest or hygiene run had been executed when this correction was made (the orphan-cleanup test, which does not
+involve the C3 rule, was being built).
+
+**Revision 2a of C3 (supersedes the device list in 16.1).** The exception is narrowed to the two objects actually observed in the section 15 audit and in its cold-session control: **`/dev/null` and `/dev/urandom`
+and nothing else**. Condition (a) of 16.1 now reads "it is `/dev/null` or `/dev/urandom`"; conditions (b) and (c) are unchanged. Not claimed: that the six bind-mounted nodes are harmless. `/dev/tty` in particular is not a stateless discard or generator device and can be a
+terminal-interference route; `/dev/zero`, `/dev/full` and `/dev/random` were not observed shared and are not covered. If any other device is observed shared in a later audit it is justified and registered separately before that retest. The original C3 FAIL in section 15 stands.
+
+**Browser hygiene scope (supersedes the browser bullet of 16.3).** Clearing cookies and storage and opening a new browser context is a property of a DECLARED CLEAN CHECKPOINT only: one taken from a session whose browser holds no task setup and no login (the probe's data-URL page). A checkpoint is
+declared clean when it is created (`clean=True`); the reseed applies the browser step only to a clean checkpoint. For a later real task checkpoint (declared not clean) the browser is left untouched: its cookies, storage, logged-in sessions and task setup are PRESERVED, because erasing them would change the task. The cost of that choice is stated, not hidden: siblings of a non-clean checkpoint share identical logged-in state by design and the page renderer's random-number state (V8 `Math.random`) is a clone; that clone state is a known residual for such checkpoints.
+What is reset for every restored sibling regardless: the hostname, and the guest-server process's Python and numpy random-number state (neither is task state). What is reset only for clean checkpoints: default-context cookies and storage, and the renderer. The single public task `e0df059f` validates only that task from a clean checkpoint; it does not validate general benchmark semantics, logged-in tasks, or non-clean checkpoints.
