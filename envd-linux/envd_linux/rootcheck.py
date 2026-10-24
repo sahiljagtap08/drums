@@ -103,12 +103,16 @@ LIB_DIRS = ("/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib64", "/us
 
 
 def elf_needed(path):
-    """DT_NEEDED sonames of an ELF64 little-endian file, read WITHOUT executing it; [] for anything that is not such an ELF (scripts, static binaries)."""
+    return elf_dynamic(path)[0]
+
+
+def elf_dynamic(path):
+    """(DT_NEEDED sonames, DT_RUNPATH entries, DT_RPATH entries) of an ELF64 little-endian file, read WITHOUT executing it; ([], [], []) for anything that is not such an ELF (scripts, static binaries)."""
     try:
         with open(path, "rb") as f:
             h = f.read(64)
             if h[:4] != b"\x7fELF" or h[4] != 2 or h[5] != 1:
-                return []
+                return [], [], []
             phoff, phentsize, phnum = struct.unpack_from("<Q", h, 32)[0], struct.unpack_from("<H", h, 54)[0], struct.unpack_from("<H", h, 56)[0]
             loads, dyn = [], None
             for i in range(phnum):
@@ -119,25 +123,29 @@ def elf_needed(path):
                 elif ptype == 2:
                     dyn = (off, filesz)
             if dyn is None:
-                return []
+                return [], [], []
             f.seek(dyn[0])
             data = f.read(dyn[1])
-            needed, strtab = [], None
+            needed, runp, rp, strtab = [], [], [], None
             for i in range(0, len(data) - 15, 16):
                 tag, val = struct.unpack_from("<qQ", data, i)
                 if tag == 0:
                     break
                 if tag == 1:
                     needed.append(val)
+                elif tag == 29:
+                    runp.append(val)
+                elif tag == 15:
+                    rp.append(val)
                 elif tag == 5:
                     strtab = val
             if strtab is None:
-                return []
+                return [], [], []
             base = next((off + (strtab - va) for va, off, sz in loads if va <= strtab < va + max(sz, 1)), None)
             if base is None:
-                return []
-            out = []
-            for o in needed:
+                return [], [], []
+
+            def text(o):
                 f.seek(base + o)
                 buf = b""
                 while not buf.endswith(b"\0"):
@@ -145,10 +153,11 @@ def elf_needed(path):
                     if not c:
                         break
                     buf += c
-                out.append(buf.split(b"\0")[0].decode(errors="replace"))
-            return out
+                return buf.split(b"\0")[0].decode(errors="replace")
+            split = lambda offs: [d for o in offs for d in text(o).split(":") if d]
+            return [text(o) for o in needed], split(runp), split(rp)
     except (OSError, struct.error):
-        return []
+        return [], [], []
 
 
 def elf_interp(path):
@@ -215,6 +224,18 @@ LIMITS = ["DT_NEEDED and PT_INTERP are read statically; libraries opened with dl
           "nothing here proves that gnome-shell or Xvfb RUNS: only a live boot does"]
 
 
+def desktop_session_name(source=None, desktop="gnome"):
+    """The gnome-session session NAME, read from the `--session=` argument of the desktop command in session_init.WM_COMMANDS (one copy, not two)."""
+    if source is None:
+        source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_init.py")).read()
+    for n in ast.parse(source).body:
+        if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "WM_COMMANDS" for t in n.targets):
+            for a in ast.literal_eval(n.value).get(desktop, []):
+                if a.startswith("--session="):
+                    return a.split("=", 1)[1]
+    return None
+
+
 def gnome_chain(layers, uid, gid, user, home):
     problems, warnings = [], []
     for d in ("/usr/share/gnome-shell", "/usr/share/glib-2.0/schemas"):
@@ -225,8 +246,11 @@ def gnome_chain(layers, uid, gid, user, home):
         problems.append("/usr/share/glib-2.0/schemas/gschemas.compiled is missing: GSettings (gnome-shell, gnome-session) cannot start without compiled schemas")
     if find_program("/usr/libexec/gnome-session-binary", layers) is None:
         problems.append("/usr/libexec/gnome-session-binary is not an executable in the new root (gnome-session starts it)")
-    if resolve("/usr/share/gnome-session/sessions/ubuntu-xorg.session", layers) is None:
-        problems.append("/usr/share/gnome-session/sessions/ubuntu-xorg.session is missing (the session `--session=ubuntu-xorg` names it)")
+    name = desktop_session_name()
+    if name is None:
+        problems.append("the gnome desktop command has no --session= argument to check")
+    elif resolve(f"/usr/share/gnome-session/sessions/{name}.session", layers) is None:
+        problems.append(f"/usr/share/gnome-session/sessions/{name}.session is missing (the desktop command names `--session={name}`)")
     pw = resolve("/etc/passwd", layers)
     line = None
     if pw:
@@ -260,13 +284,22 @@ def lib_search_dirs(layers):
     return dirs
 
 
-def missing_libraries(real_path, layers, seen=None):
-    """Sonames in the shared-library closure of the file at `real_path` that are found in NO library directory of the union (ld.so.conf.d entries included; ld.so.cache is not read, so this can
-    flag a library that lives in an unlisted directory). Libraries are searched through the union, never the host."""
+def _expand(entry, origin):
+    return entry.replace("${ORIGIN}", origin).replace("$ORIGIN", origin).replace("${LIB}", "lib/x86_64-linux-gnu").replace("$LIB", "lib/x86_64-linux-gnu")
+
+
+def missing_libraries(real_path, layers, seen=None, vpath=None, inherited_rpath=()):
+    """Sonames in the shared-library closure of the file at `real_path` that are found in NO directory the loader would search, PER BINARY: its own DT_RPATH (inherited by what it loads), then its own
+    DT_RUNPATH (direct dependencies only), then /etc/ld.so.conf.d and the standard directories. `$ORIGIN` is the directory of the object INSIDE the union (`vpath`). Libraries are searched through the
+    union, never the host. ld.so.cache is not read, so an unlisted directory can still produce a false "missing"."""
     seen = set() if seen is None else seen
+    needed, runpath, rpath = elf_dynamic(real_path)
+    origin = os.path.dirname(vpath) if vpath else "/"
+    own_rpath = [_expand(d, origin) for d in rpath] if not runpath else []
+    chain = list(own_rpath) + list(inherited_rpath)
+    dirs = chain + ([_expand(d, origin) for d in runpath]) + lib_search_dirs(layers)
     out = []
-    dirs = lib_search_dirs(layers)
-    for so in elf_needed(real_path):
+    for so in needed:
         if so in seen:
             continue
         seen.add(so)
@@ -274,7 +307,7 @@ def missing_libraries(real_path, layers, seen=None):
         if hit is None:
             out.append(so)
         else:
-            out += missing_libraries(os.path.join(hit[0], hit[1].lstrip("/")), layers, seen)
+            out += missing_libraries(os.path.join(hit[0], hit[1].lstrip("/")), layers, seen, hit[1], chain)
     return out
 
 
@@ -336,7 +369,7 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
                             + (" (an X server: the image has none unless it is added to the writable layer; a 24.04 host Xvfb is NOT copied in)" if prog == xvfb else ""))
             continue
         r = resolve(found, layers)
-        gone = [so for so in missing_libraries(os.path.join(r[0], r[1].lstrip("/")), layers) if so not in seen_libs]
+        gone = [so for so in missing_libraries(os.path.join(r[0], r[1].lstrip("/")), layers, vpath=r[1]) if so not in seen_libs]
         seen_libs.update(gone)
         if gone:
             problems.append(f"{prog} needs shared libraries that are not in the new root: {', '.join(gone)}")
@@ -348,7 +381,7 @@ def check_userland(layers, kit=None, programs=None, server_main_source=None, des
                 problems.append(f"{path} is missing from the new root ({why}; needed by {base} at run time)")
             elif kind == "exe":
                 x = resolve(find_program(path, layers), layers)
-                lost = missing_libraries(os.path.join(x[0], x[1].lstrip("/")), layers)
+                lost = missing_libraries(os.path.join(x[0], x[1].lstrip("/")), layers, vpath=x[1])
                 problems += [f"{path} needs shared libraries that are not in the new root: {', '.join(lost)}"] if lost else []
         dirs = lib_search_dirs(layers)
         for so in DLOPEN_NAMES.get(base, []):

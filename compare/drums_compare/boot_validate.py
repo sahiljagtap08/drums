@@ -49,6 +49,20 @@ def read_marks(path):
     return [json.loads(l) for l in open(path)] if os.path.exists(path) else []
 
 
+def _keep_logs(a, report, d, info):
+    """Save what the session wrote BEFORE it is destroyed: init.log and xvfb.log from the state directory (host-visible), and the desktop logs from the session's own /tmp through the server."""
+    try:
+        for n in ("init.log", "xvfb.log"):
+            src = os.path.join(a.state, "s0", n)
+            if os.path.exists(src):
+                open(os.path.join(a.out, n), "wb").write(open(src, "rb").read()[-30000:])
+        if info and info.get("ip"):
+            body = (d.get("http") or http)(f"http://{info['ip']}:5000/execute", {"command": "tail -c 20000 /tmp/drums-desktop-*.log", "shell": True})
+            open(os.path.join(a.out, "desktop_logs.json"), "wb").write(body)
+    except Exception as e:  # logs are best-effort; the report says if they were not kept
+        report.setdefault("log_note", f"desktop logs not captured: {type(e).__name__}")
+
+
 def run(a, deps=None):
     d = deps or {}
     from envd_linux import rootcheck
@@ -92,6 +106,7 @@ def run(a, deps=None):
     except Exception as e:
         report["problems"].append(f"{type(e).__name__}: {str(e)[:300]}")
     finally:
+        _keep_logs(a, report, d, locals().get("info"))
         try:
             sup.close()
         except Exception as e:

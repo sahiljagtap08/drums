@@ -85,7 +85,7 @@ def mark(name, **kw):
 
 
 # The window manager / shell the session starts. "openbox" is the default and unchanged; "gnome" starts the image's own gnome-session (UNVALIDATED: no live run has shown it works under Xvfb).
-WM_COMMANDS = {"openbox": ["openbox"], "gnome": ["gnome-session", "--builtin", "--session=ubuntu-xorg", "--disable-acceleration-check"]}
+WM_COMMANDS = {"openbox": ["openbox"], "gnome": ["gnome-session", "--builtin", "--session=ubuntu", "--disable-acceleration-check"]}
 
 
 def drop_privileges(uid, gid):
@@ -130,7 +130,7 @@ def tree_of(root_pid, table):
     return seen
 
 
-def record_identity(a, env, server=None):
+def record_identity(a, env, server=None, logs=None):
     """Identity of what actually runs, recorded as a timing mark: the uid of the desktop processes and the WINDOW MANAGER name read from X (_NET_SUPPORTING_WM_CHECK -> _NET_WM_NAME), never just a binary version."""
     wm, deadline = None, time.time() + (60 if a.desktop == "gnome" else 5)
     while time.time() < deadline and wm is None:
@@ -150,7 +150,7 @@ def record_identity(a, env, server=None):
     mine = tree_of(spid, procs) if spid else set()
     want = ("gnome-shell", "gnome-session-binary", "gnome-session") if a.desktop == "gnome" else (WM_COMMANDS[a.desktop][0],)
     mark("identity", desktop=a.desktop, wm_name=wm, uid_requested=a.uid, desktop_procs=sorted({(c, u) for _, _, u, c in procs if c in want}),
-         server_pid=spid, server_uids=sorted({u for pid, _, u, _ in procs if pid in mine}), user=env.get("USER"), home=env.get("HOME"))
+         server_pid=spid, server_uids=sorted({u for pid, _, u, _ in procs if pid in mine}), user=env.get("USER"), home=env.get("HOME"), logs=logs)
 
 
 def http_ok(url, timeout=0.5):
@@ -243,12 +243,20 @@ def start_real_desktop(a):
         os.chmod("/tmp", 0o1777)  # recordings use tempfile.mkdtemp under /tmp
         os.chown(a.home, a.uid, a.gid)
         os.chown(os.path.join(a.home, ".Xauthority"), a.uid, a.gid)
-    bus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
-                         capture_output=True, text=True, env=env, check=True, preexec_fn=pre).stdout.split()
+    logs = {}
+
+    def logfile(name):  # the desktop's stderr is KEPT in /tmp (never DEVNULL) so a failing GNOME/dbus/at-spi leaves its own cause
+        logs[name] = f"/tmp/drums-desktop-{name}.log"
+        return open(logs[name], "wb")
+    dbus = subprocess.run(["dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"],
+                          stdout=subprocess.PIPE, stderr=logfile("dbus"), text=True, env=env, check=True, preexec_fn=pre)
+    bus = dbus.stdout.split()
     env["DBUS_SESSION_BUS_ADDRESS"] = bus[0]
-    quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, preexec_fn=pre)
-    subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately"], **quiet)
-    subprocess.Popen(WM_COMMANDS[a.desktop], **quiet)
+    def kept(name):
+        f = logfile(name)
+        return dict(stdout=f, stderr=subprocess.STDOUT, env=env, preexec_fn=pre)
+    subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately"], **kept("at-spi"))
+    subprocess.Popen(WM_COMMANDS[a.desktop], **kept("desktop"))
     time.sleep(0.5)
     lo_up()
     mark("desktop_stack_started")
@@ -259,7 +267,7 @@ def start_real_desktop(a):
         time.sleep(0.02)
     mark("server_ready")
     if a.desktop != "openbox" or a.uid >= 0:
-        record_identity(a, env, server)
+        record_identity(a, env, server, logs)
     if a.workload == "chromium":
         start_chromium(a, env)
         mark("chromium_spawned")

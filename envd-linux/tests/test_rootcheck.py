@@ -40,7 +40,7 @@ def gnome_files(r, uid=1000, gid=1000, user="user", home="/home/user"):
     """The finite list of files the GNOME chain check names (synthetic stand-ins)."""
     for f in ("/usr/libexec/gnome-session-binary",):
         mk(r, f)
-    for f in ("/usr/share/gnome-session/sessions/ubuntu-xorg.session", "/usr/share/glib-2.0/schemas/gschemas.compiled", "/usr/share/gnome-shell/x"):
+    for f in ("/usr/share/gnome-session/sessions/ubuntu.session", "/usr/share/glib-2.0/schemas/gschemas.compiled", "/usr/share/gnome-shell/x"):
         mk(r, f, "x", 0o644)
     mk(r, "/etc/passwd", f"root:x:0:0:root:/root:/bin/bash\n{user}:x:{uid}:{gid}:U:{home}:/bin/bash\n", 0o644)
 
@@ -260,10 +260,60 @@ def test_the_gnome_chain_checks_a_finite_named_list_and_reports_the_unknowns_as_
     t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
     kw = dict(kit=KIT, desktop="gnome", uid=1000, gid=1000, user="user", home="/home/user")
     probs = rc.check_userland([t, r], **kw)["problems"]
-    for need in ("/usr/share/gnome-shell", "gschemas.compiled", "gnome-session-binary", "ubuntu-xorg.session", "'user' is not in the new root's /etc/passwd"):
+    for need in ("/usr/share/gnome-shell", "gschemas.compiled", "gnome-session-binary", "ubuntu.session", "'user' is not in the new root's /etc/passwd"):
         assert any(need in p for p in probs), (need, probs)
     gnome_files(r)
     out = rc.check_userland([t, r], **kw)
     assert out["problems"] == [] and any("no system bus and no logind" in w for w in out["warnings"]) and any("XDG_RUNTIME_DIR=/run/user/1000" in w for w in out["warnings"])
     assert any("uid 1000 gid 1000, not 1001/1001" in p for p in rc.check_userland([t, r], **dict(kw, uid=1001, gid=1001))["problems"])
     assert any("home as /home/user, not /home/other" in p for p in rc.check_userland([t, r], **dict(kw, home="/home/other"))["problems"])
+
+
+def _build(tmp_path, name, src, *flags):
+    import subprocess
+    c = tmp_path / f"{name}.c"
+    c.write_text(src)
+    out = tmp_path / name
+    subprocess.run(["gcc", str(c), *flags, "-o", str(out)], check=True, capture_output=True)
+    return str(out)
+
+
+def test_runpath_rpath_and_origin_are_honoured_per_binary_not_from_global_dirs(tmp_path):
+    import shutil
+    import subprocess
+    lib = tmp_path / "libfoo.so"
+    (tmp_path / "foo.c").write_text("int foo(void){return 1;}\n")
+    subprocess.run(["gcc", "-shared", "-fPIC", "-Wl,-soname,libfoo.so.1", "-o", str(lib), str(tmp_path / "foo.c")], check=True, capture_output=True)
+    main_src = "int foo(void); int main(void){return foo();}\n"
+    for flag, kind in (("-Wl,--enable-new-dtags,-rpath,/usr/lib/gnome-shell", "runpath"), ("-Wl,--disable-new-dtags,-rpath,/usr/lib/gnome-shell", "rpath"), ("-Wl,--enable-new-dtags,-rpath,$ORIGIN/../lib/priv", "origin")):
+        prog = _build(tmp_path, f"p_{kind}", main_src, str(lib), flag, "-Wl,-rpath-link," + str(tmp_path))
+        needed, runp, rp = rc.elf_dynamic(prog)
+        assert "libfoo.so.1" in needed and (runp if kind != "rpath" else rp)
+        r = str(tmp_path / f"root_{kind}")
+        os.makedirs(os.path.join(r, "usr/bin"))
+        shutil.copy(prog, os.path.join(r, "usr/bin/prog"))
+        mk(r, "/usr/lib/x86_64-linux-gnu/libc.so.6")  # satisfies libc; libfoo is NOT in any default directory
+        assert rc.missing_libraries(os.path.join(r, "usr/bin/prog"), [r], vpath="/usr/bin/prog") == ["libfoo.so.1"], kind
+        where = "/usr/lib/gnome-shell" if kind != "origin" else "/usr/lib/priv"
+        mk(r, f"{where}/libfoo.so.1")
+        assert rc.missing_libraries(os.path.join(r, "usr/bin/prog"), [r], vpath="/usr/bin/prog") == [], kind  # found through ITS OWN search path
+
+
+def test_the_gnome_session_name_is_read_from_the_command_and_matches_the_images_session_file(tmp_path):
+    from envd_linux import session_init as SI
+    assert rc.desktop_session_name() == "ubuntu" and "--session=ubuntu" in SI.WM_COMMANDS["gnome"] and "ubuntu-xorg" not in " ".join(SI.WM_COMMANDS["gnome"])
+    assert rc.desktop_session_name("WM_COMMANDS = {'gnome': ['gnome-session', '--session=other']}\n") == "other"
+    r = image_root(tmp_path, programs=("dbus-daemon", "gnome-session", "gnome-shell", "xprop"))
+    t = kit_layer(tmp_path, python_target="/usr/bin/python3.10", venv_version="3.10.12")
+    gnome_files(r)
+    os.remove(os.path.join(r, "usr/share/gnome-session/sessions/ubuntu.session"))
+    mk(r, "/usr/share/gnome-session/sessions/ubuntu-xorg.session", "x", 0o644)  # the name the old code wrongly assumed
+    probs = rc.check_userland([t, r], kit=KIT, desktop="gnome", uid=1000, gid=1000, user="user", home="/home/user")["problems"]
+    assert any("sessions/ubuntu.session is missing" in p and "--session=ubuntu" in p for p in probs)
+
+
+def test_desktop_children_keep_their_stderr_in_tmp_not_devnull():
+    import inspect
+    from envd_linux import session_init as SI
+    src = inspect.getsource(SI.start_real_desktop)
+    assert "subprocess.DEVNULL" not in src and "drums-desktop-" in src and 'kept("desktop")' in src and 'logfile("dbus")' in src and "logs=logs" in inspect.getsource(SI.record_identity)
