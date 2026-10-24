@@ -178,3 +178,35 @@ def test_a_failure_at_the_last_step_before_session_json_leaves_nothing_behind(tm
         assert str(tmp_path / "state" / "s1") not in open("/proc/self/mounts").read()
     finally:
         sup.close()
+
+
+def _in(info, cmd, timeout=60):
+    t = time.time()
+    r = subprocess.run(["nsenter", "-t", str(info["init_pid"]), "-m", "-u", "-n", "-p", "--", "sh", "-c", cmd], capture_output=True, text=True, timeout=timeout)
+    return time.time() - t, r.returncode, (r.stdout + r.stderr).strip()
+
+
+@pytest.mark.skipif(_prereqs() is not None, reason=str(_prereqs()))
+def test_product_findings_a_lower_layer_directory_renames_and_sudo_does_not_stall(tmp_path):
+    """Two real defects found by running a real task on restored state (docs/l1-shared-runtime-design.md section 21.2).
+    (1) A directory made BEFORE the checkpoint lives in a read-only overlay layer afterwards, and renaming it failed with EXDEV until the overlay was mounted
+        with redirect_dir=on. (2) sudo waited about 24 s for a DNS answer because the session's hostname did not resolve; before and after in the evidence file."""
+    kit = realkit.DEFAULT_KIT
+    tpl = tmp_path / "tpl"
+    build_home_template(str(tpl / "home" / "drums"))
+    sup = Supervisor(str(tmp_path / "state"), str(tpl), root_mode="full", netns=True, osworld_port=5000, osworld_real_kit=kit,
+                     init_python=os.path.join(kit, "venv", "bin", "python"), server_mode="module", ready_timeout=120,
+                     criu_friendly=True, criu=cr.Criu(HOME), sweep_dir=str(tmp_path / "led"))
+    try:
+        a = sup.create(0)
+        t, rc, out = _in(a, "echo x | sudo -S true")
+        assert rc == 0 and t < 5, (t, out)  # (2) cold session: no stall
+        assert _in(a, "mkdir -p /root/pre_checkpoint_dir && echo data > /root/pre_checkpoint_dir/f")[1] == 0
+        sup.restore_from = sup.checkpoint(0, str(tmp_path / "ck"), clean=True)
+        b = sup.create(1)
+        t, rc, out = _in(b, "python3 -c \"import os; os.rename('/root/pre_checkpoint_dir', '/root/renamed_dir'); print(open('/root/renamed_dir/f').read().strip())\"")
+        assert rc == 0 and out.endswith("data"), out  # (1) a layered directory renames with os.rename
+        t, rc, out = _in(b, "hostname; echo x | sudo -S true")
+        assert rc == 0 and t < 5, (t, out)  # (2) the reseeded hostname resolves too
+    finally:
+        sup.close()

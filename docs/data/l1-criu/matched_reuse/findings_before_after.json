@@ -1,0 +1,16 @@
+{
+ "overlay_rename_of_a_lower_layer_directory": {
+  "default": "rename failed: [Errno 18] Invalid cross-device link: '/tmp/ovfindsm3kpz4w/m/d1' -> '/tmp/ovfindsm3kpz4w/m/d2'",
+  "redirect_dir=on": "rename OK"
+ },
+ "sudo_in_a_session": {
+  "with_hostname_in_etc_hosts (current code)": {
+   "seconds": 0.01,
+   "output": ""
+  },
+  "without_hostname_in_etc_hosts (the old behaviour)": {
+   "seconds": 24.04,
+   "output": "sudo: unable to resolve host drums-s90: Temporary failure in name resolution"
+  }
+ }
+}
