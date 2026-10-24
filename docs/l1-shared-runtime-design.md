@@ -1,6 +1,6 @@
 # L1: shared pre-warmed runtime forks (the Drums claim)
 
-**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 19 are PROTOTYPE pre-registrations (each
+**Epistemic status: sections 1 to 7 are DESIGN (L1 is UNBUILT and UNPROVEN). Sections 8 to 21 are PROTOTYPE pre-registrations (each
 committed before its measurement) and MEASURED results, with raw data in `docs/data/`.** Nothing here is an L1 proof, and `drums_level`
 stays L0. Where this text says "UNBUILT" it refers to the L1 claim, not to the prototypes.
 
@@ -831,3 +831,34 @@ These checks are weaker than the a11y tree in one respect: the window title show
 ### What is NOT established
 
 The effect on valid rollouts per hour (not measured), anything about the task's evaluator, tasks with downloads (the file host is unreachable here and its licence is unresolved), tasks with logged-in or networked state, restore on another host, the incumbent's post-setup snapshot latency, and isolation beyond the audit above on two siblings.
+
+
+## 20. Bridge from setup cloning into the matched runner, and a mid-task branch test (REGISTERED before implementation or any run)
+
+**Status: ASSESSMENT + PRE-REGISTRATION. Nothing here has been run. No incumbent result exists or is claimed; there is no KVM host in this sandbox.** Final suite on the code at `eb571a9` (the final teardown, `session.json` and argv-test edits included): 184 passed in 431.8 s (recorded separately from the targeted repeat runs of the restore tests).
+
+### 20.1 The smallest honest bridge
+
+Both arms must get the SAME reuse through the SAME code path: OSWorld's public snapshot API on `DesktopEnv` (`_save_state(name)` after the setup, `snapshot_name` plus `reset` to revert before later rollouts of the same task). The incumbent arm gets this from its own provider; the Drums arm gets it from a Drums provider that implements `save_state` as "CRIU-checkpoint this session and restore it in place" and `revert_to_snapshot(name)` as "destroy this session and restore it from that checkpoint". `DesktopEnvAdapter` gains `reuse="post_setup"` and nothing else differs between arms.
+What the incumbent's equivalent really is, from the public provider sources (checked, `desktop_env/providers/*/provider.py`): `vmware` and `virtualbox` implement `save_state`/`revert_to_snapshot` with `vmrun snapshot` / `VBoxManage snapshot take`, which snapshot a running VM; `aws` implements `save_state` as `create_image` (a disk image: an application launched during setup is NOT part of it, and reverting launches a new instance); `docker` raises `NotImplementedError("Snapshots not available")`; `modal` raises; `pyromind` makes `save_state` a no-op. So an incumbent has equivalent LIVE-state reuse only on the local-hypervisor providers; on AWS its post-setup reuse is disk-level only. A matched run must say which provider the incumbent used and what its reuse preserves; this sandbox can check none of it.
+
+**Accounting, nothing hidden.** Every rollout is labelled with its reuse phase: `setup+save` (the first rollout of a task on an environment: the full setup AND the save, both inside its measured reset time and so inside the arm's wall time and cost) or `revert` (later rollouts). The summary reports the first-rollout cost separately from the reuse cost, and the headline valid-per-hour and cost-per-valid still include all of it.
+**State kind, not blended.** `setup_only` = a state that does not depend on any agent action (equivalent to a clean reset of that task; valid for ordinary rollouts). `agent_prefix` = a state reached by one agent's actions: valid only as the shared prefix of branch-style training, where the trainer must credit the prefix to the branching sample; it is never counted as if each continuation were an independent fresh rollout. The runner records the kind per rollout and reports valid counts per kind; they are not summed into one headline.
+
+### 20.2 Real-host checks still missing (concrete)
+
+1. On a hypervisor host (VMware or VirtualBox provider): `save_state` after a task's setup keeps the launched application alive after `revert_to_snapshot`, and the reverted VM answers the guest server without a re-setup; measure the revert latency per rollout.
+2. On AWS (the public provider): confirm that the post-setup AMI loses the launched application and record what the incumbent must redo; this decides whether the incumbent's post-setup reuse is disk-level only.
+3. The same task sequence, the same agent and the same reuse flag on both arms, with the incumbent's provider settings and instance price in the run specification (`docs/matched-comparison-protocol.md`).
+4. Whether the incumbent's snapshot revert restores the guest server's random state, clock and network identity correctly, which the Drums arm handles with the reseed.
+5. First-rollout cost with real downloads (the file host is unreachable here): cache behaviour across environments.
+6. Concurrency: `W` workers each pay the first-rollout cost once per task; measure the effect at the planned concurrency.
+
+### 20.3 Registered tests (one task, real local evaluator, real `DesktopEnv`, real Drums sessions)
+
+Task: public `e0df059f` ("rename `todo_list_Jan_1` to `todo_list_Jan_2`"), whose evaluator is a local `exact_match` on a shell command; its setup creates the directory. Validates this one task only.
+
+**V1, setup-only reuse.** 6 rollouts of the task at concurrency 1 on the Drums arm with `reuse="none"` and with `reuse="post_setup"`, a scripted correct action, the interference canary on. PASS needs: every rollout scores 0.0 before and 1.0 after the action in both arms; the reuse arm's first rollout is labelled `setup+save` and the other five `revert`; the canary finds no interference (a marker written in rollout k is absent in k+1: the snapshot predates the marker, so this tests that the revert really undoes a rollout); the setup directory is present after each revert. Latency is reported, not thresholded.
+**V2, mid-task branch with divergent continuations.** After the setup the agent prefix creates the file `~/Desktop/branch_prefix.txt` holding a unique token and starts a long-lived Python process that seeds `random` and prints its next draw on a signal. The state is saved there (`agent_prefix`). Three siblings are restored from it: A renames to `todo_list_Jan_2` (expected score 1.0), B renames to `todo_list_Jan_3` (expected 0.0), C repeats A (expected 1.0, which shows the prefix state is unharmed by A and B). PASS needs ALL of: (i) task state preserved: every sibling has the file with the same token and the same Python process alive, and its next random draw is IDENTICAL across siblings (an agent's own process state is task state and must not be reseeded); (ii) infrastructure state reseeded: hostnames differ and the guest server's next Python draw differs across siblings; (iii) divergent outcomes under the real evaluator, 1.0 / 0.0 / 1.0; (iv) isolation: before B acts, B still sees `todo_list_Jan_1` and not `todo_list_Jan_2`, whatever A did; (v) the C3 audit under revision 2a on two concurrent siblings with a cold control passes.
+**Expected outcome in advance (so it can lose):** V1 passes about 85% (the risk is a quirk of `DesktopEnv`'s snapshot handling with a non-VM provider); V2 (i) about 80%, (iii) about 90%, (iv) about 90%, (v) about 80%, all of V2 about 55%.
+**What passing would and would not mean:** one task, one local evaluator, one host. It would show that the snapshot-API bridge preserves and branches task state with correct random-state handling and that the runner can account for it; it would NOT show any increment over an incumbent, any benchmark result, or semantics of tasks with downloads, logins or networked state.
